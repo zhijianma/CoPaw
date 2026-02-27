@@ -56,6 +56,10 @@ class AgentRunner(Runner):
         """
         Handle agent query.
         """
+
+        agent = None
+        chat = None
+
         try:
             session_id = request.session_id
             user_id = request.user_id
@@ -140,7 +144,8 @@ class AgentRunner(Runner):
                 yield msg, last
 
         except asyncio.CancelledError:
-            await agent.interrupt()
+            if agent is not None:
+                await agent.interrupt()
             raise
         except Exception as e:
             debug_dump_path = write_query_error_dump(
@@ -164,13 +169,14 @@ class AgentRunner(Runner):
                 ) + e.args[1:]
             raise
         finally:
-            await self.session.save_session_state(
-                session_id=session_id,
-                user_id=user_id,
-                agent=agent,
-            )
+            if agent is not None:
+                await self.session.save_session_state(
+                    session_id=session_id,
+                    user_id=user_id,
+                    agent=agent,
+                )
 
-            if self._chat_manager is not None:
+            if self._chat_manager is not None and chat is not None:
                 await self._chat_manager.update_chat(chat)
 
     async def init_handler(self, *args, **kwargs):
