@@ -23,6 +23,8 @@
 
 <p align="center"><b>Works for you, grows with you.</b></p>
 
+</div>
+
 Your Personal AI Assistant; easy to install, deploy on your own machine or on the cloud; supports multiple chat apps with easily extensible capabilities.
 
 > **Core capabilities:**
@@ -47,9 +49,7 @@ Your Personal AI Assistant; easy to install, deploy on your own machine or on th
 >
 > </details>
 
-</div>
-
----
+----
 
 ## Table of Contents
 
@@ -59,15 +59,16 @@ Your Personal AI Assistant; easy to install, deploy on your own machine or on th
 > - **I want to chat in DingTalk / Feishu / QQ**: [Quick Start](#-quick-start) → [Channels](https://copaw.agentscope.io/docs/channels).
 > - **I don’t want to install Python**: [One-line install](#one-line-install-recommended) handles Python automatically, or use [ModelScope one-click](https://modelscope.cn/studios/fork?target=AgentScope/CoPaw) for cloud.
 
-- [Quick Start](#-quick-start)
-- [Local Models](#-local-models)
-- [Documentation](#-documentation)
-- [Install from source](#-install-from-source)
-- [Why CoPaw?](#-why-copaw)
-- [Built by](#-built-by)
-- [License](#-license)
+- [Quick Start](#quick-start)
+- [API Key](#api-key)
+- [Local Models](#local-models)
+- [Documentation](#documentation)
+- [Install from source](#install-from-source)
+- [Why CoPaw?](#why-copaw)
+- [Built by](#built-by)
+- [License](#license)
 
----
+----
 
 ## Quick Start
 
@@ -161,10 +162,10 @@ Then open **http://127.0.0.1:8088/** in your browser for the Console (chat with 
 
 ```bash
 docker pull agentscope/copaw:latest
-docker run -p 7860:7860 -v copaw-data:/app/working agentscope/copaw:latest
+docker run -p 8088:8088 -v copaw-data:/app/working agentscope/copaw:latest
 ```
 
-Then open **http://127.0.0.1:7860/** for the Console. Config, memory, and skills are stored in the `copaw-data` volume. To pass API keys (e.g. `DASHSCOPE_API_KEY`), add `-e VAR=value` or `--env-file .env` to `docker run`.
+Then open **http://127.0.0.1:8088/** for the Console. Config, memory, and skills are stored in the `copaw-data` volume. To pass API keys (e.g. `DASHSCOPE_API_KEY`), add `-e VAR=value` or `--env-file .env` to `docker run`.
 
 The image is built from scratch. To build the image yourself, please refer to the [Build Docker image](scripts/README.md#build-docker-image) section in `scripts/README.md`, and then push to your registry.
 
@@ -172,7 +173,21 @@ The image is built from scratch. To build the image yourself, please refer to th
 
 **No local install?** [ModelScope Studio](https://modelscope.cn/studios/fork?target=AgentScope/CoPaw) one-click cloud setup. Set your Studio to **non-public** so others cannot control your CoPaw.
 
----
+----
+## API Key
+
+If you use a **cloud LLM** (e.g. DashScope, ModelScope), you must set an API key before chatting. CoPaw will not work until a valid key is configured.
+
+**Where to set it:**
+
+1. **`copaw init`** — When you run `copaw init`, the command has a step to configure the LLM provider and API key. Follow the prompts to choose a provider and enter your key.
+2. **Console** — After `copaw app`, open **http://127.0.0.1:8088/** → **Settings** → **Models**. Select a provider, fill in the **API Key** field, then activate that provider and model.
+3. **Environment variable** — For DashScope you can set `DASHSCOPE_API_KEY` in your shell or in a `.env` file in the working directory.
+
+Tools that need extra keys (e.g. `TAVILY_API_KEY` for web search) can be set in Console **Settings → Environment variables**, or see [Config](https://copaw.agentscope.io/docs/config) for details.
+
+> **Using local models only?** If you use [Local Models](#-local-models) (llama.cpp or MLX), you do **not** need any API key.
+
 
 ## Local Models
 
@@ -187,15 +202,15 @@ After installing, download a model and start chatting:
 
 ```bash
 copaw models download Qwen/Qwen3-4B-GGUF
-copaw models                          # select the downloaded model
-copaw app                             # start the server
+copaw models # select the downloaded model
+copaw app # start the server
 ```
 
 You can also download and manage local models from the Console UI.
 
 > **Full guide:** [Local Models documentation](https://copaw.agentscope.io/docs/local-models) covers all CLI commands, Console UI walkthrough, and backend details.
 
----
+----
 
 ## Documentation
 
@@ -213,7 +228,7 @@ You can also download and manage local models from the Console UI.
 
 Full docs in this repo: [website/public/docs/](website/public/docs/).
 
----
+----
 
 ## Install from source
 
@@ -226,19 +241,19 @@ pip install -e .
 - **Dev** (tests, formatting): `pip install -e ".[dev]"`
 - **Console** (build frontend): `cd console && npm ci && npm run build`, then `copaw app` from project root.
 
----
+----
 
 ## Why CoPaw?
 
 CoPaw represents both a **Co Personal Agent Workstation** and a "co-paw"—a partner always by your side. More than just a cold tool, CoPaw is a warm "little paw" always ready to lend a hand (or a paw!). It is the ultimate teammate for your digital life.
 
----
+----
 
 ## Built by
 
 [AgentScope team](https://github.com/agentscope-ai) · [AgentScope](https://github.com/agentscope-ai/agentscope) · [AgentScope Runtime](https://github.com/agentscope-ai/agentscope-runtime) · [ReMe](https://github.com/agentscope-ai/ReMe)
 
----
+----
 
 ## License
 
