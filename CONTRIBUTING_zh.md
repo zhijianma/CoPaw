@@ -198,6 +198,6 @@ CoPaw 旨在在 **Windows**、**Linux** 和 **macOS** 上运行。欢迎改进�
 
 - **讨论：** [GitHub Discussions](https://github.com/agentscope-ai/CoPaw/discussions)
 - **Bug 和功能：** [GitHub Issues](https://github.com/agentscope-ai/CoPaw/issues)
-- **社区：** 钉钉群（见 [README](README.md)）和 [Discord](https://discord.gg/eYMpfnkG8h)
+- **社区：** 钉钉群（见 [README](README_zh.md)）和 [Discord](https://discord.gg/eYMpfnkG8h)
 
 感谢你为 CoPaw 贡献代码。你的工作帮助它成为每个人更好的助手。🐾
