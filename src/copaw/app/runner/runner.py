@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=unused-argument
+# pylint: disable=unused-argument too-many-branches too-many-statements
 import asyncio
 import json
 import logging
