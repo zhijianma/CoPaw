@@ -3,10 +3,6 @@ name: Docker Build Test
 
 on:
   push:
-    branches:
-      - main
-      - 'feat/**'
-      - 'fix/**'
     paths:
       - 'deploy/Dockerfile'
       - 'deploy/**'
@@ -49,7 +45,7 @@ jobs:
         run: |
           docker run -d --name copaw-test -p 8088:8088 ${IMAGE}:test
           sleep 10
-          curl -f http://localhost:8088/health || exit 1
+          curl -f http://localhost:8088/ || exit 1
           docker logs copaw-test
           docker stop copaw-test
 
