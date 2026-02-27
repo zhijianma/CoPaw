@@ -47,6 +47,20 @@ export default function ChatPage() {
   };
 
   const options = useMemo(() => {
+    const handleModelError = () => {
+      setShowModelPrompt(true);
+      return new Response(
+        JSON.stringify({
+          error: "Model not configured",
+          message: "Please configure a model first",
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    };
+
     const customFetch = async (data: {
       input: any[];
       biz_params?: any;
@@ -58,31 +72,11 @@ export default function ChatPage() {
           !activeModels?.active_llm?.provider_id ||
           !activeModels?.active_llm?.model
         ) {
-          setShowModelPrompt(true);
-          return new Response(
-            JSON.stringify({
-              error: "Model not configured",
-              message: "Please configure a model first",
-            }),
-            {
-              status: 400,
-              headers: { "Content-Type": "application/json" },
-            },
-          );
+          return handleModelError();
         }
       } catch (error) {
         console.error("Failed to check model configuration:", error);
-        setShowModelPrompt(true);
-        return new Response(
-          JSON.stringify({
-            error: "Model not configured",
-            message: "Please configure a model first",
-          }),
-          {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          },
-        );
+        return handleModelError();
       }
 
       const { input, biz_params } = data;
@@ -140,7 +134,7 @@ export default function ChatPage() {
         "weather search mock": Weather,
       },
     } as unknown as IAgentScopeRuntimeWebUIOptions;
-  }, [optionsConfig, t]);
+  }, [optionsConfig]);
 
   return (
     <div style={{ height: "100%", width: "100%" }}>
