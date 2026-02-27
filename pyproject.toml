@@ -19,7 +19,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "onnxruntime<1.24",
     "lark-oapi>=1.5.3",
-    "ollama>=0.1.0",
+    "ollama>=0.6.1",
 ]
 
 [tool.setuptools.dynamic]
