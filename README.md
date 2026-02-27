@@ -55,8 +55,8 @@ Your Personal AI Assistant; easy to install, deploy on your own machine or on th
 
 > **Recommended reading:**
 >
-> - **I want to run CoPaw in 3 commands**: [Quick Start](#-quick-start) → open Console in browser.
-> - **I want to chat in DingTalk / Feishu / QQ**: [Quick Start](#-quick-start) → [Channels](https://copaw.agentscope.io/docs/channels).
+> - **I want to run CoPaw in 3 commands**: [Quick Start](#quick-start) → open Console in browser.
+> - **I want to chat in DingTalk / Feishu / QQ**: [Quick Start](#quick-start) → [Channels](https://copaw.agentscope.io/docs/channels).
 > - **I don’t want to install Python**: [One-line install](#one-line-install-recommended) handles Python automatically, or use [ModelScope one-click](https://modelscope.cn/studios/fork?target=AgentScope/CoPaw) for cloud.
 
 - [Quick Start](#quick-start)
@@ -224,6 +224,7 @@ You can also download and manage local models from the Console UI.
 | [Local Models](https://copaw.agentscope.io/docs/local-models) | Run models locally with llama.cpp or MLX |
 | [CLI](https://copaw.agentscope.io/docs/cli) | Init, cron jobs, skills, clean |
 | [Skills](https://copaw.agentscope.io/docs/skills) | Extend and customize capabilities |
+| [Memory](https://copaw.agentscope.io/docs/memory) | Context management and long-term memory |
 | [Config](https://copaw.agentscope.io/docs/config) | Working directory and config file |
 
 Full docs in this repo: [website/public/docs/](website/public/docs/).

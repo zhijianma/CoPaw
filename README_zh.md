@@ -55,8 +55,8 @@
 
 > **推荐阅读：**
 >
-> - **我想三条命令跑起来**： [快速开始](#-快速开始) → 浏览器打开控制台。
-> - **我想在钉钉 / 飞书 / QQ 里聊**： [快速开始](#-快速开始) → [频道配置](https://copaw.agentscope.io/docs/channels)。
+> - **我想三条命令跑起来**： [快速开始](#快速开始) → 浏览器打开控制台。
+> - **我想在钉钉 / 飞书 / QQ 里聊**： [快速开始](#快速开始) → [频道配置](https://copaw.agentscope.io/docs/channels)。
 > - **我不想装 Python**：[一键安装](#一键安装推荐) 自动管理 Python，或使用 [魔搭一键配置](https://modelscope.cn/studios/fork?target=AgentScope/CoPaw) 云端部署。
 
 - [快速开始](#快速开始)
@@ -226,6 +226,7 @@ copaw app # 启动服务
 | [本地模型](https://copaw.agentscope.io/docs/local-models) | 使用 llama.cpp 或 MLX 本地运行模型 |
 | [CLI](https://copaw.agentscope.io/docs/cli) | 初始化、定时任务、Skills、清理 |
 | [Skills](https://copaw.agentscope.io/docs/skills) | 扩展与自定义能力 |
+| [记忆](https://copaw.agentscope.io/docs/memory) | 上下文管理与长期记忆 |
 | [配置与工作目录](https://copaw.agentscope.io/docs/config) | 工作目录与配置文件 |
 
 完整文档见本仓库 [website/public/docs/](website/public/docs/)。
