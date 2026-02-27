@@ -37,3 +37,11 @@ priority=20
 stderr_logfile=/var/log/xfce4.err.log
 stdout_logfile=/var/log/xfce4.out.log
 environment=DISPLAY=":1"
+
+[program:ollama]
+command=/usr/local/bin/ollama serve
+autostart=true
+autorestart=true
+priority=5
+stderr_logfile=/var/log/ollama.err.log
+stdout_logfile=/var/log/ollama.out.log

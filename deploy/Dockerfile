@@ -67,6 +67,9 @@ RUN apt-get update && apt-get install -y --fix-missing \
 
 RUN sed -i 's/^CHROMIUM_FLAGS=""/CHROMIUM_FLAGS="--no-sandbox"/' /usr/bin/chromium
 
+# Install Ollama server
+RUN curl -fsSL https://ollama.com/install.sh | sh
+
 WORKDIR ${WORKSPACE_DIR}
 
 RUN python3 -m venv venv
@@ -76,7 +79,7 @@ COPY pyproject.toml setup.py README.md ./
 COPY src ./src
 # Inject console dist from build stage (repo does not commit dist).
 COPY --from=console-builder /app/console/dist/ ./src/copaw/console/
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[ollama]"
 
 # Init working dir with default config.json and HEARTBEAT.md (build time).
 RUN copaw init --defaults --accept-security
@@ -88,5 +91,6 @@ COPY deploy/config/supervisord.conf.template /etc/supervisor/conf.d/supervisord.
 COPY --chmod=755 deploy/entrypoint.sh /entrypoint.sh
 
 EXPOSE 8088
+EXPOSE 11434
 
 CMD ["/entrypoint.sh"]
