@@ -91,6 +91,5 @@ COPY deploy/config/supervisord.conf.template /etc/supervisor/conf.d/supervisord.
 COPY --chmod=755 deploy/entrypoint.sh /entrypoint.sh
 
 EXPOSE 8088
-EXPOSE 11434
 
 CMD ["/entrypoint.sh"]
