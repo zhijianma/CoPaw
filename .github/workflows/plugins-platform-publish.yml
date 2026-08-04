@@ -99,15 +99,51 @@ jobs:
 
       - name: Build app plugin frontends
         shell: bash
+        env:
+          SELECTED_PLUGINS: ${{ inputs.plugins || '' }}
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for app_dir in plugins/apps/*; do
-            if [[ -f "$app_dir/ui/package-lock.json" ]]; then
-              echo "Building ${app_dir}/ui"
-              npm --prefix "$app_dir/ui" ci
-              npm --prefix "$app_dir/ui" run build
+
+          # Normalize the selection list into a space-padded string. Empty
+          # ("  ") means build every app, matching the pack step's filter.
+          selection=" $(echo "${SELECTED_PLUGINS}" | tr ',' ' ' | xargs) "
+
+          # Build one npm project (plugin root or ui/ subdir) then drop
+          # node_modules so it is never shipped inside the plugin zip.
+          build_npm_dir() {
+            local dir="$1"
+            [[ -f "$dir/package.json" ]] || return 0
+            echo "Building frontend in ${dir}"
+            if [[ -f "$dir/package-lock.json" ]]; then
+              npm --prefix "$dir" ci
+            else
+              npm --prefix "$dir" install
             fi
+            npm --prefix "$dir" run build
+            rm -rf "$dir/node_modules"
+          }
+
+          for app_dir in plugins/apps/*; do
+            [[ -d "$app_dir" ]] || continue
+            dir_name="$(basename "$app_dir")"
+
+            # Honor the plugin selection so a focused test only builds what
+            # it publishes. Match on dir name or plugin.json id, same as pack.
+            pid=""
+            if [[ -f "$app_dir/plugin.json" ]]; then
+              pid="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("id") or "")' "$app_dir/plugin.json")"
+            fi
+            if [[ "${selection}" != "  " \
+              && "${selection}" != *" ${pid} "* \
+              && "${selection}" != *" ${dir_name} "* ]]; then
+              continue
+            fi
+
+            # Layout A: npm project under ui/ (e.g. qwenpaw-creator).
+            build_npm_dir "$app_dir/ui"
+            # Layout B: npm project at the plugin root (e.g. hello-world-plugin).
+            build_npm_dir "$app_dir"
           done
 
       - name: Install AgentScope Platform CLI
