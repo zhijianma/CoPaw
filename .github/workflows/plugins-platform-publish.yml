@@ -115,10 +115,13 @@ jobs:
           # Build one npm project (plugin root or ui/ subdir) then drop
           # node_modules so it is never shipped inside the plugin zip.
           #
-          # npm occasionally crashes with "Exit handler never called!" and
-          # leaves a broken node_modules (e.g. missing vite), so install and
-          # build are retried together, wiping node_modules and the npm cache
-          # between attempts (same mitigation as creator-app-tests.yml).
+          # Always run npm from INSIDE the project via a cd subshell, never
+          # with `npm --prefix`: on the runner's npm 10, `npm --prefix ... ci`
+          # throws "Exit handler never called!" and installs nothing (vite
+          # ends up missing), while the plain `cd && npm ci` used by the
+          # console/creator builds works. Install+build are retried together,
+          # wiping node_modules and the npm cache between attempts to absorb
+          # any residual npm flakiness.
           build_npm_dir() {
             local dir="$1"
             [[ -f "$dir/package.json" ]] || return 0
@@ -126,14 +129,15 @@ jobs:
             local ok=0
             for attempt in 1 2 3; do
               rm -rf "$dir/node_modules"
-              if [[ -f "$dir/package-lock.json" ]]; then
-                npm --prefix "$dir" ci --no-audit --no-fund \
-                  || { npm cache clean --force || true; continue; }
-              else
-                npm --prefix "$dir" install --no-audit --no-fund \
-                  || { npm cache clean --force || true; continue; }
-              fi
-              if npm --prefix "$dir" run build; then
+              if (
+                cd "$dir" &&
+                if [[ -f package-lock.json ]]; then
+                  npm ci --no-audit --no-fund
+                else
+                  npm install --no-audit --no-fund
+                fi &&
+                npm run build
+              ); then
                 ok=1
                 break
               fi
