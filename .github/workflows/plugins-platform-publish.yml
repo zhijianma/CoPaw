@@ -85,6 +85,17 @@ jobs:
           cache-dependency-path: |
             plugins/apps/**/package-lock.json
 
+      - name: Pin a peer-dep-safe npm
+        # Node 20 ships an npm 10 that crashes with "Exit handler never
+        # called!" while resolving UNMET peerDependencies (e.g. the
+        # hello-world plugin declares react/react-dom as peers), aborting the
+        # install so devDependencies like vite never land. Newer npm fixes
+        # this, so pin a known-good version before any install.
+        run: |
+          set -euo pipefail
+          npm install -g npm@10.9.2
+          npm --version
+
       - name: Resolve target environment
         env:
           TARGET_ENV: ${{ inputs.environment || 'prod' }}
