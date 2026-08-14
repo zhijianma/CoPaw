@@ -1,16 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Agent execution driver.
-
-Drives ``agent.reply_stream(inputs=msgs)`` with heartbeat wrapping
-and delegates each ``EventType`` event to ``Envelope.translate_event()``.
-"""
+"""Transport-neutral AgentScope execution driver."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any, AsyncGenerator
 
-from .envelope import Envelope
+from ..domain.turns.events import RuntimeEvent
 from .heartbeat import (
     _iter_with_heartbeat,
     _HEARTBEAT_TICK,
@@ -21,27 +17,25 @@ logger = logging.getLogger(__name__)
 
 
 class AgentExecutor:
-    """Execute the agent's reply stream and translate
-    events into SSE envelopes.
+    """Execute an agent reply stream and emit runtime events.
 
     One instance per ``Runtime.run()`` invocation.  The executor owns the
     heartbeat wrapper but not the agent itself (that belongs to the
     ``HookContext``).
     """
 
-    def __init__(self, agent: Any, envelope: Envelope) -> None:
+    def __init__(self, agent: Any, *, turn_id: str = "") -> None:
         self._agent = agent
-        self._envelope = envelope
+        self._turn_id = turn_id
 
     async def run(
         self,
         msgs: list[Any],
-    ) -> AsyncGenerator[Any, None]:
-        """Drive ``agent.reply_stream`` and yield SSE envelope objects.
+    ) -> AsyncGenerator[RuntimeEvent, None]:
+        """Drive ``agent.reply_stream`` and yield runtime events.
 
         Wraps the raw event stream with ``_iter_with_heartbeat`` so long
-        idle periods (e.g. tool-guard approval waits) emit keep-alive
-        envelopes instead of letting the connection drop.
+        idle periods still surface transport-neutral heartbeat events.
         """
         agent_iter = self._agent.reply_stream(inputs=msgs).__aiter__()
         async for event in _iter_with_heartbeat(
@@ -49,12 +43,13 @@ class AgentExecutor:
             HEARTBEAT_INTERVAL_SECONDS,
         ):
             if event is _HEARTBEAT_TICK:
-                async for obj in self._envelope.heartbeat():
-                    yield obj
+                yield RuntimeEvent.heartbeat(turn_id=self._turn_id)
                 continue
 
-            async for obj in self._envelope.translate_event(event):
-                yield obj
+            yield RuntimeEvent.agent_event(
+                event,
+                turn_id=self._turn_id,
+            )
 
 
 __all__ = ["AgentExecutor"]

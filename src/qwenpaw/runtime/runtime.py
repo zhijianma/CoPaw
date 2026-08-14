@@ -19,12 +19,14 @@ import logging
 import uuid
 from typing import Any, AsyncGenerator
 
+from ..domain.turns.events import RuntimeEvent
+from ..transports.console.presenter import ConsoleEventPresenter
 from .builder import AgentBuilder
-from .envelope import Envelope
 from .executor import AgentExecutor
 from .hooks import HookAction, HookContext
 from .message_convert import _get_last_user_text, _request_input_to_msgs
 from .phases import Phase
+from .turn_state_accumulator import TurnStateAccumulator
 
 logger = logging.getLogger(__name__)
 
@@ -46,25 +48,43 @@ class Runtime:
         self.workspace = workspace
         self.app_services = app_services
 
-    async def run(  # pylint: disable=too-many-branches,too-many-statements
+    async def run(
         self,
         request: Any,
     ) -> AsyncGenerator[Any, None]:
-        """8-phase lifecycle orchestration."""
+        """Present runtime events using the existing Console protocol."""
+        request = self._normalize(request)
+        presenter = ConsoleEventPresenter(
+            session_id=str(getattr(request, "session_id", "") or ""),
+        )
+        async for runtime_event in self.stream_events(request):
+            async for output in presenter.present(runtime_event):
+                yield output
+
+    async def stream_events(  # pylint: disable=too-many-branches
+        # pylint: disable=too-many-statements
+        self,
+        request: Any,
+    ) -> AsyncGenerator[RuntimeEvent, None]:
+        """Run the eight lifecycle phases and emit runtime events."""
         request = self._normalize(request)
         ctx = self._build_context(request)
         hooks = self.workspace.plugins.hook_registry
 
-        envelope = Envelope(session_id=ctx.session_id)
-        ctx._envelope = envelope  # pylint: disable=protected-access
+        turn_state = TurnStateAccumulator()
+        ctx._turn_state = turn_state  # pylint: disable=protected-access
+        turn_id = str(getattr(request, "id", "") or "")
         skip_agent = False
 
         try:
             # --- [phase 1] PRE_DISPATCH ---
             r = await hooks.run(Phase.PRE_DISPATCH, ctx)
             if r.action == HookAction.SHORT_CIRCUIT:
-                async for ev in envelope.from_msg(r.payload):
-                    yield ev
+                runtime_event = RuntimeEvent.message(
+                    r.payload,
+                    turn_id=turn_id,
+                )
+                yield runtime_event
                 return
             if r.action == HookAction.SKIP_AGENT:
                 skip_agent = True
@@ -74,15 +94,21 @@ class Runtime:
             cmd_registry = self.workspace.plugins.slash_command_registry
             cmd_msg = await cmd_registry.dispatch(text or "", ctx)
             if cmd_msg is not None:
-                async for ev in envelope.from_msg(cmd_msg):
-                    yield ev
+                runtime_event = RuntimeEvent.message(
+                    cmd_msg,
+                    turn_id=turn_id,
+                )
+                yield runtime_event
                 skip_agent = True
             else:
                 # --- [phase 2] POST_DISPATCH ---
                 r = await hooks.run(Phase.POST_DISPATCH, ctx)
                 if r.action == HookAction.SHORT_CIRCUIT:
-                    async for ev in envelope.from_msg(r.payload):
-                        yield ev
+                    runtime_event = RuntimeEvent.message(
+                        r.payload,
+                        turn_id=turn_id,
+                    )
+                    yield runtime_event
                     skip_agent = True
                 elif r.action == HookAction.SKIP_AGENT:
                     skip_agent = True
@@ -91,8 +117,11 @@ class Runtime:
                 # --- [phase 3] PRE_AGENT_BUILD ---
                 r = await hooks.run(Phase.PRE_AGENT_BUILD, ctx)
                 if r.action == HookAction.SHORT_CIRCUIT:
-                    async for ev in envelope.from_msg(r.payload):
-                        yield ev
+                    runtime_event = RuntimeEvent.message(
+                        r.payload,
+                        turn_id=turn_id,
+                    )
+                    yield runtime_event
                     skip_agent = True
                 elif r.action == HookAction.SKIP_AGENT:
                     skip_agent = True
@@ -111,8 +140,11 @@ class Runtime:
                 # --- [phase 5] PRE_EXECUTE ---
                 r = await hooks.run(Phase.PRE_EXECUTE, ctx)
                 if r.action == HookAction.SHORT_CIRCUIT:
-                    async for ev in envelope.from_msg(r.payload):
-                        yield ev
+                    runtime_event = RuntimeEvent.message(
+                        r.payload,
+                        turn_id=turn_id,
+                    )
+                    yield runtime_event
                     skip_agent = True
                 elif r.action == HookAction.SKIP_AGENT:
                     skip_agent = True
@@ -120,9 +152,12 @@ class Runtime:
             if not skip_agent:
                 self._apply_context_injections(ctx)
                 # --- [fixed 3] execute agent ---
-                async for ev in envelope.emit_response_created():
-                    yield ev
-                executor = AgentExecutor(ctx.agent, envelope)
+                runtime_event = RuntimeEvent.turn_started(turn_id=turn_id)
+                yield runtime_event
+                executor = AgentExecutor(
+                    ctx.agent,
+                    turn_id=turn_id,
+                )
                 logger.debug(
                     "Agent input: %s",
                     _get_last_user_text(
@@ -130,15 +165,15 @@ class Runtime:
                     )
                     or "(empty)",
                 )
-                async for ev in executor.run(ctx.input_msgs):
-                    yield ev
+                async for runtime_event in executor.run(ctx.input_msgs):
+                    turn_state.consume(runtime_event)
+                    yield runtime_event
 
             # --- [phase 6] POST_RESPONSE ---
             await hooks.run(Phase.POST_RESPONSE, ctx)
 
-            # Finalize envelope (complete message + response).
-            async for ev in envelope.finalize():
-                yield ev
+            runtime_event = RuntimeEvent.turn_completed(turn_id=turn_id)
+            yield runtime_event
 
         except (asyncio.CancelledError, KeyboardInterrupt) as e:
             ctx.error = e
@@ -161,8 +196,8 @@ class Runtime:
             # asyncio.shield protects the save from task re-cancellation.
             await self._try_save_on_cancel(ctx)
 
-            async for ev in envelope.cancel_envelope():
-                yield ev
+            runtime_event = RuntimeEvent.turn_cancelled(turn_id=turn_id)
+            yield runtime_event
             raise
         except BaseException as e:
             await self._try_save_on_cancel(ctx)
@@ -183,11 +218,12 @@ class Runtime:
                 "_error_code",
                 e.__class__.__name__,
             )
-            async for ev in envelope.error_envelope(
+            runtime_event = RuntimeEvent.turn_failed(
                 err_text,
                 err_code,
-            ):
-                yield ev
+                turn_id=turn_id,
+            )
+            yield runtime_event
             raise
         finally:
             # Close agent first so governor can flush audit log and persist
@@ -222,9 +258,8 @@ class Runtime:
     async def _try_save_on_cancel(self, ctx: HookContext) -> None:
         """Best-effort session save on cancellation.
 
-        Before snapshotting, any partial streaming content accumulated in
-        the ``Envelope`` is injected into the agent's context so the
-        interrupted turn's text is not lost on reload.
+        Before snapshotting, partial streaming content accumulated in the
+        transport-neutral turn state is injected into the agent's context.
 
         ``state_dict()`` is called synchronously to snapshot the agent
         state *before* any further event-loop iteration.  The I/O write
@@ -261,9 +296,9 @@ class Runtime:
         if session is None:
             return
         try:
-            envelope = getattr(ctx, "_envelope", None)
-            if envelope is not None:
-                self._inject_partial_response(agent, envelope)
+            turn_state = getattr(ctx, "_turn_state", None)
+            if turn_state is not None:
+                self._inject_partial_response(agent, turn_state)
 
             from ._state_utils import StateProxy
 
@@ -299,15 +334,14 @@ class Runtime:
 
     # pylint: disable=too-many-branches
     @staticmethod
-    def _inject_partial_response(agent: Any, envelope: Any) -> None:
-        """Inject accumulated streaming content from *envelope* into the
+    def _inject_partial_response(agent: Any, turn_state: Any) -> None:
+        """Inject accumulated streaming content from *turn_state* into the
         agent's context so a cancel-save includes the partial response.
 
         Two responsibilities:
 
-        1. **Partial text/thinking** — uses ``Envelope.collect_partial_blocks``
-           to obtain content from the *interrupted* reasoning iteration, with
-           a deduplication guard against double-saving.
+        1. **Partial text/thinking** — obtains content from the interrupted
+           reasoning iteration, with a guard against double-saving.
 
         2. **Dangling tool calls** — AgentScope's
            ``_close_unfinished_tool_calls`` normally patches the context in a
@@ -321,7 +355,7 @@ class Runtime:
             from agentscope.message import TextBlock, ThinkingBlock
 
             # --- 1) Partial text/thinking injection ---
-            partial = envelope.collect_partial_blocks()
+            partial = turn_state.collect_partial_blocks()
             injected = 0
 
             if partial:
@@ -359,7 +393,7 @@ class Runtime:
                 injected = len(blocks)
 
             # --- 2) Close dangling tool calls ---
-            closed = Runtime._close_dangling_tool_calls(agent, envelope)
+            closed = Runtime._close_dangling_tool_calls(agent, turn_state)
 
             if injected or closed:
                 logger.info(
@@ -375,7 +409,7 @@ class Runtime:
             )
 
     @staticmethod
-    def _close_dangling_tool_calls(agent: Any, envelope: Any) -> int:
+    def _close_dangling_tool_calls(agent: Any, turn_state: Any) -> int:
         """Ensure every ``ToolCallBlock`` in the context has a matching
         ``ToolResultBlock``.
 
@@ -420,8 +454,8 @@ class Runtime:
         if not awaiting:
             return 0
 
-        # Incorporate any partial output accumulated in the envelope.
-        envelope_tool_output = envelope.collect_tool_output()
+        # Incorporate partial output accumulated by the runtime core.
+        tool_output = turn_state.collect_tool_output()
 
         interruption_msg = (
             "<system-reminder>The tool call has been interrupted by "
@@ -433,7 +467,7 @@ class Runtime:
             block = content[idx]
             block.state = ToolCallState.FINISHED
 
-            output = envelope_tool_output.get(call_id, "")
+            output = tool_output.get(call_id, "")
             if output:
                 output += "\n" + interruption_msg
             else:
