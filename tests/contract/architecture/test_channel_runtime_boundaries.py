@@ -61,6 +61,15 @@ def test_console_sse_implementation_is_not_owned_by_base_channel() -> None:
         assert forbidden_definition not in source
 
 
+def test_console_envelope_is_not_implemented_in_runtime_package() -> None:
+    source = Path("src/qwenpaw/runtime/envelope.py").read_text(
+        encoding="utf-8",
+    )
+
+    assert "class Envelope" not in source
+    assert "transports.console.envelope" in source
+
+
 def test_legacy_channel_protocol_dependency_does_not_expand() -> None:
     channel_root = Path("src/qwenpaw/app/channels")
     pattern = re.compile(r"\b(?:AgentRequest|AgentResponse)\b")

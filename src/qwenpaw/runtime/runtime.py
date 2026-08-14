@@ -3,7 +3,6 @@
 
 Delegates to:
 
-* ``Envelope``       — SSE state machine
 * ``AgentBuilder``   — per-request agent assembly
 * ``AgentExecutor``  — heartbeat-wrapped reply stream
 
@@ -35,8 +34,8 @@ class Runtime:
     """Per-workspace request orchestrator.
 
     One ``Runtime`` instance per ``Workspace``.  ``run()`` is called once
-    per ``AgentRequest`` and yields SSE envelope objects identical to
-    what the legacy ``Runner.stream_query`` produced.
+    per request. ``stream_events()`` is transport-neutral; ``run()`` keeps
+    the legacy Console response protocol during migration.
     """
 
     def __init__(

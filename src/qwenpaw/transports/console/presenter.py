@@ -18,10 +18,7 @@ class ConsoleEventPresenter:
         envelope: Any | None = None,
     ) -> None:
         if envelope is None:
-            # Import lazily while Envelope remains in the legacy runtime
-            # package. This avoids a package initialization cycle until the
-            # implementation is physically moved into this transport.
-            from ...runtime.envelope import Envelope
+            from .envelope import Envelope
 
             envelope = Envelope(session_id=session_id)
         self.envelope = envelope
