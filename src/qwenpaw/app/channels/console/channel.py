@@ -31,6 +31,7 @@ from ....config.config import ConsoleConfig as ConsoleChannelConfig
 from ...console_push_store import append as push_store_append
 from ....constant import DEFAULT_MEDIA_DIR
 from ....exceptions import ModelQuotaExceededException
+from ....transports.console.sse import ConsoleSseEncoder
 from ..renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
@@ -74,6 +75,14 @@ class ConsoleChannel(BaseChannel):
     """
 
     channel = "console"
+
+    _strip_event_headlines = staticmethod(
+        ConsoleSseEncoder.strip_event_headlines,
+    )
+    _serialize_event_for_sse = staticmethod(ConsoleSseEncoder.encode_event)
+    _flush_headline_stream_states = staticmethod(
+        ConsoleSseEncoder.flush_states,
+    )
 
     def __init__(
         self,
@@ -418,7 +427,7 @@ class ConsoleChannel(BaseChannel):
             send_meta.setdefault("bot_prefix", self.bot_prefix)
             last_response = None
             event_count = 0
-            headline_stream_states: dict[str, Any] = {}
+            sse_encoder = ConsoleSseEncoder()
 
             async for event in self._process(request):
                 event_count += 1
@@ -450,21 +459,13 @@ class ConsoleChannel(BaseChannel):
                         or getattr(event, "id", "")
                         or "",
                     )
-                    for pending_data in self._flush_headline_stream_states(
-                        headline_stream_states,
-                        msg_id=msg_id,
-                    ):
+                    for pending_data in sse_encoder.flush(msg_id=msg_id):
                         yield f"data: {pending_data}\n\n"
                 elif obj == "response" and status == RunStatus.Completed:
-                    for pending_data in self._flush_headline_stream_states(
-                        headline_stream_states,
-                    ):
+                    for pending_data in sse_encoder.flush():
                         yield f"data: {pending_data}\n\n"
 
-                data = self._serialize_event_for_sse(
-                    event,
-                    headline_stream_states,
-                )
+                data = sse_encoder.encode(event)
                 yield f"data: {data}\n\n"
 
                 if obj == "message" and status == RunStatus.Completed:
@@ -474,9 +475,7 @@ class ConsoleChannel(BaseChannel):
                 elif obj == "response":
                     last_response = event
 
-            for pending_data in self._flush_headline_stream_states(
-                headline_stream_states,
-            ):
+            for pending_data in sse_encoder.flush():
                 yield f"data: {pending_data}\n\n"
 
             err_msg = self._get_response_error_message(last_response)

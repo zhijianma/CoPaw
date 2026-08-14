@@ -7,6 +7,7 @@ import inspect
 import re
 from pathlib import Path
 
+from qwenpaw.app.channels.base import BaseChannel
 from qwenpaw.runtime.runtime import Runtime
 
 
@@ -45,6 +46,19 @@ def test_runtime_event_stream_is_transport_neutral() -> None:
         "SSE",
     ):
         assert forbidden not in source
+
+
+def test_console_sse_implementation_is_not_owned_by_base_channel() -> None:
+    source = inspect.getsource(BaseChannel)
+
+    for forbidden_definition in (
+        "def _sanitize_surrogate_text",
+        "def _sanitize_for_json",
+        "def _strip_event_headlines",
+        "def _serialize_event_for_sse",
+        "def _flush_headline_stream_states",
+    ):
+        assert forbidden_definition not in source
 
 
 def test_legacy_channel_protocol_dependency_does_not_expand() -> None:

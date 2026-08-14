@@ -40,6 +40,7 @@ from .renderer import ChannelDisplayConfig, MessageRenderer, RenderStyle
 from .schema import ChannelType
 from .access_control import get_access_control_store
 from ...config.utils import load_config
+from ...transports.console.sse import ConsoleSseEncoder
 
 # Optional callback to enqueue payload (set by manager)
 EnqueueCallback = Optional[Callable[[Any], None]]
@@ -919,7 +920,7 @@ class BaseChannel(ABC):
         process_iterator = None
         msg_id_to_stream_type: Dict[str, str] = {}
         streaming_buffers: Dict[str, str] = {}
-        headline_stream_states: dict[str, Any] = {}
+        sse_encoder = ConsoleSseEncoder()
         try:
             process_iterator = self._process(request)
             async for event in process_iterator:
@@ -931,21 +932,13 @@ class BaseChannel(ABC):
                         or getattr(event, "id", "")
                         or "",
                     )
-                    for pending_data in self._flush_headline_stream_states(
-                        headline_stream_states,
-                        msg_id=msg_id,
-                    ):
+                    for pending_data in sse_encoder.flush(msg_id=msg_id):
                         yield f"data: {pending_data}\n\n"
                 elif obj == "response" and status == RunStatus.Completed:
-                    for pending_data in self._flush_headline_stream_states(
-                        headline_stream_states,
-                    ):
+                    for pending_data in sse_encoder.flush():
                         yield f"data: {pending_data}\n\n"
 
-                data = self._serialize_event_for_sse(
-                    event,
-                    headline_stream_states,
-                )
+                data = sse_encoder.encode(event)
 
                 yield f"data: {data}\n\n"
 
@@ -984,9 +977,7 @@ class BaseChannel(ABC):
                     last_response = event
                     await self.on_event_response(request, event)
 
-            for pending_data in self._flush_headline_stream_states(
-                headline_stream_states,
-            ):
+            for pending_data in sse_encoder.flush():
                 yield f"data: {pending_data}\n\n"
 
             err_msg = self._get_response_error_message(last_response)
@@ -1039,205 +1030,6 @@ class BaseChannel(ABC):
             raise
         finally:
             await self._finish_response_cycle(session_id)
-
-    @staticmethod
-    def _sanitize_surrogate_text(text: str) -> str:
-        try:
-            text.encode("utf-8")
-            return text
-        except UnicodeEncodeError:
-            return text.encode("utf-8", errors="replace").decode(
-                "utf-8",
-                errors="replace",
-            )
-
-    @classmethod
-    def _sanitize_for_json(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return cls._sanitize_surrogate_text(value)
-        if isinstance(value, list):
-            return [cls._sanitize_for_json(v) for v in value]
-        if isinstance(value, dict):
-            out: Dict[Any, Any] = {}
-            for k, v in value.items():
-                nk = (
-                    cls._sanitize_surrogate_text(k)
-                    if isinstance(k, str)
-                    else k
-                )
-                out[nk] = cls._sanitize_for_json(v)
-            return out
-        return value
-
-    @staticmethod
-    def _strip_event_headlines(
-        event: Any,
-        fallback: str,
-        headline_stream_states: dict[str, Any] | None = None,
-    ) -> str:
-        """Drop scroll headlines (``<!-- ⟦ … ⟧ -->``) from an SSE payload.
-
-        Channels strip headlines via ``MessageRenderer``, but this raw-event
-        SSE path (console + web UI) bypasses it, so the comment leaks into the
-        rendered chat. We strip a dumped *copy* here — the live event, the
-        persisted ``conversation_history`` row, and the durable index all keep
-        the headline verbatim (those go through separate paths). A no-op on any
-        text block that holds no headline, so user/tool text is untouched.
-        """
-        from qwenpaw.agents.context.scroll.serialize import (
-            HeadlineDeltaState,
-            strip_headline,
-            strip_headline_delta,
-        )
-
-        try:
-            payload = event.model_dump(mode="json")
-        except Exception:  # noqa: BLE001 - fall back to the unstripped data
-            return fallback
-
-        # A content delta may split the protocol line over several events.
-        # Track that state inside the current SSE request rather than on the
-        # shared channel instance, where concurrent sessions could interfere.
-        if (
-            headline_stream_states is not None
-            and getattr(event, "object", None) == "content"
-            and getattr(event, "delta", False)
-        ):
-            msg_id = str(getattr(event, "msg_id", "") or "")
-            index = int(getattr(event, "index", 0) or 0)
-            stream_key = f"{msg_id}:{index}"
-            raw_text = getattr(event, "text", "") or ""
-            state = headline_stream_states.get(
-                stream_key,
-                HeadlineDeltaState(),
-            )
-            clean_text, state = strip_headline_delta(
-                raw_text,
-                state=state,
-            )
-            if isinstance(payload, dict) and "text" in payload:
-                payload["text"] = clean_text
-            if state.suppressing or state.pending:
-                headline_stream_states[stream_key] = state
-            else:
-                headline_stream_states.pop(stream_key, None)
-
-        def walk(node: Any) -> Any:
-            if isinstance(node, str):
-                return strip_headline(node)
-            if isinstance(node, dict):
-                for key, value in list(node.items()):
-                    node[key] = walk(value)
-                return node
-            if isinstance(node, list):
-                return [walk(value) for value in node]
-            return node
-
-        payload = walk(payload)
-        return json.dumps(payload, ensure_ascii=False, default=str)
-
-    def _serialize_event_for_sse(
-        self,
-        event: Any,
-        headline_stream_states: dict[str, Any] | None = None,
-    ) -> str:
-        try:
-            if hasattr(event, "model_dump_json"):
-                data = event.model_dump_json()
-            elif hasattr(event, "json"):
-                data = event.json()
-            else:
-                data = json.dumps({"text": str(event)}, ensure_ascii=True)
-
-            # Headlines reach the UI only through this raw-event path; rewrite
-            # to strip them, but only when a fence marker is actually present
-            # so the common (headline-free) event pays nothing.
-            is_tracked_delta = (
-                headline_stream_states is not None
-                and getattr(event, "object", None) == "content"
-                and getattr(event, "delta", False)
-            )
-            should_strip = (
-                "⟦" in data
-                or "〚" in data
-                or bool(headline_stream_states)
-                or is_tracked_delta
-            )
-            if hasattr(event, "model_dump") and should_strip:
-                data = self._strip_event_headlines(
-                    event,
-                    data,
-                    headline_stream_states,
-                )
-
-            return self._sanitize_surrogate_text(data)
-
-        except Exception as err:
-            logger.warning(
-                "Event JSON serialization failed; using safe fallback: %s",
-                err,
-            )
-            try:
-                if hasattr(event, "model_dump"):
-                    payload = event.model_dump(mode="python")
-                elif hasattr(event, "dict"):
-                    payload = event.dict()
-                else:
-                    payload = {"text": str(event)}
-
-                payload = self._sanitize_for_json(payload)
-                return json.dumps(payload, ensure_ascii=True, default=str)
-            except Exception as fallback_err:
-                logger.error(
-                    "Fallback event serialization failed: %s",
-                    fallback_err,
-                )
-                return json.dumps(
-                    {
-                        "text": self._sanitize_surrogate_text(str(event)),
-                    },
-                    ensure_ascii=True,
-                )
-
-    @staticmethod
-    def _flush_headline_stream_states(
-        headline_stream_states: dict[str, Any],
-        *,
-        msg_id: str | None = None,
-    ) -> list[str]:
-        """Finalize buffered marker prefixes as ordinary content deltas."""
-        from qwenpaw.agents.context.scroll.serialize import (
-            flush_headline_delta,
-        )
-
-        flushed: list[str] = []
-        for stream_key, state in list(headline_stream_states.items()):
-            stream_msg_id, separator, raw_index = stream_key.rpartition(":")
-            if not separator:
-                stream_msg_id, raw_index = stream_key, "0"
-            if msg_id is not None and stream_msg_id != msg_id:
-                continue
-            headline_stream_states.pop(stream_key, None)
-            text = flush_headline_delta(state)
-            if not text:
-                continue
-            try:
-                index = int(raw_index)
-            except ValueError:
-                index = 0
-            flushed.append(
-                json.dumps(
-                    {
-                        "object": "content",
-                        "delta": True,
-                        "msg_id": stream_msg_id,
-                        "index": index,
-                        "text": text,
-                    },
-                    ensure_ascii=False,
-                ),
-            )
-        return flushed
 
     @classmethod
     def from_env(
