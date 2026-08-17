@@ -10,6 +10,7 @@ import {
   Brain,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { CHANNEL_COLORS } from "../../../constants/channel";
 import type { PushMessage } from "../types";
 import styles from "./PushMessageCard.module.less";
 
@@ -33,11 +34,7 @@ const CHANNEL_ICONS = {
   skill: RefreshCw,
 };
 
-const CHANNEL_COLORS = {
-  wechat: "#07C160",
-  slack: "#4A154B",
-  telegram: "#0088CC",
-  discord: "#5865F2",
+const PUSH_SOURCE_COLORS = {
   email: "#EA4335",
   memory: "#7C3AED",
   heartbeat: "#5865F2",
@@ -54,7 +51,9 @@ export function PushMessageCard(props: PushMessageCardProps) {
   const { message, onView, onDelete, selected = false, onSelectChange } = props;
   const { t } = useTranslation();
   const IconComponent = CHANNEL_ICONS[message.channelType];
-  const channelColor = CHANNEL_COLORS[message.channelType];
+  const channelColor =
+    CHANNEL_COLORS[message.channelType] ??
+    PUSH_SOURCE_COLORS[message.channelType as keyof typeof PUSH_SOURCE_COLORS];
   const sourceType = (message.metadata?.sourceType || "").toLowerCase();
   const isCronMessage = sourceType === "cron";
   const displayTitle = isCronMessage

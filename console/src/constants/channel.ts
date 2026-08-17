@@ -1,22 +1,3 @@
-export const CHANNELS = {
-  imessage: "imessage",
-  discord: "discord",
-  dingtalk: "dingtalk",
-  feishu: "feishu",
-  qq: "qq",
-  telegram: "telegram",
-  slack: "slack",
-  mattermost: "mattermost",
-  mqtt: "mqtt",
-  console: "console",
-  matrix: "matrix",
-  voice: "voice",
-  sip: "sip",
-  wecom: "wecom",
-  xiaoyi: "xiaoyi",
-  yuanbao: "yuanbao",
-};
-
 export const CHANNEL_COLORS: Record<string, string> = {
   imessage: "geekblue",
   discord: "blue",
@@ -34,4 +15,6 @@ export const CHANNEL_COLORS: Record<string, string> = {
   wecom: "olive",
   xiaoyi: "cyan",
   yuanbao: "lime",
+  wechat: "green",
+  onebot: "green",
 };
