@@ -13,6 +13,12 @@ from .models import (
     InboundMessage,
     ReplyTarget,
 )
+from .ports import (
+    ChannelAdapter,
+    DeliveryStrategy,
+    ReplyEvent,
+    ReplyEventType,
+)
 from .routing import BindingRouter, build_turn_request
 
 __all__ = [
@@ -21,9 +27,13 @@ __all__ = [
     "AgentBinding",
     "BindingRouter",
     "ChannelDefinition",
+    "ChannelAdapter",
     "ChannelEndpoint",
     "ChannelRoute",
     "InboundMessage",
+    "DeliveryStrategy",
+    "ReplyEvent",
+    "ReplyEventType",
     "ReplyTarget",
     "build_turn_request",
 ]
