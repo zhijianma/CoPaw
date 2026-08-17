@@ -21,6 +21,7 @@ class ChannelDefinition:
     order: int
     surface: ChannelSurface = "channel"
     required: bool = False
+    identity_fields: tuple[str, ...] = ()
 
     def to_public_dict(self) -> dict[str, str | int | bool]:
         """Return metadata safe for the public configuration API."""
@@ -29,6 +30,7 @@ class ChannelDefinition:
         data.pop("class_name")
         data.pop("config_class_name")
         data.pop("required")
+        data.pop("identity_fields")
         return data
 
 
@@ -48,6 +50,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "DingTalkChannel",
         "DingTalkConfig",
         10,
+        identity_fields=("client_id",),
     ),
     ChannelDefinition(
         "feishu",
@@ -55,6 +58,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "FeishuChannel",
         "FeishuConfig",
         20,
+        identity_fields=("app_id",),
     ),
     ChannelDefinition(
         "imessage",
@@ -69,6 +73,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "DiscordChannel",
         "DiscordConfig",
         40,
+        identity_fields=("bot_token",),
     ),
     ChannelDefinition(
         "telegram",
@@ -76,14 +81,23 @@ BUILTIN_CHANNEL_CATALOG = (
         "TelegramChannel",
         "TelegramConfig",
         50,
+        identity_fields=("bot_token",),
     ),
-    ChannelDefinition("qq", ".qq", "QQChannel", "QQConfig", 60),
+    ChannelDefinition(
+        "qq",
+        ".qq",
+        "QQChannel",
+        "QQConfig",
+        60,
+        identity_fields=("app_id",),
+    ),
     ChannelDefinition(
         "wechat",
         ".wechat",
         "WeChatChannel",
         "WeChatConfig",
         70,
+        identity_fields=("bot_token",),
     ),
     ChannelDefinition(
         "wecom",
@@ -91,6 +105,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "WecomChannel",
         "WecomConfig",
         80,
+        identity_fields=("bot_id",),
     ),
     ChannelDefinition(
         "yuanbao",
@@ -98,6 +113,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "YuanbaoChannel",
         "YuanbaoConfig",
         90,
+        identity_fields=("app_id",),
     ),
     ChannelDefinition(
         "matrix",
@@ -105,6 +121,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "MatrixChannel",
         "MatrixConfig",
         100,
+        identity_fields=("homeserver", "user_id"),
     ),
     ChannelDefinition(
         "sip",
@@ -119,6 +136,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "XiaoYiChannel",
         "XiaoYiConfig",
         120,
+        identity_fields=("agent_id",),
     ),
     ChannelDefinition(
         "slack",
@@ -126,6 +144,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "SlackChannel",
         "SlackConfig",
         130,
+        identity_fields=("bot_token",),
     ),
     ChannelDefinition(
         "mattermost",
@@ -133,6 +152,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "MattermostChannel",
         "MattermostConfig",
         140,
+        identity_fields=("url", "bot_token"),
     ),
     ChannelDefinition(
         "mqtt",
@@ -147,6 +167,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "VoiceChannel",
         "VoiceChannelConfig",
         160,
+        identity_fields=("phone_number_sid",),
     ),
     ChannelDefinition(
         "onebot",
@@ -158,6 +179,15 @@ BUILTIN_CHANNEL_CATALOG = (
 )
 
 BUILTIN_CHANNEL_KEYS = tuple(item.key for item in BUILTIN_CHANNEL_CATALOG)
+_BUILTIN_CHANNEL_BY_KEY = {item.key: item for item in BUILTIN_CHANNEL_CATALOG}
+
+
+def get_channel_definition(channel_key: str) -> ChannelDefinition:
+    """Return one built-in definition or raise for an unknown key."""
+    try:
+        return _BUILTIN_CHANNEL_BY_KEY[channel_key]
+    except KeyError as error:
+        raise KeyError(f"Unknown built-in channel: {channel_key}") from error
 
 
 __all__ = [
@@ -165,4 +195,5 @@ __all__ = [
     "BUILTIN_CHANNEL_KEYS",
     "ChannelDefinition",
     "ChannelSurface",
+    "get_channel_definition",
 ]

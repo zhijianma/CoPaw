@@ -6,22 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Optional
 
-
-_CHANNEL_IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
-    "discord": ("bot_token",),
-    "telegram": ("bot_token",),
-    "slack": ("bot_token",),
-    "mattermost": ("url", "bot_token"),
-    "wechat": ("bot_token",),
-    "dingtalk": ("client_id",),
-    "feishu": ("app_id",),
-    "qq": ("app_id",),
-    "wecom": ("bot_id",),
-    "matrix": ("homeserver", "user_id"),
-    "voice": ("phone_number_sid",),
-    "xiaoyi": ("agent_id",),
-    "yuanbao": ("app_id",),
-}
+from ...domain.channels.catalog import get_channel_definition
 
 
 def _config_value(config: Any, field: str) -> Any:
@@ -47,8 +32,11 @@ def get_channel_bot_identity(
     if config is None:
         return None
 
-    fields = _CHANNEL_IDENTITY_FIELDS.get(channel_name)
-    if fields is None:
+    try:
+        fields = get_channel_definition(channel_name).identity_fields
+    except KeyError:
+        return None
+    if not fields:
         return None
 
     identity = tuple(

@@ -70,6 +70,14 @@ def test_console_envelope_is_not_implemented_in_runtime_package() -> None:
     assert "transports.console.envelope" in source
 
 
+def test_channel_identity_map_is_not_redeclared() -> None:
+    source = Path("src/qwenpaw/app/channels/conflict.py").read_text(
+        encoding="utf-8",
+    )
+
+    assert "_CHANNEL_IDENTITY_FIELDS" not in source
+
+
 def test_legacy_channel_protocol_dependency_does_not_expand() -> None:
     channel_root = Path("src/qwenpaw/app/channels")
     pattern = re.compile(r"\b(?:AgentRequest|AgentResponse)\b")

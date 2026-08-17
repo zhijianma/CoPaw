@@ -6,6 +6,16 @@ from types import SimpleNamespace
 import pytest
 
 from qwenpaw.app.channels.conflict import get_channel_bot_identity
+from qwenpaw.domain.channels.catalog import get_channel_definition
+
+
+def test_identity_fields_are_owned_by_channel_catalog():
+    assert get_channel_definition("telegram").identity_fields == ("bot_token",)
+    assert get_channel_definition("mattermost").identity_fields == (
+        "url",
+        "bot_token",
+    )
+    assert get_channel_definition("console").identity_fields == ()
 
 
 @pytest.mark.parametrize(
