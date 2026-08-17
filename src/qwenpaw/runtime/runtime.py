@@ -18,6 +18,8 @@ import logging
 import uuid
 from typing import Any, AsyncGenerator
 
+from ..domain.channels.models import ReplyTarget
+from ..domain.channels.ports import ReplyEvent
 from ..domain.turns.events import RuntimeEvent
 from ..transports.console.presenter import ConsoleEventPresenter
 from .builder import AgentBuilder
@@ -25,6 +27,7 @@ from .executor import AgentExecutor
 from .hooks import HookAction, HookContext
 from .message_convert import _get_last_user_text, _request_input_to_msgs
 from .phases import Phase
+from .reply_projector import ReplyProjector
 from .turn_state_accumulator import TurnStateAccumulator
 
 logger = logging.getLogger(__name__)
@@ -59,6 +62,17 @@ class Runtime:
         async for runtime_event in self.stream_events(request):
             async for output in presenter.present(runtime_event):
                 yield output
+
+    async def stream_replies(
+        self,
+        request: Any,
+        *,
+        target: ReplyTarget,
+    ) -> AsyncGenerator[ReplyEvent, None]:
+        """Project a runtime stream for an adapter-owned reply target."""
+        projector = ReplyProjector(target)
+        async for event in self.stream_events(request):
+            yield projector.project(event)
 
     async def stream_events(  # pylint: disable=too-many-branches
         # pylint: disable=too-many-statements
