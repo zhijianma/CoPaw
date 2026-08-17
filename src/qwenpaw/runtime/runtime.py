@@ -21,6 +21,7 @@ from typing import Any, AsyncGenerator
 from ..domain.channels.models import ReplyTarget
 from ..domain.channels.ports import ReplyEvent
 from ..domain.turns.events import RuntimeEvent
+from ..domain.turns.models import TurnRequest
 from ..transports.console.presenter import ConsoleEventPresenter
 from .builder import AgentBuilder
 from .executor import AgentExecutor
@@ -28,6 +29,7 @@ from .hooks import HookAction, HookContext
 from .message_convert import _get_last_user_text, _request_input_to_msgs
 from .phases import Phase
 from .reply_projector import ReplyProjector
+from .request_adapter import to_legacy_agent_request
 from .turn_state_accumulator import TurnStateAccumulator
 
 logger = logging.getLogger(__name__)
@@ -502,7 +504,9 @@ class Runtime:
     def _normalize(request: Any) -> Any:
         from ..schemas import AgentRequest
 
-        if isinstance(request, dict):
+        if isinstance(request, TurnRequest):
+            request = to_legacy_agent_request(request)
+        elif isinstance(request, dict):
             request = AgentRequest(**request)
         if not getattr(request, "session_id", None):
             request.session_id = uuid.uuid4().hex
