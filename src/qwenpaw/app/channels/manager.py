@@ -21,9 +21,16 @@ from typing import (
 from .base import BaseChannel, ContentType, ProcessHandler, TextContent
 from .renderer import ChannelDisplayConfig
 from .command_registry import CommandRegistry
+from .legacy_routing import project_agent_channels
 from .registry import get_channel_registry
 from .unified_queue_manager import UnifiedQueueManager
 from ...config import get_available_channels
+from ...domain.channels.models import (
+    AgentBinding,
+    ChannelEndpoint,
+    ChannelRoute,
+)
+from ...domain.channels.routing import BindingRouter
 
 if TYPE_CHECKING:
     from ...config.config import Config
@@ -71,8 +78,20 @@ class ChannelManager:
     consume_one(). Enqueue via enqueue(channel_id, payload) (thread-safe).
     """
 
-    def __init__(self, channels: List[BaseChannel]):
+    def __init__(
+        self,
+        channels: List[BaseChannel],
+        *,
+        endpoints: List[ChannelEndpoint] | None = None,
+        bindings: List[AgentBinding] | None = None,
+    ):
         self.channels = channels
+        self.endpoints = tuple(endpoints or ())
+        self.bindings = tuple(bindings or ())
+        self._binding_router = BindingRouter(
+            self.endpoints,
+            self.bindings,
+        )
         self._lock = asyncio.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -119,6 +138,7 @@ class ChannelManager:
         config: "Config",
         on_last_dispatch: OnLastDispatch = None,
         workspace_dir: Path | None = None,
+        agent_id: str = "default",
     ) -> "ChannelManager":
         """Create channels from config (config.json or agent.json).
 
@@ -203,7 +223,26 @@ class ChannelManager:
                 )
                 continue
 
-        return cls(channels)
+        endpoints, bindings = project_agent_channels(agent_id, ch)
+        return cls(
+            channels,
+            endpoints=endpoints,
+            bindings=bindings,
+        )
+
+    def resolve_route(
+        self,
+        endpoint_id: str,
+        *,
+        conversation_id: str,
+        agent_hint: str | None = None,
+    ) -> ChannelRoute:
+        """Resolve an explicit endpoint binding for inbound dispatch."""
+        return self._binding_router.resolve(
+            endpoint_id,
+            conversation_id=conversation_id,
+            agent_hint=agent_hint,
+        )
 
     def _make_enqueue_cb(self, channel_id: str) -> Callable[[Any], None]:
         """Return a callback that enqueues payload for the given channel."""
