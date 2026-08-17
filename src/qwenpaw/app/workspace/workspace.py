@@ -24,6 +24,7 @@ from .service_factories import (
     create_driver_config_watcher,
     create_chat_service,
     create_channel_service,
+    create_console_transport,
     create_agent_config_watcher,
 )
 from .local_workspace import QwenPawLocalWorkspace
@@ -114,6 +115,11 @@ class Workspace:
     def channel_manager(self):
         """Get channel manager instance from ServiceManager."""
         return self._service_manager.services.get("channel_manager")
+
+    @property
+    def console_transport(self):
+        """Get the per-workspace Console Web transport."""
+        return self._service_manager.services.get("console_transport")
 
     @property
     def cron_manager(self):
@@ -419,6 +425,20 @@ class Workspace:
                 reusable=True,
                 priority=20,
                 concurrent_init=True,
+            ),
+        )
+
+        # Priority 25: Console Web transport
+        sm.register(
+            ServiceDescriptor(
+                name="console_transport",
+                service_class=None,
+                post_init=create_console_transport,
+                start_method="start",
+                stop_method="stop",
+                priority=25,
+                concurrent_init=False,
+                optional=True,
             ),
         )
 

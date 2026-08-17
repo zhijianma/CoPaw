@@ -39,6 +39,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/console", tags=["console"])
 
 
+async def _get_console_transport(workspace: Any) -> Any:
+    """Resolve the Console service with a legacy manager fallback."""
+    service_manager = getattr(workspace, "_service_manager", None)
+    services = getattr(service_manager, "services", None)
+    if isinstance(services, dict):
+        transport = services.get("console_transport")
+        if transport is not None:
+            return transport
+    manager = getattr(workspace, "channel_manager", None)
+    if manager is None:
+        return None
+    return await manager.get_channel("console")
+
+
 # ── Background task store ──
 
 
@@ -277,7 +291,7 @@ async def post_console_chat(
     Stop via POST /console/chat/stop. Reconnect with body.reconnect=true.
     """
     workspace = await get_agent_for_request(request)
-    console_channel = await workspace.channel_manager.get_channel("console")
+    console_channel = await _get_console_transport(workspace)
     if console_channel is None:
         raise HTTPException(
             status_code=503,
@@ -438,7 +452,7 @@ async def post_console_upload(
     """Save to console channel media_dir."""
 
     workspace = await get_agent_for_request(request)
-    console_channel = await workspace.channel_manager.get_channel("console")
+    console_channel = await _get_console_transport(workspace)
     if console_channel is None:
         raise HTTPException(
             status_code=503,
@@ -714,7 +728,7 @@ async def post_console_chat_task(  # pylint: disable=too-many-statements
     ``GET /console/chat/task/{task_id}``.
     """
     workspace = await get_agent_for_request(request)
-    console_channel = await workspace.channel_manager.get_channel("console")
+    console_channel = await _get_console_transport(workspace)
     if console_channel is None:
         raise HTTPException(
             status_code=503,

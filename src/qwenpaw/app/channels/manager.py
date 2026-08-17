@@ -84,8 +84,12 @@ class ChannelManager:
         *,
         endpoints: List[ChannelEndpoint] | None = None,
         bindings: List[AgentBinding] | None = None,
+        transports: List[BaseChannel] | None = None,
     ):
         self.channels = channels
+        self._transports = {
+            transport.channel: transport for transport in transports or []
+        }
         self.endpoints = tuple(endpoints or ())
         self.bindings = tuple(bindings or ())
         self._binding_router = BindingRouter(
@@ -122,7 +126,7 @@ class ChannelManager:
         on_last_dispatch: called when a user send+reply was sent.
         """
         available = get_available_channels()
-        registry = get_channel_registry()
+        registry = get_channel_registry(surface="channel")
         channels: list[BaseChannel] = [
             ch_cls.from_env(process, on_reply_sent=on_last_dispatch)
             for key, ch_cls in registry.items()
@@ -139,6 +143,7 @@ class ChannelManager:
         on_last_dispatch: OnLastDispatch = None,
         workspace_dir: Path | None = None,
         agent_id: str = "default",
+        transports: List[BaseChannel] | None = None,
     ) -> "ChannelManager":
         """Create channels from config (config.json or agent.json).
 
@@ -154,7 +159,7 @@ class ChannelManager:
         extra = getattr(ch, "__pydantic_extra__", None) or {}
 
         channels: list[BaseChannel] = []
-        for key, ch_cls in get_channel_registry().items():
+        for key, ch_cls in get_channel_registry(surface="channel").items():
             if key not in available:
                 continue
             ch_cfg = getattr(ch, key, None)
@@ -228,6 +233,7 @@ class ChannelManager:
             channels,
             endpoints=endpoints,
             bindings=bindings,
+            transports=transports,
         )
 
     def resolve_route(
@@ -591,7 +597,7 @@ class ChannelManager:
             for ch in self.channels:
                 if ch.channel == channel:
                     return ch
-            return None
+            return self._transports.get(channel)
 
     async def get_channel_health(
         self,

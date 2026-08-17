@@ -15,6 +15,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+async def create_console_transport(ws: "Workspace", _service):
+    """Create the Console Web transport outside ChannelManager lifecycle."""
+    # pylint: disable=protected-access
+    channels = ws._config.channels
+    if channels is None:
+        return None
+    config = getattr(channels, "console", None)
+    if config is None or not getattr(config, "enabled", False):
+        return None
+
+    from ...transports.console.channel import ConsoleTransport
+    from ..channels.renderer import ChannelDisplayConfig
+
+    transport = ConsoleTransport.from_config(
+        process=ws.stream_query,
+        config=config,
+        display_config=ChannelDisplayConfig.from_config(config),
+        workspace_dir=ws.workspace_dir,
+    )
+    transport.set_workspace(ws)
+    transport._language = getattr(ws._config, "language", "zh") or "zh"
+    ws._service_manager.services["console_transport"] = transport
+    return transport
+    # pylint: enable=protected-access
+
+
 async def create_driver_service(ws: "Workspace", _service):
     """Create and initialize the per-workspace DriverManager.
 
@@ -174,6 +200,7 @@ async def create_channel_service(ws: "Workspace", _):
         on_last_dispatch=on_last_dispatch,
         workspace_dir=ws.workspace_dir,
         agent_id=ws.agent_id,
+        transports=[ws.console_transport] if ws.console_transport else None,
     )
     ws._service_manager.services["channel_manager"] = cm
 
