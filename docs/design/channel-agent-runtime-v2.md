@@ -214,6 +214,8 @@ flowchart TB
 - [x] 保留旧配置投影、旧 import 和旧事件流兼容。
 - [x] 增加 Python/TypeScript 重复定义一致性门禁。
 - [x] 完成专项测试、静态检查、前端类型检查和构建验证。
+- [x] 完成隔离用户配置的仓库全量 pytest 验收。
+- [x] 同步钉钉方案文档并完成远端回读校验。
 
 ## 10. 验收标准
 
@@ -229,3 +231,20 @@ flowchart TB
 分支：`codex/channel-runtime-v2-phase0-2`
 
 本次重构按可回滚的小提交实施，覆盖领域模型、Console 拆分、路由、投递、配置和一致性治理。每个切片都先增加失败测试，再实现并执行专项回归。
+
+## 12. 最终验证记录
+
+验证日期：2026-08-17。
+
+- 仓库全量 pytest：`7644 passed, 19 skipped, 2 xpassed`，零失败。
+- Unit 全量 pytest：`6837 passed, 16 skipped`，零失败。
+- Channel、Runtime、Domain 和架构专项：`1903 passed, 1 skipped`。
+- Config 和 Workspace 专项：`284 passed`。
+- Console 兼容链路专项：`53 passed`。
+- 前端目标 Vitest：`14 passed`。
+- TypeScript：`tsc -b --noEmit` 通过。
+- 前端生产构建：通过；仅保留既有的 Vite chunk 告警。
+- changed-files pre-commit：通过。
+- 钉钉文档：覆盖更新成功，归一化回读的 8 个关键章节全部命中。
+
+pytest 使用 `QWENPAW_WORKING_DIR` 指向隔离的临时目录。未隔离时，测试会读取用户真实 `~/.copaw`，启动真实 Feishu 并连接真实 MCP，导致 asyncio teardown 等待外部连接；该现象属于测试环境污染，不是本次 Channel/Agent 重构回归。隔离后 Unit 和仓库全量测试均完成且零失败。
