@@ -3,59 +3,14 @@
 
 from __future__ import annotations
 
-# pylint: disable=protected-access,redefined-outer-name,unused-argument,use-implicit-booleaness-not-comparison,unused-import  # noqa: E501
-
-import pytest
+# pylint: disable=protected-access,redefined-outer-name,unused-argument
 
 from qwenpaw.app.channels.schema import (
     BUILTIN_CHANNEL_TYPES,
     DEFAULT_CHANNEL,
-    ChannelAddress,
-    ChannelMessageConverter,
     ChannelType,
 )
 from qwenpaw.domain.channels.catalog import BUILTIN_CHANNEL_KEYS
-
-
-class TestChannelAddress:
-    def test_kind_and_id_required(self):
-        addr = ChannelAddress(kind="dm", id="u1")
-        assert addr.kind == "dm"
-        assert addr.id == "u1"
-        assert addr.extra is None
-
-    def test_extra_defaults_none(self):
-        addr = ChannelAddress(kind="channel", id="c1")
-        assert addr.extra is None
-
-    def test_to_handle_default_format(self):
-        addr = ChannelAddress(kind="discord", id="123")
-        assert addr.to_handle() == "discord:123"
-
-    def test_to_handle_uses_extra_override(self):
-        addr = ChannelAddress(
-            kind="dm",
-            id="456",
-            extra={"to_handle": "discord:ch:999"},
-        )
-        assert addr.to_handle() == "discord:ch:999"
-
-    def test_to_handle_extra_without_to_handle_key(self):
-        addr = ChannelAddress(kind="dm", id="u1", extra={"foo": "bar"})
-        assert addr.to_handle() == "dm:u1"
-
-    def test_to_handle_extra_to_handle_non_string(self):
-        addr = ChannelAddress(kind="dm", id="u1", extra={"to_handle": 42})
-        assert addr.to_handle() == "42"
-
-    def test_to_handle_empty_id(self):
-        addr = ChannelAddress(kind="console", id="")
-        assert addr.to_handle() == "console:"
-
-    def test_extra_is_mutable_dict(self):
-        addr = ChannelAddress(kind="dm", id="x")
-        addr.extra = {"k": "v"}
-        assert addr.extra == {"k": "v"}
 
 
 class TestChannelSchemaConstants:
@@ -94,34 +49,3 @@ class TestChannelSchemaConstants:
 
     def test_builtin_types_are_derived_from_catalog(self):
         assert BUILTIN_CHANNEL_TYPES == BUILTIN_CHANNEL_KEYS
-
-
-class TestChannelMessageConverterProtocol:
-    def test_protocol_is_runtime_checkable(self):
-        assert isinstance(ChannelMessageConverter, type)
-
-    def test_protocol_methods_exist(self):
-        assert hasattr(
-            ChannelMessageConverter,
-            "build_agent_request_from_native",
-        )
-        assert hasattr(ChannelMessageConverter, "send_response")
-
-    def test_object_satisfying_protocol(self):
-        class Impl:
-            def build_agent_request_from_native(self, native_payload):
-                return native_payload
-
-            async def send_response(self, to_handle, response, meta=None):
-                return None
-
-        impl = Impl()
-        assert isinstance(impl, ChannelMessageConverter)
-
-    def test_object_missing_send_response_does_not_satisfy(self):
-        class Bad:
-            def build_agent_request_from_native(self, native_payload):
-                return None
-
-        impl = Bad()
-        assert not isinstance(impl, ChannelMessageConverter)

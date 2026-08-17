@@ -78,6 +78,15 @@ def test_channel_identity_map_is_not_redeclared() -> None:
     assert "_CHANNEL_IDENTITY_FIELDS" not in source
 
 
+def test_legacy_unused_channel_protocol_is_removed() -> None:
+    source = Path("src/qwenpaw/app/channels/schema.py").read_text(
+        encoding="utf-8",
+    )
+
+    assert "class ChannelAddress" not in source
+    assert "class ChannelMessageConverter" not in source
+
+
 def test_legacy_channel_protocol_dependency_does_not_expand() -> None:
     channel_root = Path("src/qwenpaw/app/channels")
     pattern = re.compile(r"\b(?:AgentRequest|AgentResponse)\b")
