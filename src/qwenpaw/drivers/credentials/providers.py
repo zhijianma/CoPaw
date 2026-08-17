@@ -9,7 +9,8 @@ import hashlib
 import hmac
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import httpx
@@ -52,15 +53,37 @@ class CredentialProvider(ABC):
         del secrets
 
 
+@dataclass(frozen=True)
+class TokenExchangeResult:
+    """OAuth token response used by credential providers."""
+
+    access_token: str = field(repr=False)
+    expires_in: int
+    refresh_token: str | None = field(default=None, repr=False)
+
+    def __iter__(self) -> Iterator[str | int]:
+        """Preserve two-value unpacking used by existing integrations."""
+        yield self.access_token
+        yield self.expires_in
+
+
+TokenExchangeValue = (
+    TokenExchangeResult | tuple[str, int] | tuple[str, int, str | None]
+)
+
+
 class TokenExchanger(Protocol):
-    async def exchange(self, secrets: dict[str, Any]) -> tuple[str, int]:
-        """Return access_token and expires_in seconds."""
+    async def exchange(self, secrets: dict[str, Any]) -> TokenExchangeValue:
+        """Return an OAuth token result.
+
+        Two- and three-item tuples remain accepted for custom exchangers.
+        """
 
 
 class StandardOAuth2Exchanger:
     """Small OAuth2 token exchanger used by default providers."""
 
-    async def exchange(self, secrets: dict[str, Any]) -> tuple[str, int]:
+    async def exchange(self, secrets: dict[str, Any]) -> TokenExchangeResult:
         token_endpoint = str(secrets.get("token_endpoint") or "")
         if not token_endpoint:
             raise OAuthRequiredError(str(secrets.get("ref") or ""))
@@ -96,7 +119,34 @@ class StandardOAuth2Exchanger:
             raise DriverCredentialProviderError(
                 f"OAuth token endpoint did not return access_token: {reason}",
             )
-        return access_token, int(data.get("expires_in", 3600))
+        refresh_token = str(data.get("refresh_token") or "") or None
+        return TokenExchangeResult(
+            access_token=access_token,
+            expires_in=int(data.get("expires_in", 3600)),
+            refresh_token=refresh_token,
+        )
+
+
+def _coerce_token_exchange_result(
+    value: TokenExchangeValue,
+) -> TokenExchangeResult:
+    """Normalize built-in and legacy custom exchanger return values."""
+    if isinstance(value, TokenExchangeResult):
+        return value
+    if len(value) == 2:
+        access_token, expires_in = value
+        refresh_token = None
+    elif len(value) == 3:
+        access_token, expires_in, refresh_token = value
+    else:  # pragma: no cover - guarded by the public type contract
+        raise DriverCredentialProviderError(
+            "OAuth token exchanger must return 2 or 3 values",
+        )
+    return TokenExchangeResult(
+        access_token=str(access_token),
+        expires_in=int(expires_in),
+        refresh_token=str(refresh_token) if refresh_token else None,
+    )
 
 
 class NoneProvider(CredentialProvider):
@@ -190,12 +240,14 @@ class OAuth2CCProvider(CredentialProvider):
             record = await self._store.get(self._ref)
             values = record.values
             values["ref"] = self._ref
-            token, expires_in = await self._exchanger.exchange(values)
-            self._cached_token = token
-            self._expires_at = time.time() + expires_in
+            result = _coerce_token_exchange_result(
+                await self._exchanger.exchange(values),
+            )
+            self._cached_token = result.access_token
+            self._expires_at = time.time() + result.expires_in
             return ResolvedCredential(
                 kind="oauth2_cc",
-                secrets={"access_token": token},
+                secrets={"access_token": result.access_token},
             )
 
     def on_secrets_changed(
@@ -249,11 +301,15 @@ class OAuth2AuthCodeProvider(CredentialProvider):
             if not values.get("refresh_token"):
                 raise OAuthRequiredError(self._ref)
             values["ref"] = self._ref
-            token, expires_in = await self._exchanger.exchange(values)
+            result = _coerce_token_exchange_result(
+                await self._exchanger.exchange(values),
+            )
             public = dict(record.public)
             secrets = dict(record.secrets)
-            public["expires_at"] = time.time() + expires_in
-            secrets["access_token"] = token
+            public["expires_at"] = time.time() + result.expires_in
+            secrets["access_token"] = result.access_token
+            if result.refresh_token:
+                secrets["refresh_token"] = result.refresh_token
             await self._store.put(
                 CredentialRecord(
                     ref=record.ref,
@@ -265,7 +321,7 @@ class OAuth2AuthCodeProvider(CredentialProvider):
             )
             return ResolvedCredential(
                 kind=record.kind,
-                secrets={"access_token": token},
+                secrets={"access_token": result.access_token},
             )
 
 

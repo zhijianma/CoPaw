@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import re
 import time
@@ -52,6 +54,13 @@ class MCPDriverHandler(DriverHandler):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._client: Any | None = None
+        self._transport = "stdio"
+        self._client_swap_lock = asyncio.Lock()
+        self._client_state_lock = asyncio.Lock()
+        self._active_client_calls: dict[int, int] = {}
+        self._retired_clients: dict[int, Any] = {}
+        self._applied_headers_fingerprint = ""
+        self._shutting_down = False
         self._capability_cache: (
             tuple[
                 float,
@@ -62,8 +71,10 @@ class MCPDriverHandler(DriverHandler):
 
     async def _setup(self) -> None:
         """Create and connect StdIOStatefulClient or HttpStatefulClient."""
+        self._shutting_down = False
         endpoint = self._card.endpoint
         transport = str(endpoint.get("transport") or "stdio")
+        self._transport = transport
         credentials = await self._resolve_credentials()
 
         if transport == "stdio":
@@ -83,15 +94,14 @@ class MCPDriverHandler(DriverHandler):
                 credentials,
             )
             headers.update(implicit_auth_headers(credentials, headers))
-            self._client = HttpStatefulClient(
-                name=self._card.name,
-                transport=transport,
-                url=str(endpoint.get("url") or ""),
-                headers=headers or None,
-            )
+            self._client = self._new_http_client(headers)
 
         try:
             await self._client.connect()
+            if transport != "stdio":
+                self._applied_headers_fingerprint = _headers_fingerprint(
+                    headers,
+                )
         except asyncio.CancelledError:
             await self._client.close(ignore_errors=True)
             self._client = None
@@ -104,9 +114,20 @@ class MCPDriverHandler(DriverHandler):
     async def _teardown(self) -> None:
         """Close connected MCP client if present."""
         self._capability_cache = None
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
+        # Do not let an in-progress credential refresh install a new client
+        # after teardown has already detached the current one.
+        async with self._client_swap_lock:
+            self._shutting_down = True
+            async with self._client_state_lock:
+                clients = list(self._retired_clients.values())
+                self._retired_clients.clear()
+                if self._client is not None:
+                    clients.append(self._client)
+                    self._client = None
+                self._active_client_calls.clear()
+                self._applied_headers_fingerprint = ""
+        for client in clients:
+            await client.close(ignore_errors=True)
 
     async def _execute(
         self,
@@ -117,18 +138,25 @@ class MCPDriverHandler(DriverHandler):
         """Call MCP tool on underlying client."""
         del credential
         del context
-        if self._client is None:
-            raise RuntimeError(f"MCP driver '{self.name}' is not connected")
-        return await self._client.call_tool(
-            str(kwargs["tool_name"]),
-            dict(kwargs.get("arguments") or {}),
-        )
+        client = await self._acquire_client()
+        try:
+            return await client.call_tool(
+                str(kwargs["tool_name"]),
+                dict(kwargs.get("arguments") or {}),
+            )
+        finally:
+            await self._release_client(client)
 
     async def list_tools(self) -> Any:
         """Delegate to underlying MCP client list_tools."""
-        if self._client is None:
-            raise RuntimeError(f"MCP driver '{self.name}' is not connected")
-        return await self._client.list_tools()
+        if self._transport != "stdio":
+            credentials = await self._resolve_credentials()
+            await self._sync_remote_credentials(credentials)
+        client = await self._acquire_client()
+        try:
+            return await client.list_tools()
+        finally:
+            await self._release_client(client)
 
     async def list_capabilities(
         self,
@@ -248,8 +276,121 @@ class MCPDriverHandler(DriverHandler):
             subjects=subjects,
             extras=dict(kwargs),
         )
-        credential = await self._credential_provider.resolve()
+        credentials = await self._sync_remote_credentials(
+            await self._resolve_credentials(),
+        )
+        credential = self._primary_credential(credentials)
         return await self._execute(credential, context, **kwargs)
+
+    def _primary_credential(
+        self,
+        credentials: dict[str, ResolvedCredential],
+    ) -> ResolvedCredential:
+        for alias, provider in self._credential_providers.items():
+            if provider is self._credential_provider:
+                return credentials.get(alias, ResolvedCredential.EMPTY)
+        return ResolvedCredential.EMPTY
+
+    def _resolved_http_headers(
+        self,
+        credentials: dict[str, ResolvedCredential],
+    ) -> dict[str, str]:
+        configured = self._card.endpoint.get("headers") or {}
+        headers = resolve_binding(configured, credentials)
+        headers.update(implicit_auth_headers(credentials, headers))
+        return headers
+
+    def _new_http_client(self, headers: dict[str, str]) -> HttpStatefulClient:
+        endpoint = self._card.endpoint
+        return HttpStatefulClient(
+            name=self._card.name,
+            transport=self._transport,
+            url=str(endpoint.get("url") or ""),
+            headers=headers or None,
+        )
+
+    async def _sync_remote_credentials(
+        self,
+        credentials: dict[str, ResolvedCredential],
+    ) -> dict[str, ResolvedCredential]:
+        """Reconnect a remote MCP client when resolved headers change."""
+        if self._transport == "stdio":
+            return credentials
+        headers = self._resolved_http_headers(credentials)
+        fingerprint = _headers_fingerprint(headers)
+        if fingerprint == self._applied_headers_fingerprint:
+            return credentials
+
+        async with self._client_swap_lock:
+            if self._shutting_down:
+                raise RuntimeError(
+                    f"MCP driver '{self.name}' is shutting down",
+                )
+            # A concurrent invocation may already have refreshed and swapped.
+            credentials = await self._resolve_credentials()
+            headers = self._resolved_http_headers(credentials)
+            fingerprint = _headers_fingerprint(headers)
+            if fingerprint == self._applied_headers_fingerprint:
+                return credentials
+
+            candidate = self._new_http_client(headers)
+            installed = False
+            try:
+                await candidate.connect()
+                close_now: Any | None = None
+                async with self._client_state_lock:
+                    old_client = self._client
+                    self._client = candidate
+                    installed = True
+                    self._applied_headers_fingerprint = fingerprint
+                    self._capability_cache = None
+                    if old_client is not None:
+                        old_id = id(old_client)
+                        if self._active_client_calls.get(old_id, 0):
+                            self._retired_clients[old_id] = old_client
+                        else:
+                            close_now = old_client
+            except BaseException:
+                if not installed:
+                    await asyncio.shield(
+                        candidate.close(ignore_errors=True),
+                    )
+                raise
+            if close_now is not None:
+                await asyncio.shield(close_now.close(ignore_errors=True))
+            return credentials
+
+    async def _acquire_client(self) -> Any:
+        async with self._client_state_lock:
+            client = self._client
+            if client is None:
+                raise RuntimeError(
+                    f"MCP driver '{self.name}' is not connected",
+                )
+            client_id = id(client)
+            self._active_client_calls[client_id] = (
+                self._active_client_calls.get(client_id, 0) + 1
+            )
+            return client
+
+    async def _release_client(self, client: Any) -> None:
+        close_now: Any | None = None
+        async with self._client_state_lock:
+            client_id = id(client)
+            remaining = self._active_client_calls.get(client_id, 0) - 1
+            if remaining > 0:
+                self._active_client_calls[client_id] = remaining
+            else:
+                self._active_client_calls.pop(client_id, None)
+                close_now = self._retired_clients.pop(client_id, None)
+        if close_now is not None:
+            await asyncio.shield(close_now.close(ignore_errors=True))
+
+
+def _headers_fingerprint(headers: dict[str, str]) -> str:
+    """Hash headers so token values never need to be logged or retained."""
+    payload = json.dumps(headers, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def validate_mcp_endpoint(card: DriverCard) -> None:
