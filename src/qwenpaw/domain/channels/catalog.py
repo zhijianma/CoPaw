@@ -35,8 +35,8 @@ class ChannelDefinition:
 BUILTIN_CHANNEL_CATALOG = (
     ChannelDefinition(
         "console",
-        ".console",
-        "ConsoleChannel",
+        "qwenpaw.transports.console.channel",
+        "ConsoleTransport",
         "ConsoleConfig",
         0,
         surface="web",
