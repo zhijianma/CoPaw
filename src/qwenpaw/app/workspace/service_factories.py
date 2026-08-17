@@ -18,10 +18,7 @@ logger = logging.getLogger(__name__)
 async def create_console_transport(ws: "Workspace", _service):
     """Create the Console Web transport outside ChannelManager lifecycle."""
     # pylint: disable=protected-access
-    channels = ws._config.channels
-    if channels is None:
-        return None
-    config = getattr(channels, "console", None)
+    config = ws._config.transports.console
     if config is None or not getattr(config, "enabled", False):
         return None
 
@@ -171,9 +168,6 @@ async def create_channel_service(ws: "Workspace", _):
         ChannelManager instance or None if not configured
     """
     # pylint: disable=protected-access
-    if not ws._config.channels:
-        return None
-
     from ...config import Config, load_config, update_last_dispatch
     from ..channels.manager import ChannelManager
     from ..channels.access_control import init_access_control_store
@@ -181,8 +175,12 @@ async def create_channel_service(ws: "Workspace", _):
     init_access_control_store(ws.workspace_dir)
 
     root_config = load_config()
+    has_channel = any(
+        channel.enabled for channel in ws._config.channels.values()
+    )
+    if not has_channel and ws.console_transport is None:
+        return None
     temp_config = Config(
-        channels=ws._config.channels,
         show_tool_details=root_config.show_tool_details,
     )
 
@@ -199,9 +197,8 @@ async def create_channel_service(ws: "Workspace", _):
         config=temp_config,
         on_last_dispatch=on_last_dispatch,
         workspace_dir=ws.workspace_dir,
-        agent_id=ws.agent_id,
+        agent_config=ws._config,
         transports=[ws.console_transport] if ws.console_transport else None,
-        routing=root_config.channel_routing,
     )
     ws._service_manager.services["channel_manager"] = cm
 

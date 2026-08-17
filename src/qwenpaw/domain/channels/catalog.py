@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from importlib import import_module
 from typing import Literal
+
+from pydantic import BaseModel
 
 
 ChannelSurface = Literal["channel", "web"]
@@ -19,6 +22,7 @@ class ChannelDefinition:
     class_name: str
     config_class_name: str
     order: int
+    label: str = ""
     surface: ChannelSurface = "channel"
     required: bool = False
     supports_access_control: bool = False
@@ -41,8 +45,9 @@ BUILTIN_CHANNEL_CATALOG = (
         "console",
         "qwenpaw.transports.console.channel",
         "ConsoleTransport",
-        "ConsoleConfig",
+        "ConsoleTransportConfig",
         0,
+        label="Console",
         surface="web",
         required=True,
     ),
@@ -52,6 +57,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "DingTalkChannel",
         "DingTalkConfig",
         10,
+        label="DingTalk",
         supports_access_control=True,
         supports_streaming=True,
         identity_fields=("client_id",),
@@ -62,6 +68,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "FeishuChannel",
         "FeishuConfig",
         20,
+        label="Feishu",
         supports_access_control=True,
         supports_streaming=True,
         identity_fields=("app_id",),
@@ -72,6 +79,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "IMessageChannel",
         "IMessageChannelConfig",
         30,
+        label="iMessage",
         supports_access_control=True,
     ),
     ChannelDefinition(
@@ -80,6 +88,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "DiscordChannel",
         "DiscordConfig",
         40,
+        label="Discord",
         supports_access_control=True,
         supports_streaming=True,
         identity_fields=("bot_token",),
@@ -90,6 +99,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "TelegramChannel",
         "TelegramConfig",
         50,
+        label="Telegram",
         supports_access_control=True,
         supports_streaming=True,
         identity_fields=("bot_token",),
@@ -100,6 +110,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "QQChannel",
         "QQConfig",
         60,
+        label="QQ",
         supports_access_control=True,
         identity_fields=("app_id",),
     ),
@@ -109,6 +120,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "WeChatChannel",
         "WeChatConfig",
         70,
+        label="WeChat",
         supports_access_control=True,
         identity_fields=("bot_token",),
     ),
@@ -118,6 +130,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "WecomChannel",
         "WecomConfig",
         80,
+        label="WeCom",
         supports_access_control=True,
         supports_streaming=True,
         identity_fields=("bot_id",),
@@ -128,6 +141,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "YuanbaoChannel",
         "YuanbaoConfig",
         90,
+        label="Yuanbao",
         supports_access_control=True,
         identity_fields=("app_id",),
     ),
@@ -137,6 +151,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "MatrixChannel",
         "MatrixConfig",
         100,
+        label="Matrix",
         supports_access_control=True,
         supports_streaming=True,
         identity_fields=("homeserver", "user_id"),
@@ -147,6 +162,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "SIPChannel",
         "SIPChannelConfig",
         110,
+        label="SIP",
     ),
     ChannelDefinition(
         "xiaoyi",
@@ -154,6 +170,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "XiaoYiChannel",
         "XiaoYiConfig",
         120,
+        label="XiaoYi",
         supports_access_control=True,
         identity_fields=("agent_id",),
     ),
@@ -163,6 +180,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "SlackChannel",
         "SlackConfig",
         130,
+        label="Slack",
         supports_access_control=True,
         supports_streaming=True,
         identity_fields=("bot_token",),
@@ -173,6 +191,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "MattermostChannel",
         "MattermostConfig",
         140,
+        label="Mattermost",
         supports_access_control=True,
         identity_fields=("url", "bot_token"),
     ),
@@ -182,6 +201,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "MQTTChannel",
         "MQTTConfig",
         150,
+        label="MQTT",
         supports_access_control=True,
     ),
     ChannelDefinition(
@@ -190,6 +210,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "VoiceChannel",
         "VoiceChannelConfig",
         160,
+        label="Twilio",
         identity_fields=("phone_number_sid",),
     ),
     ChannelDefinition(
@@ -198,6 +219,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "OneBotChannel",
         "OneBotConfig",
         170,
+        label="OneBot",
         supports_access_control=True,
     ),
 )
@@ -214,10 +236,28 @@ def get_channel_definition(channel_key: str) -> ChannelDefinition:
         raise KeyError(f"Unknown built-in channel: {channel_key}") from error
 
 
+def get_channel_config_model(
+    channel_key: str,
+) -> type[BaseModel] | None:
+    """Resolve the Pydantic config model for a built-in Channel."""
+    try:
+        definition = get_channel_definition(channel_key)
+    except KeyError:
+        return None
+    module = import_module("qwenpaw.config.config")
+    model = getattr(module, definition.config_class_name)
+    if not isinstance(model, type) or not issubclass(model, BaseModel):
+        raise TypeError(
+            f"Invalid config model for Channel {channel_key}",
+        )
+    return model
+
+
 __all__ = [
     "BUILTIN_CHANNEL_CATALOG",
     "BUILTIN_CHANNEL_KEYS",
     "ChannelDefinition",
     "ChannelSurface",
+    "get_channel_config_model",
     "get_channel_definition",
 ]

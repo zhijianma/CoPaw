@@ -9,8 +9,7 @@ from ..schemas import AgentRequest
 
 def to_legacy_agent_request(request: TurnRequest) -> AgentRequest:
     """Adapt a core request for internal code not yet migrated."""
-    endpoint_id = request.source.endpoint_id or ""
-    channel = endpoint_id.partition(":")[0] or request.source.kind
+    channel = request.source.channel_type or request.source.kind
     legacy = AgentRequest(
         input=list(request.messages),
         session_id=request.session_id,
@@ -21,8 +20,7 @@ def to_legacy_agent_request(request: TurnRequest) -> AgentRequest:
     )
     legacy.id = request.turn_id
     legacy.channel_meta = {
-        "endpoint_id": request.source.endpoint_id,
-        "binding_id": request.source.binding_id,
+        "channel_type": request.source.channel_type,
         "reply_target": request.reply_target,
     }
     return legacy

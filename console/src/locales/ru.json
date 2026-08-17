@@ -2354,7 +2354,9 @@
     "noEnabled": "Нет включённых инструментов",
     "goEnableBtn": "Включить",
     "configureAction": "Настроить →",
-    "enableAction": "Включить →"
+    "enableAction": "Включить →",
+    "configurationName": "Название конфигурации",
+    "deleteConfirm": "Удалить эту конфигурацию канала? Это действие нельзя отменить."
   },
   "modelConfig": {
     "promptTitle": "Требуется LLM-модель — выберите в Chat после настройки",

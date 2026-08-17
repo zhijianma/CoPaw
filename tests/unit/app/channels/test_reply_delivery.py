@@ -15,7 +15,7 @@ from qwenpaw.schemas import RunStatus
 
 def _target() -> ReplyTarget:
     return ReplyTarget(
-        endpoint_id="telegram:sales",
+        channel_type="telegram",
         conversation_id="chat-1",
     )
 

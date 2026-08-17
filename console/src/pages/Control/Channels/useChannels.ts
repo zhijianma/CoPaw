@@ -1,15 +1,17 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import api from "../../../api";
 import type {
   ChannelDefinition,
   ChannelSchema,
 } from "../../../api/modules/channel";
+import type { ChannelConfig } from "../../../api/types";
 import { useAgentStore } from "../../../stores/agentStore";
 
 export function useChannels() {
   const { selectedAgent } = useAgentStore();
-  const [channels, setChannels] = useState<
-    Record<string, Record<string, unknown>>
+  const [channels, setChannels] = useState<ChannelConfig[]>([]);
+  const [consoleConfig, setConsoleConfig] = useState<
+    Record<string, unknown>
   >({});
   const [channelTypes, setChannelTypes] = useState<string[]>([]);
   const [channelCatalog, setChannelCatalog] = useState<ChannelDefinition[]>([]);
@@ -17,30 +19,33 @@ export function useChannels() {
     Record<string, ChannelSchema>
   >({});
   const [loading, setLoading] = useState(true);
+  const revision = useRef(0);
 
   const fetchChannels = useCallback(async () => {
+    const revisionAtStart = revision.current;
     setLoading(true);
     try {
-      const [data, types, catalog] = await Promise.all([
+      const [savedChannels, savedConsole, types, catalog] = await Promise.all([
         api.listChannels(),
+        api.getConsoleConfig(),
         api.listChannelTypes(),
         api.listChannelCatalog(),
       ]);
-      if (data)
-        setChannels(data as unknown as Record<string, Record<string, unknown>>);
-      if (types) setChannelTypes(types);
-      if (catalog) setChannelCatalog(catalog);
+      if (revisionAtStart === revision.current) {
+        setChannels(savedChannels);
+        setConsoleConfig({ ...savedConsole });
+      }
+      setChannelTypes(types);
+      setChannelCatalog(catalog);
     } catch (error) {
-      console.error("❌ Failed to load channels:", error);
+      console.error("Failed to load channels:", error);
     } finally {
       setLoading(false);
     }
-    // Fetch schemas separately so failures don't block core channel loading
     try {
-      const schemas = await api.listChannelSchemas();
-      if (schemas) setChannelSchemas(schemas);
+      setChannelSchemas(await api.listChannelSchemas());
     } catch {
-      // Plugin system may not be available; non-critical
+      // Plugin schemas are optional.
     }
   }, []);
 
@@ -48,37 +53,59 @@ export function useChannels() {
     fetchChannels();
   }, [fetchChannels, selectedAgent]);
 
-  // Built-in order is owned by the backend catalog; plugins remain last.
-  const builtinOrder = useMemo(
-    () =>
-      [...channelCatalog]
-        .sort((left, right) => left.order - right.order)
-        .map((item) => item.key),
+  const orderedTypes = useMemo(() => {
+    const builtin = [...channelCatalog]
+      .sort((left, right) => left.order - right.order)
+      .map((item) => item.key)
+      .filter((key) => key !== "console");
+    return [
+      ...builtin.filter((key) => channelTypes.includes(key)),
+      ...channelTypes.filter(
+        (key) => key !== "console" && !builtin.includes(key),
+      ),
+    ];
+  }, [channelCatalog, channelTypes]);
+
+  const isBuiltin = useCallback(
+    (type: string) =>
+      channelCatalog.some((definition) => definition.key === type),
     [channelCatalog],
   );
 
-  const orderedKeys = useMemo(
-    () => [
-      ...builtinOrder.filter((k) => channelTypes.includes(k)),
-      ...channelTypes.filter((k) => !builtinOrder.includes(k)),
-    ],
-    [builtinOrder, channelTypes],
-  );
+  const applyChannelConfig = useCallback((value: ChannelConfig) => {
+    revision.current += 1;
+    setChannels((current) => {
+      const index = current.findIndex((item) => item.type === value.type);
+      if (index < 0) return [...current, value];
+      return current.map((item) =>
+        item.type === value.type ? value : item,
+      );
+    });
+  }, []);
 
-  // Read isBuiltin from API response
-  const isBuiltin = useCallback(
-    (key: string) => Boolean(channels[key]?.isBuiltin),
-    [channels],
-  );
+  const removeChannelConfig = useCallback((channelType: string) => {
+    revision.current += 1;
+    setChannels((current) =>
+      current.filter((item) => item.type !== channelType),
+    );
+  }, []);
+
+  const applyConsoleConfig = useCallback((value: Record<string, unknown>) => {
+    revision.current += 1;
+    setConsoleConfig(value);
+  }, []);
 
   return {
     channels,
-    channelTypes,
+    consoleConfig,
     channelCatalog,
     channelSchemas,
-    orderedKeys,
+    orderedTypes,
     isBuiltin,
     loading,
     fetchChannels,
+    applyChannelConfig,
+    removeChannelConfig,
+    applyConsoleConfig,
   };
 }

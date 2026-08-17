@@ -2583,7 +2583,9 @@
     "noEnabled": "Nenhuma ferramenta ativada",
     "goEnableBtn": "Ativar agora",
     "configureAction": "Configurar →",
-    "enableAction": "Ativar →"
+    "enableAction": "Ativar →",
+    "configurationName": "Nome da configuração",
+    "deleteConfirm": "Excluir esta configuração de canal? Esta ação não pode ser desfeita."
   },
   "modelConfig": {
     "promptTitle": "LLM Model Required — Select in Chat After Configuration",

@@ -130,12 +130,15 @@ interface ChannelDrawerProps {
   activeLabel: string;
   form: FormInstance<Record<string, unknown>>;
   saving: boolean;
+  deleting: boolean;
+  canDelete: boolean;
   initialValues: Record<string, unknown> | undefined;
   isBuiltin: boolean;
   channelSchema?: ChannelSchema;
   channelDefinition?: ChannelDefinition;
   onClose: () => void;
   onSubmit: (values: Record<string, unknown>) => void;
+  onDelete: () => void;
 }
 
 export function ChannelDrawer({
@@ -144,12 +147,15 @@ export function ChannelDrawer({
   activeLabel,
   form,
   saving,
+  deleting,
+  canDelete,
   initialValues,
   isBuiltin,
   channelSchema,
   channelDefinition,
   onClose,
   onSubmit,
+  onDelete,
 }: ChannelDrawerProps) {
   const { t, i18n } = useTranslation();
   const { selectedAgent, agents } = useAgentStore();
@@ -172,6 +178,7 @@ export function ChannelDrawer({
   const onebotTokenRequired = !isLoopbackHost(
     onebotWsHost.trim() || "127.0.0.1",
   );
+  const qrcodeParams = (params: Record<string, string> = {}) => params;
 
   // Parent calls form.setFieldsValue() before the Form mounts, which wins over
   // initialValues. Re-apply auth_method after open so the dropdown is correct.
@@ -378,6 +385,7 @@ export function ChannelDrawer({
               imageAlt="DingTalk QR Code"
               hintText={t("channels.dingtalkScanHint")}
               channel="dingtalk"
+              params={qrcodeParams()}
               successStatus="success"
               successCredentialKey="client_id"
               pollInterval={5000}
@@ -532,7 +540,7 @@ export function ChannelDrawer({
               successStatus="success"
               successCredentialKey="app_id"
               pollInterval={2000}
-              params={{ domain: feishuDomain }}
+              params={qrcodeParams({ domain: feishuDomain })}
               onSuccess={(credentials) => {
                 form.setFieldsValue({
                   app_id: credentials.app_id,
@@ -599,6 +607,7 @@ export function ChannelDrawer({
               imageAlt="QQ QR Code"
               hintText={t("channels.qqScanHint")}
               channel="qq"
+              params={qrcodeParams()}
               successStatus="success"
               successCredentialKey="app_id"
               pollInterval={2000}
@@ -1074,6 +1083,7 @@ export function ChannelDrawer({
               imageAlt="WeCom QR Code"
               hintText={t("channels.wecomAuthHint")}
               channel="wecom"
+              params={qrcodeParams()}
               successStatus="success"
               successCredentialKey="bot_id"
               pollInterval={3000}
@@ -1181,6 +1191,7 @@ export function ChannelDrawer({
               imageAlt="WeChat QR Code"
               hintText={t("channels.wechatScanHint")}
               channel="wechat"
+              params={qrcodeParams()}
               successStatus="confirmed"
               successCredentialKey="bot_token"
               pollInterval={2000}
@@ -1620,10 +1631,24 @@ export function ChannelDrawer({
 
   const drawerFooter = (
     <div className={styles.formActions}>
-      <Button onClick={onClose}>{t("common.cancel")}</Button>
-      <Button type="primary" loading={saving} onClick={() => form.submit()}>
-        {t("common.save")}
-      </Button>
+      <div>
+        {canDelete && (
+          <Button danger loading={deleting} onClick={onDelete}>
+            {t("common.delete")}
+          </Button>
+        )}
+      </div>
+      <div>
+        <Button onClick={onClose}>{t("common.cancel")}</Button>
+        <Button
+          type="primary"
+          loading={saving}
+          onClick={() => form.submit()}
+          style={{ marginLeft: 8 }}
+        >
+          {t("common.save")}
+        </Button>
+      </div>
     </div>
   );
 
@@ -1642,7 +1667,6 @@ export function ChannelDrawer({
         <Form
           form={form}
           layout="vertical"
-          initialValues={initialValues}
           onFinish={(values: Record<string, unknown>) => {
             if (activeKey !== "matrix") {
               onSubmit(values);
@@ -1656,6 +1680,15 @@ export function ChannelDrawer({
             }
           }}
         >
+          {activeKey !== "console" && (
+            <Form.Item
+              name="configuration_name"
+              label={t("channels.configurationName")}
+              rules={[{ required: true }]}
+            >
+              <Input />
+            </Form.Item>
+          )}
           <Form.Item
             name="enabled"
             label={t("common.enabled")}
@@ -1747,7 +1780,6 @@ export function ChannelDrawer({
               label={t("channels.noTextDebounce")}
               valuePropName="checked"
               tooltip={t("channels.noTextDebounceTooltip")}
-              initialValue={true}
             >
               <Switch />
             </Form.Item>

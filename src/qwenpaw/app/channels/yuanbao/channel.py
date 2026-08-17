@@ -1227,7 +1227,10 @@ class YuanbaoChannel(BaseChannel):
     def _session_map_path(self) -> Path:
         """Path to persist session mapping for send / cron."""
         if self._workspace_dir:
-            return self._workspace_dir / "yuanbao_sessions.json"
+            return self.channel_state_path(
+                self._workspace_dir,
+                "yuanbao_sessions.json",
+            )
         return self._media_dir.parent / "yuanbao_sessions.json"
 
     def _load_session_map_from_disk(self) -> None:
@@ -1246,6 +1249,11 @@ class YuanbaoChannel(BaseChannel):
                 path,
                 exc_info=True,
             )
+
+    def on_runtime_bound(self) -> None:
+        """Reload the session map after the workspace is assigned."""
+        self._session_map = {}
+        self._load_session_map_from_disk()
 
     def _save_session_map_to_disk(self) -> None:
         """Persist session map to disk."""

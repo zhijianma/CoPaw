@@ -139,6 +139,25 @@ class TestYuanbaoChannelInit:
     def test_channel_name(self, yuanbao_channel):
         assert yuanbao_channel.channel == "yuanbao"
 
+    def test_channel_binding_loads_channel_state(
+        self,
+        yuanbao_channel,
+        tmp_path,
+    ):
+        legacy = tmp_path / "yuanbao_sessions.json"
+        legacy.write_text(
+            '{"legacy": {"conversation_id": "old"}}',
+            encoding="utf-8",
+        )
+        yuanbao_channel._workspace_dir = tmp_path
+        yuanbao_channel._session_map = {"stale": {}}
+        yuanbao_channel.on_runtime_bound()
+
+        assert yuanbao_channel._session_map == {
+            "legacy": {"conversation_id": "old"},
+        }
+        assert yuanbao_channel._session_map_path() == legacy
+
 
 # =============================================================================
 # P0: Factory Method Tests

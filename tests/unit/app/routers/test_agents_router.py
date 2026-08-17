@@ -32,8 +32,6 @@ from qwenpaw.app.routers.agents import (
 from qwenpaw.config.config import (
     AgentProfileConfig,
     AgentProfileRef,
-    ChannelConfig,
-    DingTalkConfig,
     HeartbeatConfig,
     MCPConfig,
     ModelSlotConfig,
@@ -213,6 +211,8 @@ def test_get_agent_returns_config(client):
 
     assert response.status_code == 200
     assert response.json()["id"] == "bot"
+    assert response.json()["channels"] == {}
+    assert response.json()["transports"]["console"]["enabled"] is True
 
 
 def test_update_backend_settings_from_chat(client):
@@ -902,7 +902,7 @@ def _seed_source_workspace(workspace: Path) -> None:
     )
 
 
-def test_copy_agent_defaults_reset_channels_and_schedules_startup(
+def test_copy_agent_does_not_copy_channel_bindings_and_schedules_startup(
     client,
     fake_config,
     manager_mock,
@@ -921,13 +921,6 @@ def test_copy_agent_defaults_reset_channels_and_schedules_startup(
         description="src-desc",
         workspace_dir=str(source_ws),
         language="en",
-        channels=ChannelConfig(
-            dingtalk=DingTalkConfig(
-                enabled=True,
-                client_id="cid",
-                client_secret="secret",
-            ),
-        ),
         mcp=MCPConfig(migration_version=3),
         heartbeat=HeartbeatConfig(enabled=True, every="10m"),
         tools=ToolsConfig(
@@ -1001,8 +994,7 @@ def test_copy_agent_defaults_reset_channels_and_schedules_startup(
     assert saved["config"].active_model is not None
     assert saved["config"].active_model.provider_id == "openai"
     assert saved["config"].active_model.model == "gpt-test"
-    assert saved["config"].channels.dingtalk.enabled is False
-    assert saved["config"].channels.dingtalk.client_secret == ""
+    assert saved["config"].channels == {}
     assert saved["config"].workspace_dir == body["workspace_dir"]
 
     new_ws = Path(body["workspace_dir"])

@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import Any, TypeVar, cast
 
 from ..utils.io_utils import get_sync_path_lock, write_text_atomic
+from ..utils.session_paths import (
+    sanitize_session_filename as _sanitize_session_filename,
+    session_filename as _session_filename,
+)
 from .models import CheckpointError
 
 ConfigValue = TypeVar("ConfigValue", int, float)
@@ -365,8 +369,6 @@ class CheckpointPolicy:
             self.reload(force=True)
 
 
-# Characters forbidden in Windows filenames, matching SafeJSONSession.
-_UNSAFE_FILENAME_RE = re.compile(r'[\\/:*?"<>|]')
 _REF_UNSAFE_RE = re.compile(r"[\x00-\x20\x7f~^:?*\[\]\\]+")
 _REF_DOTLOCK_RE = re.compile(r"\.lock(?:/|$)")
 _WINDOWS_RESERVED_REF_BASENAMES = frozenset(
@@ -407,8 +409,7 @@ def context_channel(context: object) -> str:
 
 def sanitize_filename(name: str) -> str:
     """Replace characters illegal in Windows filenames with ``--``."""
-    normalized = unicodedata.normalize("NFC", name or "")
-    return _UNSAFE_FILENAME_RE.sub("--", normalized)
+    return _sanitize_session_filename(name, normalize_unicode=True)
 
 
 def session_file_path(
@@ -419,16 +420,11 @@ def session_file_path(
     channel: str,
 ) -> Path:
     """Return the QwenPaw 2.0 JSON session path for one session."""
-    if not session_id:
-        raise ValueError("session_id must not be None or empty")
-
     save_dir = Path(workspace_dir) / "sessions"
-    safe_sid = sanitize_filename(session_id)
-    safe_uid = sanitize_filename(user_id) if user_id else ""
-    if safe_uid and safe_uid == safe_sid:
-        safe_uid = ""
-    filename = (
-        f"{safe_uid}_{safe_sid}.json" if safe_uid else f"{safe_sid}.json"
+    filename = _session_filename(
+        session_id,
+        user_id,
+        normalize_unicode=True,
     )
     if channel:
         return save_dir / sanitize_filename(channel) / filename

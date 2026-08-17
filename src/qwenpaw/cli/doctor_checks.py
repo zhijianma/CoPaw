@@ -24,11 +24,11 @@ from ..agents.skill_system import (
     read_skill_manifest,
 )
 from ..app.crons.models import JobsFile
+from ..domain.channels.catalog import get_channel_config_model
 from ..config.config import (
     AgentProfileConfig,
     AgentProfileRef,
     AgentsConfig,
-    ChannelConfig,
     Config,
     MCPConfig,
     SecurityConfig,
@@ -410,13 +410,9 @@ def scan_unknown_config_keys(raw: dict[str, Any]) -> list[str]:
 
     channels = raw.get("channels")
     if isinstance(channels, dict):
-        allowed = set(ChannelConfig.model_fields.keys())
-        for key in channels:
-            if key not in allowed:
-                found.append(
-                    f"channels.{key!r} — not a built-in channel field "
-                    f"(may be a plugin; root ChannelConfig allows extra keys)",
-                )
+        found.append(
+            "channels — legacy Channel data awaiting endpoint migration",
+        )
 
     return found
 
@@ -757,17 +753,25 @@ def check_enabled_agents_load_agent_config(cfg: Config) -> tuple[bool, str]:
 
 def _effective_channels_mcp(
     cfg: Config,
+    agent_id: str,
     raw: dict[str, Any] | None,
-) -> tuple[ChannelConfig, MCPConfig]:
-    ch = cfg.channels
+) -> tuple[dict[str, tuple[str, Any]], MCPConfig]:
+    ch = {}
+    try:
+        agent = load_agent_config(agent_id)
+    except Exception:  # pylint: disable=broad-exception-caught
+        agent = None
+    if agent is not None:
+        for channel_type, channel in agent.channels.items():
+            if not channel.enabled:
+                continue
+            ch[channel_type] = (
+                channel_type,
+                channel.typed_config(channel_type),
+            )
     mcp = cfg.mcp
     if raw is None:
         return ch, mcp
-    if raw.get("channels") is not None:
-        try:
-            ch = ChannelConfig.model_validate(raw["channels"])
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
     if raw.get("mcp") is not None:
         try:
             mcp = MCPConfig.model_validate(raw["mcp"])
@@ -781,11 +785,8 @@ def enabled_channel_notes(cfg: Config) -> list[str]:
     notes: list[str] = []
     for agent_id, ref in cfg.agents.profiles.items():
         raw = _read_workspace_agent_json(ref)
-        ch, _ = _effective_channels_mcp(cfg, raw)
-        for name in ChannelConfig.model_fields:
-            sub = getattr(ch, name, None)
-            if sub is None:
-                continue
+        ch, _ = _effective_channels_mcp(cfg, agent_id, raw)
+        for _instance_id, (name, sub) in ch.items():
             if not getattr(sub, "enabled", False):
                 continue
             if name == "console":
@@ -899,8 +900,9 @@ def enabled_channel_notes(cfg: Config) -> list[str]:
                         f"{agent_id}: imessage enabled but chat.db not "
                         f"found at {dbp}",
                     )
-        extra = getattr(ch, "__pydantic_extra__", None) or {}
-        for key, val in extra.items():
+        for instance_id, (channel_type, val) in ch.items():
+            if get_channel_config_model(channel_type) is not None:
+                continue
             en = False
             if isinstance(val, dict):
                 en = bool(val.get("enabled"))
@@ -908,7 +910,8 @@ def enabled_channel_notes(cfg: Config) -> list[str]:
                 en = bool(getattr(val, "enabled"))
             if en:
                 notes.append(
-                    f"{agent_id}: custom/plugin channel {key!r} is enabled — "
+                    f"{agent_id}: custom/plugin channel "
+                    f"{instance_id!r} is enabled — "
                     "verify credentials and connectivity.",
                 )
     return notes

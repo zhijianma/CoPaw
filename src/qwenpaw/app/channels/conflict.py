@@ -52,12 +52,3 @@ def get_channel_bot_identity(
     if any(not value for _, value in identity):
         return None
     return identity
-
-
-def get_channel_config(channels: Any, channel_name: str) -> Any:
-    """Read a built-in channel config by name."""
-    if channels is None:
-        return None
-    if isinstance(channels, Mapping):
-        return channels.get(channel_name)
-    return getattr(channels, channel_name, None)

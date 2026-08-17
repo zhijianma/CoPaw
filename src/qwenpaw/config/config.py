@@ -7,6 +7,7 @@ import logging
 import re
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import (
     Any,
     Callable,
@@ -16,7 +17,7 @@ from typing import (
     Optional,
     Set,
     Tuple,
-    Union,
+    Type,
 )
 
 from apscheduler.triggers.cron import CronTrigger
@@ -33,7 +34,6 @@ from qwenpaw.exceptions import (
 )
 
 from .timezone import detect_system_timezone
-from .channel_routing import ChannelRoutingConfig
 from ..constant import (
     HEARTBEAT_DEFAULT_EVERY,
     HEARTBEAT_DEFAULT_TARGET,
@@ -329,6 +329,7 @@ class OneBotConfig(BaseChannelConfig):
     share_session_in_group: bool = False
     media_base64: bool = False
     media_base64_max_mb: int = Field(default=10, gt=0)
+    media_download_max_mb: int = Field(default=50, gt=0)
 
 
 class TelegramConfig(BaseChannelConfig):
@@ -366,11 +367,75 @@ class MattermostConfig(BaseChannelConfig):
     thread_follow_without_mention: bool = False
 
 
-class ConsoleConfig(BaseChannelConfig):
-    """Console channel: prints agent responses to stdout."""
+class ConsoleTransportConfig(BaseChannelConfig):
+    """Per-agent configuration for the Console Web transport."""
 
     enabled: bool = True
     media_dir: Optional[str] = None
+
+
+class AgentChannelConfig(BaseModel):
+    """The single configuration for one Channel type owned by an agent."""
+
+    name: str = Field(min_length=1)
+    enabled: bool = True
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+    def validate_for_type(self, channel_type: str) -> None:
+        """Validate and normalize settings using the Channel catalog."""
+        if channel_type == "console":
+            raise ValueError(
+                "Console is a Transport, not a Channel",
+            )
+        if not re.fullmatch(
+            r"[a-zA-Z0-9][a-zA-Z0-9._-]*",
+            channel_type,
+        ):
+            raise ValueError(
+                "Channel type must be a URL-safe identifier",
+            )
+        if "enabled" in self.settings:
+            raise ValueError(
+                "enabled belongs to the Channel configuration",
+            )
+        model = self._config_model(channel_type)
+        if model is None:
+            return
+        unknown = sorted(set(self.settings) - set(model.model_fields))
+        if unknown:
+            raise ValueError(
+                f"Unknown {channel_type} setting: {unknown[0]}",
+            )
+        payload = {**self.settings, "enabled": self.enabled}
+        validated = model.model_validate(payload)
+        self.settings = validated.model_dump(
+            mode="json",
+            include=set(self.settings),
+        )
+
+    def typed_config(self, channel_type: str) -> Any:
+        """Return the complete typed config consumed by an adapter."""
+        model = self._config_model(channel_type)
+        payload = {**self.settings, "enabled": self.enabled}
+        if model is None:
+            defaults = BaseChannelConfig().model_dump(mode="json")
+            defaults.update(payload)
+            return SimpleNamespace(**defaults)
+        return model.model_validate(payload)
+
+    @staticmethod
+    def _config_model(channel_type: str) -> Type[BaseModel] | None:
+        from ..domain.channels.catalog import get_channel_config_model
+
+        return get_channel_config_model(channel_type)
+
+
+class AgentTransportConfig(BaseModel):
+    """Transport configuration owned by one agent profile."""
+
+    console: ConsoleTransportConfig = Field(
+        default_factory=ConsoleTransportConfig,
+    )
 
 
 class WecomConfig(BaseChannelConfig):
@@ -540,48 +605,6 @@ class SlackConfig(BaseChannelConfig):
     access_control_group: bool = False
     dm_disabled: bool = False
     group_disabled: bool = False
-
-
-class ChannelConfig(BaseModel):
-    """Built-in channel configs; extra keys allowed for plugin channels."""
-
-    model_config = ConfigDict(extra="allow")
-
-    imessage: IMessageChannelConfig = IMessageChannelConfig()
-    discord: DiscordConfig = DiscordConfig()
-    dingtalk: DingTalkConfig = DingTalkConfig()
-    feishu: FeishuConfig = FeishuConfig()
-    qq: QQConfig = QQConfig()
-    telegram: TelegramConfig = TelegramConfig()
-    mattermost: MattermostConfig = MattermostConfig()
-    mqtt: MQTTConfig = MQTTConfig()
-    console: ConsoleConfig = ConsoleConfig()
-    matrix: MatrixConfig = MatrixConfig()
-    voice: VoiceChannelConfig = VoiceChannelConfig()
-    sip: SIPChannelConfig = SIPChannelConfig()
-    wecom: WecomConfig = WecomConfig()
-    xiaoyi: XiaoYiConfig = XiaoYiConfig()
-    yuanbao: YuanbaoConfig = YuanbaoConfig()
-    wechat: WeChatConfig = WeChatConfig()
-    slack: SlackConfig = SlackConfig()
-    onebot: OneBotConfig = OneBotConfig()
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_weixin_key(cls, data: Any) -> Any:
-        """One-shot migration: legacy ``weixin`` key -> canonical ``wechat``.
-
-        Older config files used ``weixin`` as the WeChat channel key. The
-        canonical key is now ``wechat``. When an old config is loaded we
-        rename the key in-place so validation succeeds. The on-disk file is
-        rewritten by ``load_config`` right after validation (see utils.py).
-        """
-        if isinstance(data, dict) and "weixin" in data:
-            data = dict(data)
-            legacy = data.pop("weixin")
-            if "wechat" not in data:
-                data["wechat"] = legacy
-        return data
 
 
 class LastApiConfig(BaseModel):
@@ -1858,11 +1881,20 @@ class AgentProfileConfig(BaseModel):
         default=None,
         description="Builtin template used when this agent was created",
     )
+    channel_schema_version: int = Field(
+        default=4,
+        ge=4,
+        description="Version of the agent-owned Channel configuration schema",
+    )
 
     # Agent-specific configurations
-    channels: Optional["ChannelConfig"] = Field(
-        default=None,
-        description="Channel configurations for this agent",
+    transports: AgentTransportConfig = Field(
+        default_factory=AgentTransportConfig,
+        description="Agent-owned non-Channel transport configuration",
+    )
+    channels: dict[str, AgentChannelConfig] = Field(
+        default_factory=dict,
+        description="One configuration per Channel type",
     )
     mcp: Optional["MCPConfig"] = Field(
         default=None,
@@ -1926,6 +1958,12 @@ class AgentProfileConfig(BaseModel):
         default_factory=CodingModeConfig,
         description="Coding Mode configuration for this agent",
     )
+
+    @model_validator(mode="after")
+    def _validate_agent_channels(self) -> "AgentProfileConfig":
+        for channel_type, channel in self.channels.items():
+            channel.validate_for_type(channel_type)
+        return self
 
 
 class AgentsConfig(BaseModel):
@@ -2679,10 +2717,6 @@ class BrowserConfig(BaseModel):
 class Config(BaseModel):
     """Root config (config.json)."""
 
-    channels: ChannelConfig = ChannelConfig()
-    channel_routing: ChannelRoutingConfig = Field(
-        default_factory=ChannelRoutingConfig,
-    )
     mcp: MCPConfig = MCPConfig()
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     last_api: LastApiConfig = LastApiConfig()
@@ -2711,28 +2745,6 @@ class Config(BaseModel):
     )
 
 
-ChannelConfigUnion = Union[
-    IMessageChannelConfig,
-    DiscordConfig,
-    DingTalkConfig,
-    FeishuConfig,
-    QQConfig,
-    TelegramConfig,
-    MattermostConfig,
-    MQTTConfig,
-    ConsoleConfig,
-    MatrixConfig,
-    VoiceChannelConfig,
-    SIPChannelConfig,
-    SlackConfig,
-    WecomConfig,
-    XiaoYiConfig,
-    YuanbaoConfig,
-    WeChatConfig,
-    OneBotConfig,
-]
-
-
 # Agent configuration utility functions
 
 
@@ -2756,11 +2768,6 @@ def build_fallback_agent_profile_config(
         name=agent_id.title(),
         description=f"{agent_id} agent",
         workspace_dir=str(workspace_dir),
-        channels=(
-            config.channels
-            if hasattr(config, "channels") and config.channels
-            else None
-        ),
         mcp=config.mcp if hasattr(config, "mcp") and config.mcp else None,
         tools=(
             config.tools if hasattr(config, "tools") and config.tools else None
@@ -2789,96 +2796,6 @@ def build_fallback_agent_profile_config(
         ),
         acp=(config.acp if hasattr(config, "acp") and config.acp else None),
     )
-
-
-def _migrate_access_control_fields(  # pylint: disable=too-many-branches
-    channels: dict,
-    workspace_dir: Path,
-) -> bool:
-    """Migrate legacy dm_policy/group_policy/allow_from to new fields.
-
-    Returns True if any field was migrated (caller should rewrite file).
-    """
-    migrated = False
-    for ch_key, ch_cfg in channels.items():
-        if not isinstance(ch_cfg, dict):
-            continue
-        # dm_policy → access_control_dm or dm_disabled
-        dm_policy = ch_cfg.get("dm_policy")
-        if dm_policy is not None:
-            if dm_policy == "allowlist" and "access_control_dm" not in ch_cfg:
-                ch_cfg["access_control_dm"] = True
-            elif dm_policy == "disabled" and "dm_disabled" not in ch_cfg:
-                ch_cfg["dm_disabled"] = True
-            del ch_cfg["dm_policy"]
-            migrated = True
-        # group_policy → access_control_group or group_disabled
-        group_policy = ch_cfg.get("group_policy")
-        if group_policy is not None:
-            if (
-                group_policy == "allowlist"
-                and "access_control_group" not in ch_cfg
-            ):
-                ch_cfg["access_control_group"] = True
-            elif group_policy == "disabled" and "group_disabled" not in ch_cfg:
-                ch_cfg["group_disabled"] = True
-            del ch_cfg["group_policy"]
-            migrated = True
-        # allow_from → access_control.json whitelist
-        allow_from = ch_cfg.get("allow_from")
-        if allow_from and isinstance(allow_from, list):
-            try:
-                from ..app.channels.access_control import (
-                    get_access_control_store,
-                )
-
-                store = get_access_control_store(workspace_dir)
-                store.import_allow_from(ch_key, set(allow_from))
-            except Exception:
-                pass
-            del ch_cfg["allow_from"]
-            migrated = True
-        # group_allow_from (matrix legacy) → whitelist
-        grp_allow = ch_cfg.get("group_allow_from")
-        if grp_allow is not None:
-            if isinstance(grp_allow, list) and grp_allow:
-                try:
-                    from ..app.channels.access_control import (
-                        get_access_control_store,
-                    )
-
-                    store = get_access_control_store(workspace_dir)
-                    store.import_allow_from(ch_key, set(grp_allow))
-                except Exception:
-                    pass
-            del ch_cfg["group_allow_from"]
-            migrated = True
-    return migrated
-
-
-def migrate_channel_display_fields(channels: object) -> bool:
-    """Migrate legacy channel display settings in-place.
-
-    Only translates the legacy boolean flags into their replacements; the
-    remaining fields fall back to the model defaults, so channels without
-    legacy settings are left untouched (no spurious config rewrite).
-    """
-    if not isinstance(channels, dict):
-        return False
-    migrated = False
-    for channel_cfg in channels.values():
-        if not isinstance(channel_cfg, dict):
-            continue
-        legacy = channel_cfg.pop("filter_tool_messages", None)
-        if legacy is not None:
-            channel_cfg.setdefault("show_tool_calls", not bool(legacy))
-            channel_cfg.setdefault("show_tool_results", not bool(legacy))
-            migrated = True
-        legacy_thinking = channel_cfg.pop("filter_thinking", None)
-        if legacy_thinking is not None:
-            channel_cfg.setdefault("show_thinking", not bool(legacy_thinking))
-            migrated = True
-    return migrated
 
 
 def migrate_project_directory_config(data: object) -> bool:
@@ -2979,47 +2896,15 @@ def load_agent_config(  # pylint: disable=too-many-branches,too-many-statements
 
         project_dir_migrated = migrate_project_directory_config(data)
 
-        # Match the existing migration behavior: migrate this workspace only
-        # when its agent configuration is loaded.
-        channels = data.get("channels")
-        weixin_migrated = False
-        if isinstance(channels, dict) and "weixin" in channels:
-            legacy = channels.pop("weixin")
-            channels.setdefault("wechat", legacy)
-            weixin_migrated = True
-
-        if isinstance(channels, dict):
-            display_migrated = migrate_channel_display_fields(channels)
-            access_control_migrated = _migrate_access_control_fields(
-                channels,
-                workspace_dir,
-            )
-        else:
-            display_migrated = False
-            access_control_migrated = False
-
-        if (
-            project_dir_migrated
-            or weixin_migrated
-            or display_migrated
-            or access_control_migrated
-        ):
+        if project_dir_migrated:
             try:
-                if project_dir_migrated or weixin_migrated or display_migrated:
-                    import uuid as _uuid
-                    import shutil as _shutil
+                import uuid as _uuid
+                import shutil as _shutil
 
-                    if project_dir_migrated:
-                        migration_name = "project-dir"
-                    elif display_migrated:
-                        migration_name = "channel-display"
-                    else:
-                        migration_name = "weixin"
-                    backup_path = agent_config_path.with_suffix(
-                        f".{_uuid.uuid4().hex[:8]}."
-                        f"{migration_name}-migrate.bak",
-                    )
-                    _shutil.copy2(agent_config_path, backup_path)
+                backup_path = agent_config_path.with_suffix(
+                    f".{_uuid.uuid4().hex[:8]}.project-dir-migrate.bak",
+                )
+                _shutil.copy2(agent_config_path, backup_path)
                 with open(
                     agent_config_path,
                     "w",
@@ -3180,7 +3065,6 @@ def migrate_legacy_config_to_multi_agent() -> bool:
         name="Default Agent",
         description="Default QwenPaw agent",
         workspace_dir=str(default_workspace),
-        channels=config.channels if config.channels else None,
         mcp=config.mcp if config.mcp else None,
         heartbeat=(
             legacy_agents.defaults.heartbeat
@@ -3267,10 +3151,6 @@ def migrate_legacy_config_to_multi_agent() -> bool:
         ),
         system_prompt_files=default_agent_config.system_prompt_files,
     )
-
-    # IMPORTANT: Keep channels, mcp, tools, security in root config for
-    # backward compatibility. Do NOT clear these fields.
-    # Old versions expect these fields to exist with valid values.
 
     save_config(config)
 

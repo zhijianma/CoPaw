@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from ..__version__ import __version__
 from ..backup._utils.safe_swap import cleanup_startup_restore_artifacts
 from ..config import load_config  # pylint: disable=no-name-in-module
+from ..config.channel_migration import migrate_channel_configuration
 from ..config.utils import get_config_path, read_last_api
 from ..constant import (
     CORS_ORIGINS,
@@ -176,6 +177,12 @@ async def lifespan(  # pylint: disable=too-many-statements,too-many-branches
     ensure_default_agent_exists()
     migrate_legacy_skills_to_skill_pool()
     ensure_qa_agent_exists()
+    channel_migration = migrate_channel_configuration(get_config_path())
+    if channel_migration.migrated:
+        logger.info(
+            f"Migrated Channel configuration for agents: "
+            f"{', '.join(channel_migration.migrated_agents)}",
+        )
 
     # Migrate old conversations from sessions/*.json into each scroll agent's
     # history.db, so chats from before scroll existed stay recallable. This is

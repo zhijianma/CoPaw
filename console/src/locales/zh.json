@@ -2791,7 +2791,9 @@
     "noEnabled": "暂无已启用的工具",
     "goEnableBtn": "去启用",
     "configureAction": "配置 →",
-    "enableAction": "启用 →"
+    "enableAction": "启用 →",
+    "configurationName": "配置名称",
+    "deleteConfirm": "确定删除这个频道配置吗？此操作不可撤销。"
   },
   "modelConfig": {
     "promptTitle": "需要配置 LLM 模型，配置模型后在 Chat 页面选择",

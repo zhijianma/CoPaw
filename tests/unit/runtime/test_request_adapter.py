@@ -13,7 +13,7 @@ def test_turn_request_is_adapted_at_one_runtime_boundary() -> None:
         role=Role.USER,
         content=[TextContent(type="text", text="hello")],
     )
-    target = ReplyTarget("telegram:primary", "chat-1")
+    target = ReplyTarget("telegram", "chat-1")
     request = TurnRequest(
         turn_id="turn-1",
         agent_id="sales",
@@ -22,8 +22,7 @@ def test_turn_request_is_adapted_at_one_runtime_boundary() -> None:
         messages=[message],
         source=RequestSource(
             kind="channel",
-            endpoint_id="telegram:primary",
-            binding_id="binding-1",
+            channel_type="telegram",
         ),
         reply_target=target,
         context={"locale": "zh-CN"},
@@ -37,7 +36,6 @@ def test_turn_request_is_adapted_at_one_runtime_boundary() -> None:
     assert legacy.user_id == "user-1"
     assert legacy.input == [message]
     assert legacy.channel == "telegram"
-    assert legacy.channel_meta["endpoint_id"] == "telegram:primary"
-    assert legacy.channel_meta["binding_id"] == "binding-1"
+    assert legacy.channel_meta["channel_type"] == "telegram"
     assert legacy.channel_meta["reply_target"] is target
     assert legacy.request_context == {"locale": "zh-CN"}

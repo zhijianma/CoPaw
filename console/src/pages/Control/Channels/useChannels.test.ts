@@ -1,17 +1,17 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import { useChannels } from "./useChannels";
 
-// Mock api（default export）
 vi.mock("../../../api", () => ({
   default: {
     listChannels: vi.fn(),
+    getConsoleConfig: vi.fn(),
     listChannelTypes: vi.fn(),
     listChannelCatalog: vi.fn(),
+    listChannelSchemas: vi.fn(),
   },
 }));
-
-// Mock agentStore
 vi.mock("../../../stores/agentStore", () => ({
   useAgentStore: vi.fn(() => ({ selectedAgent: "agent-1" })),
 }));
@@ -21,176 +21,102 @@ import api from "../../../api";
 describe("useChannels", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue({});
-    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-    (api.listChannelCatalog as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    vi.mocked(api.listChannels).mockResolvedValue([]);
+    vi.mocked(api.getConsoleConfig).mockResolvedValue({
+      enabled: true,
+    } as never);
+    vi.mocked(api.listChannelTypes).mockResolvedValue([]);
+    vi.mocked(api.listChannelCatalog).mockResolvedValue([]);
+    vi.mocked(api.listChannelSchemas).mockResolvedValue({});
   });
 
-  it("初始 loading=true，fetch 成功后 loading=false", async () => {
-    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue({});
-    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
-
-    const { result } = renderHook(() => useChannels());
-
-    expect(result.current.loading).toBe(true);
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-  });
-
-  it("fetchChannels 调用后设置 channels 和 channelTypes", async () => {
-    const mockChannels = {
-      console: { isBuiltin: true },
-      dingtalk: { isBuiltin: true },
-    };
-    const mockTypes = ["console", "dingtalk"];
-
-    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue(
-      mockChannels,
-    );
-    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue(
-      mockTypes,
-    );
-
-    const { result } = renderHook(() => useChannels());
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(result.current.channels).toEqual(mockChannels);
-    expect(result.current.channelTypes).toEqual(mockTypes);
-  });
-
-  it("orderedKeys 按 builtinOrder 排序：builtin 在前，custom 在后", async () => {
-    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue({});
-    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([
-      "dingtalk",
-      "my-custom",
-      "console",
+  it("loads channels, Console, types, and catalog", async () => {
+    vi.mocked(api.listChannels).mockResolvedValue([
+      {
+        type: "telegram",
+        name: "Main",
+        enabled: true,
+        settings: {},
+      },
     ]);
-    (api.listChannelCatalog as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { key: "console", order: 0, surface: "web" },
-      { key: "dingtalk", order: 10, surface: "channel" },
-    ]);
-
-    const { result } = renderHook(() => useChannels());
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    expect(result.current.orderedKeys).toEqual([
-      "console",
-      "dingtalk",
-      "my-custom",
-    ]);
-  });
-
-  it("orderedKeys 中不在 builtinOrder 的 key 出现在末尾", async () => {
-    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue({});
-    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([
-      "alpha-custom",
-      "feishu",
-      "beta-custom",
+    vi.mocked(api.listChannelTypes).mockResolvedValue([
       "telegram",
-    ]);
-    (api.listChannelCatalog as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { key: "feishu", order: 20, surface: "channel" },
-      { key: "telegram", order: 50, surface: "channel" },
-    ]);
-
-    const { result } = renderHook(() => useChannels());
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
-    });
-
-    const keys = result.current.orderedKeys;
-    const builtinKeys = ["feishu", "telegram"];
-    const customKeys = ["alpha-custom", "beta-custom"];
-
-    // builtin keys 全部出现在 custom keys 之前
-    const lastBuiltinIndex = Math.max(
-      ...builtinKeys.map((k) => keys.indexOf(k)),
-    );
-    const firstCustomIndex = Math.min(
-      ...customKeys.map((k) => keys.indexOf(k)),
-    );
-
-    expect(lastBuiltinIndex).toBeLessThan(firstCustomIndex);
-    // custom keys 都在末尾
-    expect(keys.slice(-customKeys.length).sort()).toEqual(customKeys.sort());
-  });
-
-  it("orderedKeys 完全采用后端 catalog 顺序", async () => {
-    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([
-      "onebot",
       "console",
-      "mattermost",
     ]);
-    (api.listChannelCatalog as ReturnType<typeof vi.fn>).mockResolvedValue([
-      { key: "console", order: 0, surface: "web" },
-      { key: "mattermost", order: 140, surface: "channel" },
-      { key: "onebot", order: 170, surface: "channel" },
+    vi.mocked(api.listChannelCatalog).mockResolvedValue([
+      {
+        key: "console",
+        order: 0,
+        surface: "web",
+        supports_access_control: false,
+        supports_streaming: false,
+      },
+      {
+        key: "telegram",
+        order: 50,
+        surface: "channel",
+        supports_access_control: true,
+        supports_streaming: true,
+      },
     ]);
 
     const { result } = renderHook(() => useChannels());
-
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.orderedKeys).toEqual([
-      "console",
-      "mattermost",
-      "onebot",
-    ]);
+    expect(result.current.channels[0].type).toBe("telegram");
+    expect(result.current.consoleConfig.enabled).toBe(true);
+    expect(result.current.orderedTypes).toEqual(["telegram"]);
+    expect(result.current.isBuiltin("telegram")).toBe(true);
   });
 
-  it("isBuiltin 返回 true 当 channels[key].isBuiltin === true", async () => {
-    const mockChannels = {
-      console: { isBuiltin: true },
-      dingtalk: { isBuiltin: false },
-    };
-
-    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue(
-      mockChannels,
-    );
-    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([
-      "console",
-      "dingtalk",
-    ]);
-
+  it("replaces a saved configuration of the same type", async () => {
     const { result } = renderHook(() => useChannels());
+    await waitFor(() => expect(result.current.loading).toBe(false));
 
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
+    act(() => {
+      result.current.applyChannelConfig({
+        type: "telegram",
+        name: "Main",
+        enabled: true,
+        settings: {},
+      });
+      result.current.applyChannelConfig({
+        type: "telegram",
+        name: "Backup",
+        enabled: false,
+        settings: {},
+      });
     });
 
-    expect(result.current.isBuiltin("console")).toBe(true);
+    expect(result.current.channels).toHaveLength(1);
+    expect(result.current.channels[0].name).toBe("Backup");
   });
 
-  it("isBuiltin 返回 false 当 key 不存在或 isBuiltin === false", async () => {
-    const mockChannels = {
-      dingtalk: { isBuiltin: false },
-      feishu: { isBuiltin: true },
-    };
-
-    (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue(
-      mockChannels,
-    );
-    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([
-      "dingtalk",
-      "feishu",
-    ]);
-
+  it("does not let an older fetch overwrite a saved config", async () => {
+    let resolveRefresh: ((value: never[]) => void) | undefined;
+    vi.mocked(api.listChannels)
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(
+        () => new Promise((resolve) => (resolveRefresh = resolve)),
+      );
     const { result } = renderHook(() => useChannels());
+    await waitFor(() => expect(result.current.loading).toBe(false));
 
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false);
+    let refresh: Promise<void> | undefined;
+    act(() => {
+      refresh = result.current.fetchChannels();
+      result.current.applyChannelConfig({
+        type: "telegram",
+        name: "Saved",
+        enabled: true,
+        settings: {},
+      });
+    });
+    await act(async () => {
+      resolveRefresh?.([]);
+      await refresh;
     });
 
-    expect(result.current.isBuiltin("dingtalk")).toBe(false);
-    expect(result.current.isBuiltin("non-existent-key")).toBe(false);
+    expect(result.current.channels[0].name).toBe("Saved");
   });
 });

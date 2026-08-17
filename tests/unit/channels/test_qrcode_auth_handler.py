@@ -8,6 +8,39 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from qwenpaw.config.config import AgentProfileConfig
+
+
+@pytest.mark.asyncio
+async def test_saved_config_targets_the_channel_type() -> None:
+    from qwenpaw.app.channels.qrcode_auth_handler import (
+        _saved_channel_config,
+    )
+
+    agent = MagicMock()
+    agent.config = AgentProfileConfig(
+        id="sales",
+        name="Sales",
+        channels={
+            "feishu": {
+                "name": "Main",
+                "enabled": False,
+                "settings": {"app_id": "main"},
+            },
+        },
+    )
+    request = MagicMock()
+
+    with patch(
+        "qwenpaw.app.agent_context.get_agent_for_request",
+        new=AsyncMock(return_value=agent),
+    ):
+        config = await _saved_channel_config(request, "feishu")
+
+    assert config is not None
+    assert config["app_id"] == "main"
+    assert config["enabled"] is False
+
 
 @pytest.fixture
 def mock_request():

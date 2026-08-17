@@ -3,9 +3,8 @@
 
 Delegates to ``MultiAgentManager.reload_agent`` so disk-edit reloads
 go through the same atomic workspace swap as frontend saves and wait
-for in-flight tasks. Only triggers when ``channels`` or ``heartbeat``
-hashes change, so runtime bookkeeping rewrites (e.g. ``last_dispatch``)
-do not cause spurious reloads.
+for in-flight tasks. Only triggers when ``channels``, ``transports`` or
+``heartbeat`` hashes change, so bookkeeping rewrites do not cause reloads.
 """
 
 from __future__ import annotations
@@ -27,11 +26,23 @@ logger = logging.getLogger(__name__)
 DEFAULT_POLL_INTERVAL = 2.0
 
 
-def _channels_hash(channels: Any) -> Optional[int]:
-    """Hash of channels section for change detection."""
-    if channels is None:
+def _channel_runtime_hash(
+    channels: Any,
+    transports: Any,
+) -> Optional[int]:
+    """Hash all agent-owned communication runtime configuration."""
+    if channels is None and transports is None:
         return None
-    return hash(str(channels.model_dump(mode="json")))
+    channel_values = [
+        item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+        for item in channels or []
+    ]
+    transport_values = (
+        transports.model_dump(mode="json")
+        if hasattr(transports, "model_dump")
+        else transports
+    )
+    return hash(str((channel_values, transport_values)))
 
 
 def _heartbeat_hash(hb: Optional["HeartbeatConfig"]) -> int:
@@ -69,7 +80,7 @@ class AgentConfigWatcher:
         self._task: Optional[asyncio.Task] = None
 
         self._last_mtime: float = 0.0
-        self._last_channels_hash: Optional[int] = None
+        self._last_channel_runtime_hash: Optional[int] = None
         self._last_heartbeat_hash: Optional[int] = None
 
         # Set before triggering reload; poll loop checks this to stop.
@@ -127,8 +138,9 @@ class AgentConfigWatcher:
                 f"failed to load initial config",
             )
             return
-        self._last_channels_hash = _channels_hash(
-            getattr(agent_config, "channels", None),
+        self._last_channel_runtime_hash = _channel_runtime_hash(
+            agent_config.channels,
+            agent_config.transports,
         )
         self._last_heartbeat_hash = _heartbeat_hash(
             getattr(agent_config, "heartbeat", None),
@@ -169,24 +181,25 @@ class AgentConfigWatcher:
             )
             return
 
-        new_channels_hash = _channels_hash(
-            getattr(agent_config, "channels", None),
+        new_channel_runtime_hash = _channel_runtime_hash(
+            agent_config.channels,
+            agent_config.transports,
         )
         new_heartbeat_hash = _heartbeat_hash(
             getattr(agent_config, "heartbeat", None),
         )
 
-        old_channels_hash = self._last_channels_hash
+        old_channel_runtime_hash = self._last_channel_runtime_hash
         old_heartbeat_hash = self._last_heartbeat_hash
 
         changed = (
-            new_channels_hash != old_channels_hash
+            new_channel_runtime_hash != old_channel_runtime_hash
             or new_heartbeat_hash != old_heartbeat_hash
         )
 
         # Refresh hashes regardless so non-meaningful rewrites
         # (e.g. last_dispatch) re-baseline silently.
-        self._last_channels_hash = new_channels_hash
+        self._last_channel_runtime_hash = new_channel_runtime_hash
         self._last_heartbeat_hash = new_heartbeat_hash
 
         if not changed:
@@ -206,7 +219,8 @@ class AgentConfigWatcher:
         logger.info(
             f"AgentConfigWatcher ({self._agent_id}): "
             f"config changed, triggering graceful reload "
-            f"(channels: {old_channels_hash} -> {new_channels_hash}, "
+            f"(channel runtime: {old_channel_runtime_hash} -> "
+            f"{new_channel_runtime_hash}, "
             f"heartbeat: {old_heartbeat_hash} -> {new_heartbeat_hash})",
         )
         try:

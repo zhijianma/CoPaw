@@ -410,9 +410,9 @@ class TestConsoleChannelFromConfig:
     def test_from_config_uses_config_values(self, mock_process):
         """from_config should use values from config object."""
         from qwenpaw.app.channels.console.channel import ConsoleChannel
-        from qwenpaw.config.config import ConsoleConfig
+        from qwenpaw.config.config import ConsoleTransportConfig
 
-        config = ConsoleConfig(
+        config = ConsoleTransportConfig(
             enabled=False,
             bot_prefix="[CFG] ",
         )

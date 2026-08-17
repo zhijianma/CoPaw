@@ -53,32 +53,49 @@ export const channelApi = {
   listChannelCatalog: () =>
     request<ChannelDefinition[]>("/config/channels/catalog"),
 
-  listChannels: () => request<ChannelConfig>("/config/channels"),
+  listChannels: () => request<ChannelConfig[]>("/config/channels"),
+
+  getConsoleConfig: () =>
+    request<SingleChannelConfig>("/config/transports/console"),
 
   listChannelSchemas: () =>
     request<Record<string, ChannelSchema>>("/config/channels/schemas"),
 
-  updateChannels: (body: ChannelConfig) =>
+  getChannelConfig: (channelType: string) =>
+    request<ChannelConfig>(
+      `/config/channels/${encodeURIComponent(channelType)}`,
+    ),
+
+  createChannelConfig: (body: ChannelConfig) =>
     request<ChannelConfig>("/config/channels", {
-      method: "PUT",
+      method: "POST",
       body: JSON.stringify(body),
     }),
 
-  getChannelConfig: (channelName: string) =>
-    request<SingleChannelConfig>(
-      `/config/channels/${encodeURIComponent(channelName)}`,
-    ),
-
-  updateChannelConfig: (channelName: string, body: SingleChannelConfig) =>
-    request<SingleChannelConfig>(
-      `/config/channels/${encodeURIComponent(channelName)}`,
+  updateChannelConfig: (channelType: string, body: ChannelConfig) =>
+    request<ChannelConfig>(
+      `/config/channels/${encodeURIComponent(channelType)}`,
       {
         method: "PUT",
         body: JSON.stringify(body),
       },
     ),
 
-  checkChannelConflict: (channelName: string, body: SingleChannelConfig) =>
+  deleteChannelConfig: (channelType: string) =>
+    request<void>(`/config/channels/${encodeURIComponent(channelType)}`, {
+      method: "DELETE",
+    }),
+
+  updateConsoleConfig: (body: SingleChannelConfig) =>
+    request<SingleChannelConfig>("/config/transports/console", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
+  checkChannelConflict: (
+    channelName: string,
+    body: SingleChannelConfig,
+  ) =>
     request<ChannelConflictResponse>(
       `/config/channels/${encodeURIComponent(channelName)}/conflict-check`,
       {

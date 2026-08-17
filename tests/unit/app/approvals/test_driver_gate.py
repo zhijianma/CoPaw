@@ -226,7 +226,7 @@ async def test_request_approval_with_tool_target_uses_target_name_in_summary(
     await gate.request_approval(ctx)
 
 
-async def test_request_approval_passes_channel_routing_fields_to_pending(
+async def test_request_approval_passes_channel_notification_fields(
     svc: ApprovalService,
 ):
     """The driver gate must pass channel_meta and _channel_instance to the
@@ -235,7 +235,7 @@ async def test_request_approval_passes_channel_routing_fields_to_pending(
     gate = QwenPawDriverApprovalGate()
     ctx = _ctx(tool_call_id="tc-5")
 
-    # Inject channel routing data into the request context
+    # Inject channel notification data into the request context.
     ctx.request_context["channel_meta"] = {"conversation_id": "conv-1"}
     ctx.request_context["_channel_instance"] = "mock_channel"
 
@@ -247,7 +247,7 @@ async def test_request_approval_passes_channel_routing_fields_to_pending(
 
         pending = next(iter(svc._pending.values()))
 
-        # Verify the channel routing fields were propagated unconditionally
+        # Verify notification fields were propagated unconditionally.
         assert pending.extra.get("channel_meta") == {
             "conversation_id": "conv-1",
         }

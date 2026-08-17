@@ -391,8 +391,8 @@ def test_channel_config_diverge_across_agents(app_server) -> None:
 
     API endpoints:
     - POST /api/agents
-    - GET /api/agents/{agentId}/config/channels/console
-    - PUT /api/agents/{agentId}/config/channels/console
+    - GET /api/agents/{agentId}/config/transports/console
+    - PUT /api/agents/{agentId}/config/transports/console
     """
     a_id = "integ_iso_ch_div_a"
     b_id = "integ_iso_ch_div_b"
@@ -402,12 +402,12 @@ def test_channel_config_diverge_across_agents(app_server) -> None:
 
         get_a = app_server.api_request(
             "GET",
-            scoped(a_id, "/config/channels/console"),
+            scoped(a_id, "/config/transports/console"),
             timeout=_AGENT_HTTP_TIMEOUT,
         )
         get_b = app_server.api_request(
             "GET",
-            scoped(b_id, "/config/channels/console"),
+            scoped(b_id, "/config/transports/console"),
             timeout=_AGENT_HTTP_TIMEOUT,
         )
         cfg_a = get_a.json()
@@ -420,25 +420,25 @@ def test_channel_config_diverge_across_agents(app_server) -> None:
 
         app_server.api_request(
             "PUT",
-            scoped(a_id, "/config/channels/console"),
+            scoped(a_id, "/config/transports/console"),
             json=cfg_a_mod,
             timeout=_AGENT_HTTP_TIMEOUT,
         )
         app_server.api_request(
             "PUT",
-            scoped(b_id, "/config/channels/console"),
+            scoped(b_id, "/config/transports/console"),
             json=cfg_b_mod,
             timeout=_AGENT_HTTP_TIMEOUT,
         )
 
         verify_a = app_server.api_request(
             "GET",
-            scoped(a_id, "/config/channels/console"),
+            scoped(a_id, "/config/transports/console"),
             timeout=_AGENT_HTTP_TIMEOUT,
         )
         verify_b = app_server.api_request(
             "GET",
-            scoped(b_id, "/config/channels/console"),
+            scoped(b_id, "/config/transports/console"),
             timeout=_AGENT_HTTP_TIMEOUT,
         )
         assert verify_a.json().get("bot_prefix") == "aaa"

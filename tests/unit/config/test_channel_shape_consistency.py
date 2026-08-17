@@ -1,36 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Consistency guards for built-in channel shape declarations.
-
-A built-in channel is declared in more than one place, and those places
-must stay in sync.  ``ChannelConfig`` is the source of truth for the
-config shape (this is what doctor already walks), while the registry
-and the API layer keep their own lists.
-
-These tests fail loudly when a newly added channel is missing from one
-of those lists.  That drift is what made ``GET`` on a single channel
-answer with an unrelated channel's fields for ``onebot``, and what let
-``PUT`` write an unvalidated dict to disk.
-"""
+"""Consistency guards for the canonical built-in Channel catalog."""
 
 # pylint: disable=protected-access
 from __future__ import annotations
 
-from typing import get_args
-
 from qwenpaw.app.channels.registry import _BUILTIN_SPECS
 from qwenpaw.app.routers.config import _channel_config_class
-from qwenpaw.config.config import ChannelConfig, ChannelConfigUnion
+from qwenpaw.domain.channels.catalog import get_channel_config_model
+from qwenpaw.config.config import AgentProfileConfig, Config
 from qwenpaw.domain.channels.catalog import BUILTIN_CHANNEL_CATALOG
-
-
-def _declared_config_classes() -> set[type]:
-    """Config models declared as ``ChannelConfig`` fields."""
-    return {field.annotation for field in ChannelConfig.model_fields.values()}
-
-
-def test_builtin_specs_match_channel_config_fields() -> None:
-    """Every built-in channel implementation has a config field."""
-    assert set(_BUILTIN_SPECS) == set(ChannelConfig.model_fields)
 
 
 def test_catalog_is_the_source_for_builtin_specs() -> None:
@@ -42,35 +20,21 @@ def test_catalog_is_the_source_for_builtin_specs() -> None:
     assert _BUILTIN_SPECS == expected
 
 
-def test_catalog_config_models_match_channel_config_fields() -> None:
-    expected = {
-        item.key: item.config_class_name for item in BUILTIN_CHANNEL_CATALOG
-    }
-    actual = {
-        key: field.annotation.__name__
-        for key, field in ChannelConfig.model_fields.items()
-    }
+def test_catalog_resolves_every_builtin_config_model() -> None:
+    for definition in BUILTIN_CHANNEL_CATALOG:
+        model = get_channel_config_model(definition.key)
 
-    assert actual == expected
+        assert model is not None
+        assert model.__name__ == definition.config_class_name
+        assert _channel_config_class(definition.key) is model
 
 
-def test_channel_config_union_covers_every_builtin_channel() -> None:
-    """``ChannelConfigUnion`` must list every built-in config model.
-
-    The single-channel endpoints use it as ``response_model``.  When a
-    model is missing, FastAPI cannot match the returned instance and
-    falls back to coercing it into another member, silently dropping
-    the channel's own fields.
-    """
-    assert set(get_args(ChannelConfigUnion)) == _declared_config_classes()
-
-
-def test_channel_config_class_resolves_every_builtin_channel() -> None:
-    """PUT validation must find a model for every built-in channel."""
-    for name, field in ChannelConfig.model_fields.items():
-        assert _channel_config_class(name) is field.annotation
-
-
-def test_channel_config_class_returns_none_for_plugin_channel() -> None:
-    """Plugin channels are not declared, so they stay untyped dicts."""
+def test_plugin_channel_has_no_builtin_config_model() -> None:
+    assert get_channel_config_model("some_plugin_channel") is None
     assert _channel_config_class("some_plugin_channel") is None
+
+
+def test_channel_configs_are_owned_only_by_agent_profiles() -> None:
+    assert "channels" not in Config.model_fields
+    assert "channels" in AgentProfileConfig.model_fields
+    assert AgentProfileConfig(id="default", name="Default").channels == {}

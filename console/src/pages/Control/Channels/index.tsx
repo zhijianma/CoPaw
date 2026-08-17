@@ -1,21 +1,24 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Form } from "@agentscope-ai/design";
 import { Badge, Button, Space } from "antd";
-import { SafetyOutlined, AuditOutlined } from "@ant-design/icons";
+import { AuditOutlined, SafetyOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
+
 import api from "../../../api";
-import {
-  ChannelCard,
-  ChannelDrawer,
-  AccessControlDrawer,
-  PendingApprovalsDrawer,
-  useChannels,
-  getChannelLabel,
-  ChannelAvailableItem,
-  type ChannelKey,
-} from "./components";
+import type { ChannelConfig } from "../../../api/types";
 import { PageHeader } from "@/components/PageHeader";
 import { useAppMessage } from "../../../hooks/useAppMessage";
+import {
+  AccessControlDrawer,
+  ChannelAvailableItem,
+  ChannelCard,
+  ChannelDrawer,
+  PendingApprovalsDrawer,
+  getChannelLabel,
+  type ChannelKey,
+} from "./components";
+import { buildChannelFormValues } from "./components/channelFormValues";
+import { useChannels } from "./useChannels";
 import styles from "./index.module.less";
 
 type FilterType = "all" | "builtin" | "custom";
@@ -25,16 +28,21 @@ function ChannelsPage() {
   const { message, modal } = useAppMessage();
   const {
     channels,
-    orderedKeys,
+    consoleConfig,
+    orderedTypes,
     channelCatalog,
     channelSchemas,
     isBuiltin,
     loading,
-    fetchChannels,
+    applyChannelConfig,
+    removeChannelConfig,
+    applyConsoleConfig,
   } = useChannels();
   const [filter, setFilter] = useState<FilterType>("all");
   const [saving, setSaving] = useState(false);
-  const [activeKey, setActiveKey] = useState<ChannelKey | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [activeType, setActiveType] = useState<ChannelKey | null>(null);
+  const [activeConfigured, setActiveConfigured] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [aclDrawerOpen, setAclDrawerOpen] = useState(false);
   const [pendingDrawerOpen, setPendingDrawerOpen] = useState(false);
@@ -44,10 +52,9 @@ function ChannelsPage() {
 
   const fetchPendingCount = useCallback(async () => {
     try {
-      const data = await api.getAclAllPending();
-      setPendingCount(data.length);
+      setPendingCount((await api.getAclAllPending()).length);
     } catch {
-      // ignore
+      // Pending approvals are optional on this page.
     }
   }, []);
 
@@ -55,139 +62,133 @@ function ChannelsPage() {
     fetchPendingCount();
   }, [fetchPendingCount]);
 
-  // Sort cards: enabled first, then disabled (preserve orderedKeys order within each group)
-  const { enabledCards, disabledCards } = useMemo(() => {
-    const enabledCards: { key: ChannelKey; config: Record<string, unknown> }[] =
-      [];
-    const disabledCards: {
-      key: ChannelKey;
-      config: Record<string, unknown>;
-    }[] = [];
-
-    orderedKeys.forEach((key) => {
-      const config = channels[key] || { enabled: false, bot_prefix: "" };
-      const builtin = isBuiltin(key);
-      if (filter === "builtin" && !builtin) return;
-      if (filter === "custom" && builtin) return;
-      if (config.enabled) {
-        enabledCards.push({ key, config });
-      } else {
-        disabledCards.push({ key, config });
-      }
-    });
-
-    return { enabledCards, disabledCards };
-  }, [channels, orderedKeys, filter, isBuiltin]);
-
-  const handleCardClick = useCallback(
-    (key: ChannelKey) => {
-      setActiveKey(key);
-      setDrawerOpen(true);
-      const channelConfig = channels[key] || { enabled: false, bot_prefix: "" };
-      // Migrate legacy allowlist policy to new access control fields
-      const accessControlDm =
-        channelConfig.access_control_dm ||
-        channelConfig.dm_policy === "allowlist";
-      const accessControlGroup =
-        channelConfig.access_control_group ||
-        channelConfig.group_policy === "allowlist";
-      form.setFieldsValue({
-        ...channelConfig,
-        access_control_dm: accessControlDm,
-        access_control_group: accessControlGroup,
-        show_tool_calls: channelConfig.show_tool_calls ?? true,
-        show_tool_results: channelConfig.show_tool_results ?? true,
-        tool_call_max_length: channelConfig.tool_call_max_length ?? 200,
-        tool_result_max_length: channelConfig.tool_result_max_length ?? 500,
-        show_thinking: channelConfig.show_thinking ?? true,
-      });
-    },
-    [channels, form],
+  const visibleChannels = useMemo(
+    () =>
+      channels.filter((channel) => {
+        if (filter === "builtin") return isBuiltin(channel.type);
+        if (filter === "custom") return !isBuiltin(channel.type);
+        return true;
+      }),
+    [filter, channels, isBuiltin],
   );
+  const enabledChannels = visibleChannels.filter((item) => item.enabled);
+  const disabledChannels = visibleChannels.filter((item) => !item.enabled);
+  const showConsole = filter !== "custom";
+  const consoleEnabled = consoleConfig.enabled === true;
+  const enabledCount =
+    enabledChannels.length + (showConsole && consoleEnabled ? 1 : 0);
 
-  const handleDrawerClose = () => {
+  const openForm = (
+    type: ChannelKey,
+    configured: boolean,
+    config: Record<string, unknown>,
+    name: string,
+  ) => {
+    setActiveType(type);
+    setActiveConfigured(configured);
+    form.resetFields();
+    form.setFieldsValue(
+      buildChannelFormValues({ ...config, configuration_name: name }),
+    );
+    setDrawerOpen(true);
+  };
+
+  const openChannel = (channel: ChannelConfig) => {
+    openForm(
+      channel.type as ChannelKey,
+      true,
+      { ...channel.settings, enabled: channel.enabled },
+      channel.name,
+    );
+  };
+
+  const openNewChannel = (type: string) => {
+    const label = getChannelLabel(type as ChannelKey, t);
+    openForm(type as ChannelKey, false, { enabled: true }, label);
+  };
+
+  const closeDrawer = () => {
     setDrawerOpen(false);
-    setActiveKey(null);
+    setActiveType(null);
+    setActiveConfigured(false);
   };
 
   const handleSubmit = async (values: Record<string, unknown>) => {
-    if (!activeKey) return;
-
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { isBuiltin: _isBuiltin, ...savedConfig } = channels[activeKey] || {};
-    const updatedChannel: Record<string, unknown> = {
-      ...savedConfig,
-      ...values,
-    };
-    const proposedConfig = updatedChannel as unknown as Parameters<
-      typeof api.updateChannelConfig
-    >[1];
-
+    if (!activeType) return;
+    const { configuration_name, isBuiltin: _builtin, ...settings } = values;
+    const name = String(
+      configuration_name || getChannelLabel(activeType, t),
+    );
     setSaving(true);
     try {
-      if (updatedChannel.enabled === true) {
-        try {
-          const result = await api.checkChannelConflict(
-            activeKey,
-            proposedConfig,
+      if (activeType === "console") {
+        const persisted = await api.updateConsoleConfig(settings as never);
+        applyConsoleConfig({ ...persisted });
+      } else {
+        const enabled = settings.enabled === true;
+        delete settings.enabled;
+        if (enabled) {
+          const conflict = await api.checkChannelConflict(
+            activeType,
+            {
+              ...settings,
+              enabled,
+            } as never,
           );
-          if (result.conflict) {
-            const agentNames = result.agents
-              .map(({ agent_id, agent_name }) =>
-                agent_name === agent_id
-                  ? agent_id
-                  : `${agent_name} (${agent_id})`,
-              )
-              .join(", ");
-            const shouldSave = await new Promise<boolean>((resolve) => {
-              let settled = false;
-              const settle = (value: boolean) => {
-                if (settled) return;
-                settled = true;
-                resolve(value);
-              };
-
-              modal.confirm({
-                centered: true,
-                title: t("channels.botConflictTitle"),
-                content: t("channels.botConflictDescription", {
-                  agents: agentNames,
-                }),
-                okText: t("channels.botConflictConfirm"),
-                okButtonProps: { danger: true },
-                cancelText: t("common.cancel"),
-                onOk: () => settle(true),
-                onCancel: () => settle(false),
-                afterClose: () => settle(false),
-              });
-            });
-            if (!shouldSave) return;
+          if (conflict.conflict) {
+            message.error(t("channels.botConflictTitle"));
+            return;
           }
-        } catch (error) {
-          console.warn("Failed to check channel Bot conflicts:", error);
         }
+        const value = {
+          type: activeType,
+          name,
+          enabled,
+          settings,
+        };
+        const persisted = activeConfigured
+          ? await api.updateChannelConfig(activeType, value)
+          : await api.createChannelConfig(value);
+        applyChannelConfig(persisted);
       }
-
-      await api.updateChannelConfig(activeKey, proposedConfig);
-      await fetchChannels();
-
-      setDrawerOpen(false);
+      closeDrawer();
       message.success(t("channels.configSaved"));
     } catch (error) {
-      console.error("Failed to update channel config:", error);
+      console.error("Failed to save Channel configuration:", error);
       message.error(t("channels.configFailed"));
     } finally {
       setSaving(false);
     }
   };
 
-  const activeLabel = activeKey ? getChannelLabel(activeKey, t) : "";
+  const handleDelete = () => {
+    if (!activeType || activeType === "console" || !activeConfigured) return;
+    modal.confirm({
+      centered: true,
+      title: t("common.delete"),
+      content: t("channels.deleteConfirm"),
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setDeleting(true);
+        try {
+          await api.deleteChannelConfig(activeType);
+          removeChannelConfig(activeType);
+          closeDrawer();
+        } finally {
+          setDeleting(false);
+        }
+      },
+    });
+  };
 
-  const FILTER_TABS: { key: FilterType; label: string }[] = [
+  const tabs: { key: FilterType; label: string }[] = [
     { key: "all", label: t("channels.filterAll") },
     { key: "builtin", label: t("channels.builtin") },
     { key: "custom", label: t("channels.custom") },
   ];
+  const activeConfig = activeConfigured
+    ? channels.find((item) => item.type === activeType)
+    : undefined;
 
   return (
     <div className={styles.channelsPage}>
@@ -196,7 +197,7 @@ function ChannelsPage() {
         items={[{ title: t("nav.control") }, { title: t("channels.title") }]}
         center={
           <div className={styles.filterTabs}>
-            {FILTER_TABS.map(({ key, label }) => (
+            {tabs.map(({ key, label }) => (
               <button
                 key={key}
                 className={`${styles.filterTab} ${
@@ -230,91 +231,123 @@ function ChannelsPage() {
       />
       <div className={styles.channelsContainer}>
         {loading ? (
-          <div className={styles.loading}>
-            <span className={styles.loadingText}>{t("channels.loading")}</span>
-          </div>
+          <div className={styles.loading}>{t("channels.loading")}</div>
         ) : (
           <>
-            {/* Enabled Channels Section */}
             <div className={styles.panelSection}>
               <div className={styles.panelTitle}>
                 <span className={styles.panelDotGreen} />
                 {t("channels.enabledSection")}
                 <span className={styles.panelCount}>
-                  {t("channels.enabledCount", { count: enabledCards.length })}
+                  {t("channels.enabledCount", { count: enabledCount })}
                 </span>
               </div>
-
-              {enabledCards.length > 0 ? (
+              <div className={styles.channelsGrid}>
+                {showConsole && consoleEnabled && (
+                  <ChannelCard
+                    channelKey="console"
+                    displayName="Console"
+                    config={{ ...consoleConfig, isBuiltin: true }}
+                    onClick={() =>
+                      openForm("console", true, consoleConfig, "Console")
+                    }
+                  />
+                )}
+                {enabledChannels.map((channel) => (
+                  <ChannelCard
+                    key={channel.type}
+                    channelKey={channel.type as ChannelKey}
+                    displayName={channel.name}
+                    config={{
+                      ...channel.settings,
+                      enabled: channel.enabled,
+                      isBuiltin: isBuiltin(channel.type),
+                    }}
+                    iconUrl={channelSchemas[channel.type]?.icon}
+                    onClick={() => openChannel(channel)}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className={styles.panelSectionDashed}>
+              <div className={styles.panelTitle}>
+                <span className={styles.panelDotGray} />
+                {t("channels.availableSection")}
+              </div>
+              {showConsole && !consoleEnabled && (
                 <div className={styles.channelsGrid}>
-                  {enabledCards.map(({ key, config }) => (
-                    <ChannelCard
-                      key={key}
-                      channelKey={key}
-                      config={config}
-                      iconUrl={channelSchemas[key]?.icon}
-                      onClick={() => handleCardClick(key)}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.emptyConfigured}>
-                  <p>{t("channels.noEnabledChannels")}</p>
-                  {disabledCards.length > 0 && (
-                    <Button
-                      type="primary"
-                      onClick={() => {
-                        document
-                          .getElementById("available-channels")
-                          ?.scrollIntoView({ behavior: "smooth" });
-                      }}
-                    >
-                      {t("channels.goEnableChannels")}
-                    </Button>
-                  )}
+                  <ChannelCard
+                    channelKey="console"
+                    displayName="Console"
+                    config={{ ...consoleConfig, isBuiltin: true }}
+                    onClick={() =>
+                      openForm("console", true, consoleConfig, "Console")
+                    }
+                  />
                 </div>
               )}
-            </div>
-
-            {/* Available Channels Section */}
-            {disabledCards.length > 0 && (
-              <div
-                id="available-channels"
-                className={styles.panelSectionDashed}
-              >
-                <div className={styles.panelTitle}>
-                  <span className={styles.panelDotGray} />
-                  {t("channels.availableSection")}
-                </div>
-                <div className={styles.availableGrid}>
-                  {disabledCards.map(({ key }) => (
-                    <ChannelAvailableItem
-                      key={key}
-                      channelKey={key}
-                      iconUrl={channelSchemas[key]?.icon}
-                      onClick={() => handleCardClick(key)}
+              {disabledChannels.length > 0 && (
+                <div className={styles.channelsGrid}>
+                  {disabledChannels.map((channel) => (
+                    <ChannelCard
+                      key={channel.type}
+                      channelKey={channel.type as ChannelKey}
+                      displayName={channel.name}
+                      config={{
+                        ...channel.settings,
+                        enabled: false,
+                        isBuiltin: isBuiltin(channel.type),
+                      }}
+                      iconUrl={channelSchemas[channel.type]?.icon}
+                      onClick={() => openChannel(channel)}
                     />
                   ))}
                 </div>
+              )}
+              <div className={styles.availableGrid}>
+                {orderedTypes
+                  .filter((type) => {
+                    if (channels.some((channel) => channel.type === type)) {
+                      return false;
+                    }
+                    if (filter === "builtin") return isBuiltin(type);
+                    if (filter === "custom") return !isBuiltin(type);
+                    return true;
+                  })
+                  .map((type) => (
+                    <ChannelAvailableItem
+                      key={type}
+                      channelKey={type as ChannelKey}
+                      iconUrl={channelSchemas[type]?.icon}
+                      onClick={() => openNewChannel(type)}
+                    />
+                  ))}
               </div>
-            )}
+            </div>
           </>
         )}
       </div>
       <ChannelDrawer
         open={drawerOpen}
-        activeKey={activeKey}
-        activeLabel={activeLabel}
+        activeKey={activeType}
+        activeLabel={activeType ? getChannelLabel(activeType, t) : ""}
         form={form}
         saving={saving}
-        initialValues={activeKey ? channels[activeKey] : undefined}
-        isBuiltin={activeKey ? isBuiltin(activeKey) : true}
-        channelSchema={activeKey ? channelSchemas[activeKey] : undefined}
+        deleting={deleting}
+        canDelete={Boolean(activeConfigured && activeType !== "console")}
+        initialValues={
+          activeConfig
+            ? { ...activeConfig.settings, enabled: activeConfig.enabled }
+            : undefined
+        }
+        isBuiltin={activeType ? isBuiltin(activeType) : true}
+        channelSchema={activeType ? channelSchemas[activeType] : undefined}
         channelDefinition={channelCatalog.find(
-          (definition) => definition.key === activeKey,
+          (definition) => definition.key === activeType,
         )}
-        onClose={handleDrawerClose}
+        onClose={closeDrawer}
         onSubmit={handleSubmit}
+        onDelete={handleDelete}
       />
       <AccessControlDrawer
         open={aclDrawerOpen}

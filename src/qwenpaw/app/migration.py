@@ -26,7 +26,12 @@ from ..constant import (
     LEGACY_QA_AGENT_ID,
     WORKING_DIR,
 )
-from ..config.utils import load_config, save_config
+from ..config.utils import (
+    _read_config_data,
+    get_config_path,
+    load_config,
+    save_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +84,11 @@ def migrate_legacy_workspace_to_default_agent() -> bool:
         return False
 
 
+# pylint: disable-next=too-many-statements
 def _do_migrate_legacy_workspace() -> bool:
     """Internal implementation of legacy workspace migration."""
+    raw_root = _read_config_data(get_config_path()) or {}
+    legacy_channels = raw_root.get("channels")
     try:
         config = load_config()
     except Exception as e:
@@ -127,7 +135,6 @@ def _do_migrate_legacy_workspace() -> bool:
         name="Default Agent",
         description="Default QwenPaw agent (migrated from legacy config)",
         workspace_dir=str(default_workspace),
-        channels=config.channels if hasattr(config, "channels") else None,
         mcp=config.mcp if hasattr(config, "mcp") else None,
         heartbeat=(
             legacy_agents.defaults.heartbeat
@@ -161,9 +168,12 @@ def _do_migrate_legacy_workspace() -> bool:
     agent_config_tmp = default_workspace / "agent.json.tmp"
 
     try:
+        agent_data = default_agent_config.model_dump(exclude_none=True)
+        if isinstance(legacy_channels, dict):
+            agent_data["channels"] = legacy_channels
         with open(agent_config_tmp, "w", encoding="utf-8") as f:
             json.dump(
-                default_agent_config.model_dump(exclude_none=True),
+                agent_data,
                 f,
                 ensure_ascii=False,
                 indent=2,
@@ -208,16 +218,8 @@ def _do_migrate_legacy_workspace() -> bool:
         system_prompt_files=default_agent_config.system_prompt_files,
     )
 
-    # IMPORTANT: Keep original config fields in root config.json for
-    # backward compatibility. If user downgrades, old version can still
-    # use these fields. New version will prioritize agent.json.
-    # DO NOT clear: channels, mcp, tools, security fields
-
     save_config(config)
-    logger.info(
-        "Updated root config.json to multi-agent structure "
-        "(kept original fields for backward compatibility)",
-    )
+    logger.info("Updated root config.json to multi-agent structure")
 
     logger.info("=" * 60)
     logger.info("Migration completed successfully!")

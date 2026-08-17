@@ -69,6 +69,14 @@ def test_media_base64_config():
         OneBotConfig(media_base64_max_mb=0)
 
 
+def test_legacy_media_download_limit_remains_valid() -> None:
+    config = OneBotConfig(media_download_max_mb=75)
+
+    assert config.media_download_max_mb == 75
+    with pytest.raises(ValidationError):
+        OneBotConfig(media_download_max_mb=0)
+
+
 def _make_message_event(
     message_type: str = "private",
     user_id: int = 12345,

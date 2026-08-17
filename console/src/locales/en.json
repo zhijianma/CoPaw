@@ -2933,7 +2933,9 @@
     "noEnabled": "No tools enabled",
     "goEnableBtn": "Go enable",
     "configureAction": "Configure →",
-    "enableAction": "Enable →"
+    "enableAction": "Enable →",
+    "configurationName": "Configuration name",
+    "deleteConfirm": "Delete this channel configuration? This action cannot be undone."
   },
   "modelConfig": {
     "promptTitle": "LLM Model Required — Select in Chat After Configuration",

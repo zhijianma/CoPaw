@@ -2339,7 +2339,9 @@
     "noEnabled": "有効なツールはありません",
     "goEnableBtn": "有効にする",
     "configureAction": "設定 →",
-    "enableAction": "有効化 →"
+    "enableAction": "有効化 →",
+    "configurationName": "設定名",
+    "deleteConfirm": "このチャンネル設定を削除しますか？この操作は元に戻せません。"
   },
   "modelConfig": {
     "promptTitle": "LLMモデルが必要です — 設定後にChatページで選択",

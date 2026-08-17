@@ -595,7 +595,6 @@ async def create_agent(
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     from ...config.config import (
-        ChannelConfig,
         MCPConfig,
         HeartbeatConfig,
         ToolsConfig,
@@ -628,7 +627,6 @@ async def create_agent(
         backend=request.backend,
         backend_settings=request.backend_settings,
         language=language,
-        channels=ChannelConfig(),
         mcp=MCPConfig(),
         heartbeat=HeartbeatConfig(),
         tools=ToolsConfig(),
@@ -671,13 +669,11 @@ def _build_copied_agent_config(
     workspace_dir: Path,
 ) -> AgentProfileConfig:
     """Derive a new agent config from the parsed source profile."""
-    from ...config.config import ChannelConfig
-
     agent_config = source_config.model_copy(deep=True)
     agent_config.id = new_id
     agent_config.name = new_name
     agent_config.workspace_dir = str(workspace_dir)
-    agent_config.channels = ChannelConfig()
+    agent_config.channels = {}
     return agent_config
 
 

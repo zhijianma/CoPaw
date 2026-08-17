@@ -12,8 +12,10 @@ from fastapi import (
     Path,
     Query,
     Request,
+    Response,
+    status,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ...agents.acp.core import ACPAgentConfig, ACPConfig
 from ...agents.acp.node_runtime import (
@@ -22,8 +24,6 @@ from ...agents.acp.node_runtime import (
     resolve_node_runtime,
 )
 from ...config import (
-    ChannelConfig,
-    ChannelConfigUnion,
     ToolGuardConfig,
     ToolGuardRuleConfig,
     get_available_channels,
@@ -36,18 +36,15 @@ from ...config.config import (
     SkillScannerConfig,
     SkillScannerWhitelistEntry,
 )
-from ...config.channel_routing import ChannelRoutingConfig
+from ...domain.channels.catalog import get_channel_config_model
 from ...config.timezone import normalize_tz
 from ...domain.channels.catalog import BUILTIN_CHANNEL_CATALOG
-from ..channels.conflict import (
-    get_channel_bot_identity,
-    get_channel_config,
-)
+from ..channels.config_service import ChannelConfigService
+from ..channels.conflict import get_channel_bot_identity
 from ..channels.qrcode_auth_handler import (
     QRCODE_AUTH_HANDLERS,
     generate_qrcode_image,
 )
-from ..channels.registry import BUILTIN_CHANNEL_KEYS
 from ..utils import schedule_agent_reload
 from .schemas_config import (
     ChannelConflictAgent,
@@ -61,17 +58,8 @@ router = APIRouter(prefix="/config", tags=["config"])
 
 
 def _channel_config_class(name: str) -> Optional[type[BaseModel]]:
-    """Config model for a built-in channel, None for plugin channels.
-
-    Built-in channel shapes are declared once as ``ChannelConfig``
-    fields, so deriving them here cannot drift when a channel is added
-    later. This is the same source of truth doctor already walks.
-    """
-    field = ChannelConfig.model_fields.get(name)
-    annotation = field.annotation if field is not None else None
-    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return annotation
-    return None
+    """Config model for a built-in Channel, None for plugins."""
+    return get_channel_config_model(name)
 
 
 _ALLOWED_ACP_TOOL_PARSE_MODES = {
@@ -90,41 +78,46 @@ class ACPNodeRuntimeUpdate(BaseModel):
     summary="List all channels",
     description="Retrieve configuration for all available channels",
 )
-async def list_channels(request: Request) -> dict:
-    """List all channel configs (filtered by available channels)."""
+async def list_channels(request: Request) -> list[dict[str, Any]]:
+    """List the Channel configurations owned by the current agent."""
     from ..agent_context import get_agent_for_request
 
     agent = await get_agent_for_request(request)
-    agent_config = agent.config
-    available = get_available_channels()
+    return [
+        {"type": channel_type, **channel.model_dump(mode="json")}
+        for channel_type, channel in ChannelConfigService(
+            agent.config,
+        ).list()
+    ]
 
-    # Get channel configs from agent's config (with fallback to empty)
-    channels_config = agent_config.channels
-    if channels_config is None:
-        # No channels config yet, use empty defaults
-        all_configs = {}
-    else:
-        all_configs = channels_config.model_dump()
-        extra = getattr(channels_config, "__pydantic_extra__", None) or {}
-        all_configs.update(extra)
 
-    # Return all available channels (use default config if not saved)
-    result = {}
-    for key in available:
-        if key in all_configs:
-            channel_data = (
-                dict(all_configs[key])
-                if isinstance(all_configs[key], dict)
-                else all_configs[key]
-            )
-        else:
-            # Channel registered but no config saved yet, use empty default
-            channel_data = {"enabled": False, "bot_prefix": ""}
-        if isinstance(channel_data, dict):
-            channel_data["isBuiltin"] = key in BUILTIN_CHANNEL_KEYS
-        result[key] = channel_data
+@router.post(
+    "/channels",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a Channel configuration",
+)
+async def create_channel_config(
+    request: Request,
+    body: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """Create the only configuration for one Channel type."""
+    from ...config.config import save_agent_config
+    from ..agent_context import get_agent_for_request
 
-    return result
+    agent = await get_agent_for_request(request)
+    agent_config = agent.config.model_copy(deep=True)
+    payload = dict(body)
+    channel_type = str(payload.pop("type", "") or "")
+    try:
+        channel = ChannelConfigService(agent_config).create(
+            channel_type,
+            payload,
+        )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    save_agent_config(agent.agent_id, agent_config)
+    schedule_agent_reload(request, agent.agent_id)
+    return {"type": channel_type, **channel.model_dump(mode="json")}
 
 
 @router.get(
@@ -134,7 +127,11 @@ async def list_channels(request: Request) -> dict:
 )
 async def list_channel_types() -> List[str]:
     """Return available channel type identifiers (env-filtered)."""
-    return list(get_available_channels())
+    return [
+        channel_type
+        for channel_type in get_available_channels()
+        if channel_type != "console"
+    ]
 
 
 @router.get(
@@ -154,37 +151,39 @@ async def list_channel_catalog() -> list[dict[str, Any]]:
 
 
 @router.get(
-    "/channel-routing",
-    response_model=ChannelRoutingConfig,
-    summary="Get Channel endpoint and agent bindings",
+    "/transports/console",
+    summary="Get the current agent's Console Transport configuration",
 )
-async def get_channel_routing() -> ChannelRoutingConfig:
-    """Return the authoritative root-level Channel routing graph."""
-    return load_config().channel_routing
+async def get_console_transport(request: Request) -> dict[str, Any]:
+    """Return the independently owned Console Transport config."""
+    from ..agent_context import get_agent_for_request
+
+    agent = await get_agent_for_request(request)
+    return agent.config.transports.console.model_dump(mode="json")
 
 
 @router.put(
-    "/channel-routing",
-    response_model=ChannelRoutingConfig,
-    summary="Update Channel endpoint and agent bindings",
+    "/transports/console",
+    summary="Update the current agent's Console Transport configuration",
 )
-async def put_channel_routing(
+async def put_console_transport(
     request: Request,
-    body: ChannelRoutingConfig = Body(...),
-) -> ChannelRoutingConfig:
-    """Persist a validated routing graph and reload affected agents."""
-    config = load_config()
-    previous_agent_ids = {
-        binding.agent_id for binding in config.channel_routing.bindings
-    }
-    config.channel_routing = body
-    save_config(config)
-    agent_ids = previous_agent_ids | {
-        binding.agent_id for binding in body.bindings
-    }
-    for agent_id in sorted(agent_ids):
-        schedule_agent_reload(request, agent_id)
-    return body
+    body: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """Persist the independently owned Console Transport config."""
+    from ...config.config import ConsoleTransportConfig, save_agent_config
+    from ..agent_context import get_agent_for_request
+
+    agent = await get_agent_for_request(request)
+    try:
+        console = ConsoleTransportConfig.model_validate(body)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    agent_config = agent.config.model_copy(deep=True)
+    agent_config.transports.console = console
+    save_agent_config(agent.agent_id, agent_config)
+    schedule_agent_reload(request, agent.agent_id)
+    return console.model_dump(mode="json")
 
 
 @router.get(
@@ -213,33 +212,6 @@ async def list_channel_schemas() -> dict:
     return result
 
 
-@router.put(
-    "/channels",
-    response_model=ChannelConfig,
-    summary="Update all channels",
-    description="Update configuration for all channels at once",
-)
-async def put_channels(
-    request: Request,
-    channels_config: ChannelConfig = Body(
-        ...,
-        description="Complete channel configuration",
-    ),
-) -> ChannelConfig:
-    """Update all channel configs."""
-    from ...config.config import save_agent_config
-    from ..agent_context import get_agent_for_request
-
-    agent = await get_agent_for_request(request)
-    agent.config.channels = channels_config
-    save_agent_config(agent.agent_id, agent.config)
-
-    # Hot reload config (async, non-blocking)
-    schedule_agent_reload(request, agent.agent_id)
-
-    return channels_config
-
-
 # ── Channel health check & restart ─────────────────────────────────────────
 
 
@@ -251,22 +223,20 @@ async def _resolve_channel_manager(
         min_length=1,
     ),
 ):
-    """Shared dependency: validate channel name and return channel_manager."""
+    """Resolve the manager containing one running Channel."""
     from ..agent_context import get_agent_for_request
-
-    available = get_available_channels()
-    if channel_name not in available:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Channel '{channel_name}' not available",
-        )
 
     agent = await get_agent_for_request(request)
     channel_manager = agent.channel_manager
     if channel_manager is None:
         raise HTTPException(
-            status_code=503,
-            detail="Channel manager not initialized",
+            status_code=404,
+            detail=f"Channel '{channel_name}' is not running",
+        )
+    if await channel_manager.get_channel(channel_name) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Channel '{channel_name}' is not running",
         )
     return channel_manager
 
@@ -383,47 +353,28 @@ async def get_channel_qrcode_status(
 
 
 @router.get(
-    "/channels/{channel_name}",
-    response_model=ChannelConfigUnion,
-    summary="Get channel config",
-    description="Retrieve configuration for a specific channel by name",
+    "/channels/{channel_id}",
+    summary="Get a Channel configuration",
 )
 async def get_channel(
     request: Request,
-    channel_name: str = Path(
+    channel_id: str = Path(
         ...,
-        description="Name of the channel to retrieve",
+        description="Channel type",
         min_length=1,
     ),
-) -> ChannelConfigUnion:
-    """Get a specific channel config by name."""
+) -> dict[str, Any]:
+    """Get the agent-owned configuration for one Channel type."""
     from ..agent_context import get_agent_for_request
 
-    available = get_available_channels()
-    if channel_name not in available:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Channel '{channel_name}' not found",
-        )
-
     agent = await get_agent_for_request(request)
-    channels = agent.config.channels
-    if channels is None:
+    channel = ChannelConfigService(agent.config).get(channel_id)
+    if channel is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Channel '{channel_name}' not configured",
+            detail=f"Channel '{channel_id}' is not configured",
         )
-
-    single_channel_config = getattr(channels, channel_name, None)
-    if single_channel_config is None:
-        extra = getattr(channels, "__pydantic_extra__", None) or {}
-        single_channel_config = extra.get(channel_name)
-    if single_channel_config is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Channel '{channel_name}' not found",
-        )
-    return single_channel_config
+    return {"type": channel_id, **channel.model_dump(mode="json")}
 
 
 @router.post(
@@ -465,33 +416,21 @@ async def check_channel_conflict(
         return ChannelConflictResponse(conflict=False)
 
     current_agent = await get_agent_for_request(request)
-    current_agent_id = current_agent.agent_id
     manager = request.app.state.multi_agent_manager
     conflicts = []
 
     for agent_id, workspace in list(manager.agents.items()):
-        workspace_agent_id = getattr(workspace, "agent_id", agent_id)
-        if current_agent_id in (agent_id, workspace_agent_id):
+        if agent_id == current_agent.agent_id:
             continue
-
-        channel_manager = getattr(workspace, "channel_manager", None)
-        running_channels = getattr(channel_manager, "channels", ())
-        if not any(
-            getattr(channel, "channel", None) == channel_name
-            for channel in running_channels
-        ):
-            continue
-
-        other_config = get_channel_config(
-            getattr(workspace.config, "channels", None),
-            channel_name,
+        channel = workspace.config.channels.get(channel_name)
+        matching_configs = (
+            [{**channel.settings, "enabled": channel.enabled}]
+            if channel is not None and channel.enabled
+            else []
         )
-        if (
-            get_channel_bot_identity(
-                channel_name,
-                other_config,
-            )
-            != proposed_identity
+        if not any(
+            get_channel_bot_identity(channel_name, value) == proposed_identity
+            for value in matching_configs
         ):
             continue
 
@@ -511,55 +450,73 @@ async def check_channel_conflict(
 
 
 @router.put(
-    "/channels/{channel_name}",
-    response_model=ChannelConfigUnion,
-    summary="Update channel config",
-    description="Update configuration for a specific channel by name",
+    "/channels/{channel_id}",
+    summary="Update a Channel configuration",
 )
 async def put_channel(
     request: Request,
-    channel_name: str = Path(
+    channel_id: str = Path(
         ...,
-        description="Name of the channel to update",
+        description="Channel type",
         min_length=1,
     ),
-    single_channel_config: dict = Body(
-        ...,
-        description="Updated channel configuration",
-    ),
-) -> ChannelConfigUnion:
-    """Update a specific channel config by name."""
+    body: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """Replace the agent-owned configuration for one Channel type."""
     from ...config.config import save_agent_config
     from ..agent_context import get_agent_for_request
 
-    available = get_available_channels()
-    if channel_name not in available:
+    agent = await get_agent_for_request(request)
+    agent_config = agent.config.model_copy(deep=True)
+    payload = dict(body)
+    body_type = payload.pop("type", channel_id)
+    if body_type != channel_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Channel type cannot be changed",
+        )
+    try:
+        channel = ChannelConfigService(agent_config).update(
+            channel_id,
+            payload,
+        )
+    except KeyError as exc:
         raise HTTPException(
             status_code=404,
-            detail=f"Channel '{channel_name}' not found",
-        )
+            detail=f"Channel '{channel_id}' is not configured",
+        ) from exc
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    save_agent_config(agent.agent_id, agent_config)
+    schedule_agent_reload(request, agent.agent_id)
+    return {"type": channel_id, **channel.model_dump(mode="json")}
+
+
+@router.delete(
+    "/channels/{channel_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a Channel configuration",
+)
+async def delete_channel(
+    request: Request,
+    channel_id: str,
+) -> Response:
+    """Delete the configuration for one Channel type."""
+    from ...config.config import save_agent_config
+    from ..agent_context import get_agent_for_request
 
     agent = await get_agent_for_request(request)
-
-    # Initialize channels if not exists
-    if agent.config.channels is None:
-        agent.config.channels = ChannelConfig()
-
-    config_class = _channel_config_class(channel_name)
-    if config_class is not None:
-        channel_config = config_class(**single_channel_config)
-    else:
-        # For custom channels, just use the dict
-        channel_config = single_channel_config
-
-    # Set channel config in agent's config
-    setattr(agent.config.channels, channel_name, channel_config)
-    save_agent_config(agent.agent_id, agent.config)
-
-    # Hot reload config (async, non-blocking)
+    agent_config = agent.config.model_copy(deep=True)
+    try:
+        ChannelConfigService(agent_config).delete(channel_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Channel '{channel_id}' is not configured",
+        ) from exc
+    save_agent_config(agent.agent_id, agent_config)
     schedule_agent_reload(request, agent.agent_id)
-
-    return channel_config
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

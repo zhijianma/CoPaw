@@ -15,7 +15,6 @@ import httpx
 
 from ..app.channels.registry import get_channel_registry
 from ..config.config import (
-    ChannelConfig,
     Config,
     DingTalkConfig,
     FeishuConfig,
@@ -286,11 +285,10 @@ def collect_deep_channel_connectivity_notes(
 
     for agent_id, ref in cfg.agents.profiles.items():
         raw = _read_workspace_agent_json(ref)
-        ch, _ = _effective_channels_mcp(cfg, raw)
+        ch, _ = _effective_channels_mcp(cfg, agent_id, raw)
 
-        for name in ChannelConfig.model_fields:
-            sub = getattr(ch, name, None)
-            if sub is None or not _channel_enabled(sub):
+        for name, sub in ch.items():
+            if not _channel_enabled(sub):
                 continue
             if name == "console":
                 continue

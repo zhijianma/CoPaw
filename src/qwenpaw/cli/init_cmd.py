@@ -9,7 +9,11 @@ import click
 from rich.console import Console
 from rich.panel import Panel
 
-from .channels_cmd import configure_channels_interactive
+from .channels_cmd import (
+    configure_channels_interactive,
+    load_editable_channel_configs,
+    persist_editable_channel_configs,
+)
 from .env_cmd import configure_env_interactive
 from .providers_cmd import configure_providers_interactive
 from .skills_cmd import configure_skills_interactive
@@ -24,6 +28,7 @@ from ..config.config import (
     ActiveHoursConfig,
     Config,
     HeartbeatConfig,
+    load_agent_config,
 )
 from ..constant import HEARTBEAT_DEFAULT_EVERY
 from ..providers import ProviderManager
@@ -359,7 +364,20 @@ def init_cmd(
             "(iMessage/Discord/DingTalk/Feishu/QQ/Console)",
             default=False,
         ):
-            configure_channels_interactive(existing)
+            agent_id = existing.agents.active_agent
+            agent_config = load_agent_config(agent_id)
+            channel_configs = load_editable_channel_configs(
+                existing,
+                agent_config,
+                agent_id,
+            )
+            configure_channels_interactive(channel_configs)
+            persist_editable_channel_configs(
+                existing,
+                agent_config,
+                agent_id,
+                channel_configs,
+            )
 
         save_config(existing, config_path)
         click.echo(f"\n✓ Configuration saved to {config_path}")

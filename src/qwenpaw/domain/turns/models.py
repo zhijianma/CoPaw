@@ -31,8 +31,7 @@ class RequestSource:
     """Describe where a turn entered the application core."""
 
     kind: RequestSourceKind
-    endpoint_id: str | None = None
-    binding_id: str | None = None
+    channel_type: str | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in _REQUEST_SOURCE_KINDS:

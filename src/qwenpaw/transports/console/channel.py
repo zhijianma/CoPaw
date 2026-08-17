@@ -42,7 +42,7 @@ from ...app.channels.base import (
 from ...app.channels.renderer import ChannelDisplayConfig
 from ...app.channels.utils import file_url_to_local_path
 from ...app.console_push_store import append as push_store_append
-from ...config.config import ConsoleConfig as ConsoleChannelConfig
+from ...config.config import ConsoleTransportConfig
 from ...constant import DEFAULT_MEDIA_DIR
 from ...exceptions import ModelQuotaExceededException
 from .sse import ConsoleSseEncoder
@@ -160,7 +160,7 @@ class ConsoleTransport(BaseChannel):
     def from_config(
         cls,
         process: ProcessHandler,
-        config: ConsoleChannelConfig,
+        config: ConsoleTransportConfig,
         on_reply_sent: OnReplySent = None,
         display_config: ChannelDisplayConfig | None = None,
         no_text_debounce: bool = True,

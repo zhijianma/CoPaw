@@ -6,7 +6,6 @@ Windows filenames cannot contain: \\ / : * ? " < > |
 """
 
 import os
-import re
 import logging
 import shutil
 
@@ -21,34 +20,12 @@ from ...utils.io_utils import (
     write_json_atomic_async,
 )
 from ...utils.json_utils import safe_json_loads as _safe_json_loads
+from ...utils.session_paths import (
+    sanitize_session_filename as sanitize_filename,
+    session_filename,
+)
 
 logger = logging.getLogger(__name__)
-
-# Characters forbidden in Windows filenames
-_UNSAFE_FILENAME_RE = re.compile(r'[\\/:*?"<>|]')
-
-
-def sanitize_filename(name: str) -> str:
-    """Replace characters that are illegal in Windows filenames with ``--``.
-
-    >>> sanitize_filename('discord:dm:12345')
-    'discord--dm--12345'
-    >>> sanitize_filename('normal-name')
-    'normal-name'
-    """
-    return _UNSAFE_FILENAME_RE.sub("--", name)
-
-
-def session_filename(session_id: str, user_id: str = "") -> str:
-    """Return the filename used by ``SafeJSONSession`` for one conversation."""
-    if not session_id:
-        raise ValueError("session_id must not be None or empty")
-
-    safe_sid = sanitize_filename(session_id)
-    safe_uid = sanitize_filename(user_id) if user_id else ""
-    if safe_uid and safe_uid == safe_sid:
-        safe_uid = ""
-    return f"{safe_uid}_{safe_sid}.json" if safe_uid else f"{safe_sid}.json"
 
 
 def session_relative_paths(

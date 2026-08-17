@@ -551,7 +551,10 @@ class DingTalkChannel(BaseChannel):
         to global config directory for backward compatibility.
         """
         if self._workspace_dir:
-            return self._workspace_dir / "dingtalk_session_webhooks.json"
+            return self.channel_state_path(
+                self._workspace_dir,
+                "dingtalk_session_webhooks.json",
+            )
         return get_config_path().parent / "dingtalk_session_webhooks.json"
 
     def _load_session_webhook_store_from_disk(self) -> None:

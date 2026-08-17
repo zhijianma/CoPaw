@@ -1,147 +1,129 @@
-/**
- * Tests for api/modules/channel.ts
- *
- * Contract-guard style.  `channelApi` has several non-trivial transforms:
- *  - URL-encoding channel names that contain special characters
- *  - building an optional query-string for QR-code params
- *  - building a query-string for QR-code status with token + extra params
- * We verify these transforms without pinning the exact path string, per #5438.
- */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+vi.mock("../request", () => ({ request: vi.fn() }));
 
-vi.mock("../request", () => ({
-  request: vi.fn(),
-}));
-
-import { channelApi } from "./channel";
 import { request } from "../request";
+import { channelApi } from "./channel";
 
 describe("channelApi", () => {
-  beforeEach(() => {
-    vi.mocked(request).mockReset();
-  });
+  beforeEach(() => vi.mocked(request).mockReset());
+  afterEach(() => vi.clearAllMocks());
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  // ---- listing & shape ---------------------------------------------------
-
-  it("listChannelTypes resolves to a string[] of channel type names", async () => {
-    vi.mocked(request).mockResolvedValue(["dingtalk", "wechat"]);
-    await expect(channelApi.listChannelTypes()).resolves.toEqual([
-      "dingtalk",
-      "wechat",
-    ]);
-  });
-
-  it("listChannelCatalog resolves ordered channel definitions", async () => {
-    const catalog = [{ key: "console", order: 0, surface: "web" }];
-    vi.mocked(request).mockResolvedValue(catalog);
-
-    await expect(channelApi.listChannelCatalog()).resolves.toEqual(catalog);
-    expect(request).toHaveBeenCalledWith("/config/channels/catalog");
-  });
-
-  it("listChannels resolves to the ChannelConfig object", async () => {
-    const cfg = { dingtalk: { enabled: true } } as unknown;
-    vi.mocked(request).mockResolvedValue(cfg);
-    expect(await channelApi.listChannels()).toBe(cfg);
-  });
-
-  it("updateChannels returns the persisted ChannelConfig", async () => {
-    const cfg = { dingtalk: { enabled: false } } as unknown;
-    vi.mocked(request).mockResolvedValue(cfg);
-    const result = await channelApi.updateChannels(cfg as never);
-    expect(result).toBe(cfg);
-  });
-
-  // ---- single-channel config --------------------------------------------
-
-  it("getChannelConfig returns a SingleChannelConfig", async () => {
-    const single = { enabled: true, webhooks: [] } as unknown;
-    vi.mocked(request).mockResolvedValue(single);
-    const r = await channelApi.getChannelConfig("dingtalk");
-    expect(r).toBe(single);
-  });
-
-  it("updateChannelConfig returns the persisted SingleChannelConfig", async () => {
-    const single = { enabled: false, webhooks: [] } as unknown;
-    vi.mocked(request).mockResolvedValue(single);
-    const r = await channelApi.updateChannelConfig("dingtalk", single as never);
-    expect(r).toBe(single);
-  });
-
-  it("checkChannelConflict posts the proposed channel config", async () => {
-    const single = { enabled: true, bot_token: "secret" } as unknown;
-    const conflict = {
-      conflict: true,
-      agents: [{ agent_id: "sales", agent_name: "Sales Assistant" }],
-    };
-    vi.mocked(request).mockResolvedValue(conflict);
-
-    await expect(
-      channelApi.checkChannelConflict("telegram/bot", single as never),
-    ).resolves.toBe(conflict);
-    expect(request).toHaveBeenCalledWith(
-      expect.stringContaining("telegram%2Fbot/conflict-check"),
+  it("lists agent-owned Channel configurations", async () => {
+    const channels = [
       {
-        method: "POST",
-        body: JSON.stringify(single),
+        type: "telegram",
+        name: "Main",
+        enabled: true,
+        settings: {},
       },
+    ];
+    vi.mocked(request).mockResolvedValue(channels);
+
+    await expect(channelApi.listChannels()).resolves.toEqual(channels);
+    expect(request).toHaveBeenCalledWith("/config/channels");
+  });
+
+  it("creates a Channel configuration", async () => {
+    const value = {
+      type: "telegram",
+      name: "Backup",
+      enabled: false,
+      settings: {},
+    };
+    const persisted = value;
+    vi.mocked(request).mockResolvedValue(persisted);
+
+    await expect(channelApi.createChannelConfig(value)).resolves.toEqual(
+      persisted,
+    );
+    expect(request).toHaveBeenCalledWith("/config/channels", {
+      method: "POST",
+      body: JSON.stringify(value),
+    });
+  });
+
+  it("gets and updates by encoded Channel type", async () => {
+    const channel = {
+      type: "telegram",
+      name: "Main",
+      enabled: true,
+      settings: {},
+    };
+    vi.mocked(request).mockResolvedValue(channel);
+
+    await channelApi.getChannelConfig(channel.type);
+    await channelApi.updateChannelConfig(channel.type, channel);
+
+    expect(request).toHaveBeenNthCalledWith(
+      1,
+      "/config/channels/telegram",
+    );
+    expect(request).toHaveBeenNthCalledWith(
+      2,
+      "/config/channels/telegram",
+      { method: "PUT", body: JSON.stringify(channel) },
     );
   });
 
-  // ---- URL-encoding of channel names ------------------------------------
+  it("deletes by Channel type", async () => {
+    vi.mocked(request).mockResolvedValue(undefined);
 
-  it("encodes a channel name with a slash when calling getChannelConfig", async () => {
-    vi.mocked(request).mockResolvedValue({});
-    await channelApi.getChannelConfig("a/b");
-    const arg = vi.mocked(request).mock.calls[0][0] as string;
-    // slash must be percent-encoded so it isn't treated as a path segment
-    expect(arg).toContain("a%2Fb");
-    expect(arg).not.toMatch(/\/a\/b\b/);
+    await channelApi.deleteChannelConfig("telegram");
+
+    expect(request).toHaveBeenCalledWith(
+      "/config/channels/telegram",
+      { method: "DELETE" },
+    );
   });
 
-  // ---- QR-code helpers ---------------------------------------------------
+  it("keeps Console on its Transport API", async () => {
+    const consoleConfig = { enabled: true };
+    vi.mocked(request).mockResolvedValue(consoleConfig);
 
-  it("getChannelQrcode returns { qrcode_img, poll_token }", async () => {
-    const resp = { qrcode_img: "data:...", poll_token: "tok-1" };
-    vi.mocked(request).mockResolvedValue(resp);
-    await expect(channelApi.getChannelQrcode("wechat")).resolves.toEqual(resp);
-  });
+    await channelApi.getConsoleConfig();
+    await channelApi.updateConsoleConfig(consoleConfig as never);
 
-  it("getChannelQrcode forwards optional params (e.g. scene) without dropping them", async () => {
-    vi.mocked(request).mockResolvedValue({ qrcode_img: "", poll_token: "t" });
-    await channelApi.getChannelQrcode("wechat", { scene: "login" });
-    const arg = vi.mocked(request).mock.calls[0][0] as string;
-    expect(arg).toContain("scene=login");
-  });
-
-  it("getChannelQrcodeStatus returns { status, credentials }", async () => {
-    const resp = { status: "confirmed", credentials: { openid: "u1" } };
-    vi.mocked(request).mockResolvedValue(resp);
-    await expect(
-      channelApi.getChannelQrcodeStatus("wechat", "tok-1"),
-    ).resolves.toEqual(resp);
-  });
-
-  it("getChannelQrcodeStatus includes the encoded token in the path it sends to request", async () => {
-    vi.mocked(request).mockResolvedValue({
-      status: "pending",
-      credentials: {},
+    expect(request).toHaveBeenNthCalledWith(1, "/config/transports/console");
+    expect(request).toHaveBeenNthCalledWith(2, "/config/transports/console", {
+      method: "PUT",
+      body: JSON.stringify(consoleConfig),
     });
-    await channelApi.getChannelQrcodeStatus("wechat", "tok with space");
-    const arg = vi.mocked(request).mock.calls[0][0] as string;
-    // token must appear percent-encoded, not raw with spaces
-    expect(arg).toContain("tok%20with%20space");
   });
 
-  // ---- error propagation -------------------------------------------------
+  it("lists types, catalog, and schemas", async () => {
+    vi.mocked(request).mockResolvedValue([]);
+    await channelApi.listChannelTypes();
+    await channelApi.listChannelCatalog();
+    await channelApi.listChannelSchemas();
+    expect(request).toHaveBeenNthCalledWith(1, "/config/channels/types");
+    expect(request).toHaveBeenNthCalledWith(2, "/config/channels/catalog");
+    expect(request).toHaveBeenNthCalledWith(3, "/config/channels/schemas");
+  });
 
-  it("propagates request errors for listChannels", async () => {
-    vi.mocked(request).mockRejectedValue(new Error("503"));
-    await expect(channelApi.listChannels()).rejects.toThrow("503");
+  it("checks conflicts by Channel type", async () => {
+    vi.mocked(request).mockResolvedValue({ conflict: false, agents: [] });
+    await channelApi.checkChannelConflict(
+      "telegram",
+      { enabled: true } as never,
+    );
+    expect(request).toHaveBeenCalledWith(
+      "/config/channels/telegram/conflict-check",
+      expect.anything(),
+    );
+  });
+
+  it("builds QR-code URLs with encoded values", async () => {
+    vi.mocked(request).mockResolvedValue({});
+    await channelApi.getChannelQrcode("wechat", { scene: "login" });
+    await channelApi.getChannelQrcodeStatus(
+      "wechat",
+      "token with space",
+      { scene: "login" },
+    );
+    expect(vi.mocked(request).mock.calls[0][0]).toContain("scene=login");
+    expect(vi.mocked(request).mock.calls[1][0]).toContain(
+      "token%20with%20space",
+    );
   });
 });

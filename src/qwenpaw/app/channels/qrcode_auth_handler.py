@@ -36,6 +36,19 @@ from ...constant import PROJECT_NAME
 logger = logging.getLogger(__name__)
 
 
+async def _saved_channel_config(
+    request: Request,
+    channel_key: str,
+) -> dict[str, Any] | None:
+    from ..agent_context import get_agent_for_request
+
+    agent = await get_agent_for_request(request)
+    channel = agent.config.channels.get(channel_key)
+    if channel is None:
+        return None
+    return {**channel.settings, "enabled": channel.enabled}
+
+
 @dataclass
 class QRCodeResult:
     """Value object returned by ``fetch_qrcode``."""
@@ -90,17 +103,9 @@ class WeChatQRCodeAuthHandler(QRCodeAuthHandler):
         from ..channels.wechat.client import _DEFAULT_BASE_URL
 
         try:
-            from ..agent_context import get_agent_for_request
-
-            agent = await get_agent_for_request(request)
-            channels = agent.config.channels
-            if channels is not None:
-                wechat_cfg = getattr(channels, "wechat", None)
-                if wechat_cfg is not None:
-                    return (
-                        getattr(wechat_cfg, "base_url", "")
-                        or _DEFAULT_BASE_URL
-                    )
+            wechat_cfg = await _saved_channel_config(request, "wechat")
+            if wechat_cfg is not None:
+                return str(wechat_cfg.get("base_url") or _DEFAULT_BASE_URL)
         except Exception:
             pass
         return _DEFAULT_BASE_URL
@@ -478,15 +483,10 @@ class FeishuQRCodeAuthHandler(QRCodeAuthHandler):
 
         # 2. Fallback to saved agent config
         try:
-            from ..agent_context import get_agent_for_request
-
-            agent = await get_agent_for_request(request)
-            channels = agent.config.channels
-            if channels is not None:
-                feishu_cfg = getattr(channels, "feishu", None)
-                if feishu_cfg is not None:
-                    domain = getattr(feishu_cfg, "domain", "feishu")
-                    return domain if domain in ("feishu", "lark") else "feishu"
+            feishu_cfg = await _saved_channel_config(request, "feishu")
+            if feishu_cfg is not None:
+                domain = str(feishu_cfg.get("domain") or "feishu")
+                return domain if domain in ("feishu", "lark") else "feishu"
         except Exception:
             pass
         return "feishu"

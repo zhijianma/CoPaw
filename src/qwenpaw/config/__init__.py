@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 from .config import (
     Config,
-    ChannelConfig,
-    ChannelConfigUnion,
     AgentsRunningConfig,
     FileGuardConfig,
     HeartbeatConfig,
@@ -32,8 +30,6 @@ from .utils import (
 __all__ = [
     "AgentsRunningConfig",
     "Config",
-    "ChannelConfig",
-    "ChannelConfigUnion",
     "FileGuardConfig",
     "HeartbeatConfig",
     "SecurityConfig",

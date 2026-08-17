@@ -8,6 +8,7 @@ import styles from "../index.module.less";
 interface ChannelCardProps {
   channelKey: ChannelKey;
   config: Record<string, unknown>;
+  displayName?: string;
   onClick: () => void;
   iconUrl?: string;
 }
@@ -15,6 +16,7 @@ interface ChannelCardProps {
 export const ChannelCard = React.memo(function ChannelCard({
   channelKey,
   config,
+  displayName,
   onClick,
   iconUrl,
 }: ChannelCardProps) {
@@ -67,7 +69,7 @@ export const ChannelCard = React.memo(function ChannelCard({
 
       {/* Middle section: Name and Tag */}
       <div className={styles.cardMiddleSection}>
-        <div className={styles.cardTitle}>{label}</div>
+        <div className={styles.cardTitle}>{displayName || label}</div>
         {isBuiltin ? (
           <span className={styles.builtinTag}>{t("channels.builtin")}</span>
         ) : (

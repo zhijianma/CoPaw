@@ -2,17 +2,20 @@
 """CLI channel: list and interactively configure channels in config.json."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Optional
 
 import click
+from pydantic import BaseModel
 from qwenpaw.exceptions import (
     AppBaseException,
 )
 
 from ..config.config import (
+    AgentProfileConfig,
     Config,
-    ConsoleConfig,
+    ConsoleTransportConfig,
     DiscordConfig,
     TelegramConfig,
     DingTalkConfig,
@@ -26,8 +29,13 @@ from ..config.config import (
 )
 from .utils import prompt_confirm, prompt_path, prompt_select
 from .http import client, print_json, resolve_base_url
-from ..config import get_available_channels
+from ..config import (
+    get_available_channels,
+    load_config,
+)
+from ..app.channels.config_service import ChannelConfigService
 from ..app.channels.registry import get_channel_registry
+from ..domain.channels.catalog import BUILTIN_CHANNEL_CATALOG
 
 
 # Fields that contain secrets — display masked in ``list``
@@ -39,27 +47,14 @@ _SECRET_FIELDS = {
     "twilio_auth_token",
 }
 
-_ALL_CHANNEL_NAMES = {
-    "imessage": "iMessage",
-    "discord": "Discord",
-    "telegram": "Telegram",
-    "dingtalk": "DingTalk",
-    "feishu": "Feishu",
-    "qq": "QQ",
-    "console": "Console",
-    "voice": "Twilio",
-    "yuanbao": "Yuanbao",
-    "slack": "Slack",
-}
-# Public alias for tests and external use.
-CHANNEL_NAMES = _ALL_CHANNEL_NAMES
+CHANNEL_NAMES = {item.key: item.label for item in BUILTIN_CHANNEL_CATALOG}
 
 
 def _get_channel_names() -> dict[str, str]:
     """Return channel key -> display name (built-in + plugins)."""
     available = get_available_channels()
     registry = get_channel_registry()
-    out = {k: v for k, v in _ALL_CHANNEL_NAMES.items() if k in available}
+    out = {k: v for k, v in CHANNEL_NAMES.items() if k in available}
     for key in available:
         if key not in out and key in registry:
             cls = registry[key]
@@ -584,7 +579,9 @@ def configure_voice(
     return current_config
 
 
-def configure_console(current_config: ConsoleConfig) -> ConsoleConfig:
+def configure_console(
+    current_config: ConsoleTransportConfig,
+) -> ConsoleTransportConfig:
     """Configure Console channel interactively."""
     click.echo("\n=== Configure Console Channel ===")
 
@@ -716,19 +713,15 @@ def get_channel_configurators() -> dict:
     return out
 
 
-def _get_channel_config(config: Config, key: str):
-    """Get channel config for key (from attr or extra)."""
-    ch = getattr(config.channels, key, None)
-    if ch is not None:
-        return ch
-    extra = getattr(config.channels, "__pydantic_extra__", None) or {}
-    return extra.get(key)
+def _get_channel_config(configs: dict[str, object], key: str):
+    """Get one channel configuration from the editable mapping."""
+    return configs.get(key)
 
 
-def configure_channels_interactive(config: Config) -> None:
+def configure_channels_interactive(configs: dict[str, object]) -> None:
     """Run the interactive channel selection / configuration loop.
 
-    Mutates *config.channels* in-place.
+    Mutates *configs* in-place.
     """
     configurators = get_channel_configurators()
     registry = get_channel_registry()
@@ -737,7 +730,7 @@ def configure_channels_interactive(config: Config) -> None:
     while True:
         channel_choices: list[tuple[str, str]] = []
         for channel_key, (channel_name, _) in configurators.items():
-            channel_config = _get_channel_config(config, channel_key)
+            channel_config = _get_channel_config(configs, channel_key)
             status = "✓" if _channel_enabled(channel_config) else "✗"
             channel_choices.append(
                 (f"{channel_name} [{status}]", channel_key),
@@ -758,7 +751,7 @@ def configure_channels_interactive(config: Config) -> None:
             break
 
         channel_name, configure_func = configurators[choice]
-        current_config = _get_channel_config(config, choice)
+        current_config = _get_channel_config(configs, choice)
         if current_config is None:
             ch_cls = registry.get(choice)
             default = (
@@ -768,13 +761,13 @@ def configure_channels_interactive(config: Config) -> None:
             )
             current_config = default or {"enabled": False, "bot_prefix": ""}
         updated_config = configure_func(current_config)
-        setattr(config.channels, choice, updated_config)
+        configs[choice] = updated_config
 
     # Show enabled channels summary
     enabled_channels = [
         name
         for key, (name, _) in configurators.items()
-        if _channel_enabled(_get_channel_config(config, key))
+        if _channel_enabled(_get_channel_config(configs, key))
     ]
 
     if enabled_channels:
@@ -783,6 +776,63 @@ def configure_channels_interactive(config: Config) -> None:
         )
     else:
         click.echo("\n⚠ Warning: No channels enabled!")
+
+
+def load_editable_channel_configs(
+    root_config: Config,
+    agent_config: AgentProfileConfig,
+    agent_id: str,
+) -> dict[str, object]:
+    """Build the CLI editor view from authoritative storage."""
+    del root_config, agent_id
+    values: dict[str, object] = {
+        "console": agent_config.transports.console,
+    }
+    for channel_type, channel in agent_config.channels.items():
+        values[channel_type] = {
+            **channel.settings,
+            "enabled": channel.enabled,
+        }
+    return values
+
+
+def persist_editable_channel_configs(
+    root_config: Config,
+    agent_config: AgentProfileConfig,
+    agent_id: str,
+    channel_configs: dict[str, object],
+) -> None:
+    """Persist CLI edits with one configuration per Channel type."""
+    del root_config
+    service = ChannelConfigService(agent_config)
+    console = channel_configs.get("console")
+    if console is not None:
+        agent_config.transports.console = (
+            ConsoleTransportConfig.model_validate(console)
+        )
+    for channel_key, value in channel_configs.items():
+        if channel_key == "console":
+            continue
+        if isinstance(value, BaseModel):
+            payload = value.model_dump(mode="json")
+        elif isinstance(value, Mapping):
+            payload = dict(value)
+        else:
+            raise TypeError(
+                f"Invalid Channel configuration for {channel_key}",
+            )
+        enabled = bool(payload.pop("enabled", False))
+        current = agent_config.channels.get(channel_key)
+        value = {
+            "name": current.name if current else channel_key.title(),
+            "enabled": enabled,
+            "settings": payload,
+        }
+        if current is None:
+            service.create(channel_key, value)
+        else:
+            service.update(channel_key, value)
+    save_agent_config(agent_id, agent_config)
 
 
 # ── CLI commands ───────────────────────────────────────────────────
@@ -796,8 +846,9 @@ def channels_group() -> None:
 
 def _channel_config_fields(ch):
     """Yield (field_name, value) for a channel config (model or dict)."""
-    if hasattr(ch, "model_fields"):
-        for fn in ch.model_fields:
+    model_fields = getattr(type(ch), "model_fields", None)
+    if model_fields is not None:
+        for fn in model_fields:
             if fn == "enabled":
                 continue
             yield (fn, getattr(ch, fn))
@@ -835,27 +886,36 @@ def list_cmd(agent_id: str) -> None:
     try:
         agent_config = load_agent_config(agent_id)
         click.echo(f"Channels for agent: {agent_id}\n")
-
-        if not agent_config.channels:
-            click.echo("No channels configured for this agent.")
-            return
-
-        extra = (
-            getattr(agent_config.channels, "__pydantic_extra__", None) or {}
-        )
-        for key, name in _get_channel_names().items():
-            ch = getattr(agent_config.channels, key, None)
-            if ch is None:
-                ch = extra.get(key)
-            if ch is None:
-                continue
+        channel_names = _get_channel_names()
+        entries = [
+            (
+                "console",
+                "Console",
+                agent_config.transports.console,
+            ),
+            *[
+                (
+                    channel_type,
+                    channel.name,
+                    {
+                        **channel.settings,
+                        "enabled": channel.enabled,
+                    },
+                )
+                for channel_type, channel in agent_config.channels.items()
+            ],
+        ]
+        for key, display_name, ch in entries:
+            type_name = channel_names.get(key, key)
             status = (
                 click.style("enabled", fg="green")
                 if _channel_enabled(ch)
                 else click.style("disabled", fg="red")
             )
             click.echo(f"\n{'─' * 40}")
-            click.echo(f"  {name}  [{status}]")
+            click.echo(
+                f"  {display_name} ({type_name})  [{status}]",
+            )
             click.echo(f"{'─' * 40}")
 
             for field_name, value in _channel_config_fields(ch):
@@ -881,22 +941,22 @@ def list_cmd(agent_id: str) -> None:
 def configure_cmd(agent_id: str) -> None:
     """Interactively configure channels."""
     try:
+        root_config = load_config()
         agent_config = load_agent_config(agent_id)
         click.echo(f"Configuring channels for agent: {agent_id}\n")
 
-        # Create a temporary Config object for the interactive configurator
-        temp_config = Config()
-        temp_config.channels = (
-            agent_config.channels
-            if agent_config.channels
-            else temp_config.channels
+        channel_configs = load_editable_channel_configs(
+            root_config,
+            agent_config,
+            agent_id,
         )
-
-        configure_channels_interactive(temp_config)
-
-        # Save back to agent config
-        agent_config.channels = temp_config.channels
-        save_agent_config(agent_id, agent_config)
+        configure_channels_interactive(channel_configs)
+        persist_editable_channel_configs(
+            root_config,
+            agent_config,
+            agent_id,
+            channel_configs,
+        )
         click.echo(f"\n✓ Configuration saved for agent {agent_id}")
     except (ValueError, AppBaseException) as e:
         click.echo(f"Error: {e}", err=True)

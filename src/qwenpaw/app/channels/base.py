@@ -179,6 +179,17 @@ class BaseChannel(ABC):
         self._debounce_pending: Dict[str, List[Any]] = {}
         self._debounce_timers: Dict[str, asyncio.Task[None]] = {}
 
+    def channel_state_path(
+        self,
+        workspace_dir: Path,
+        filename: str,
+    ) -> Path:
+        """Return the state path for the Agent's single Channel config."""
+        return workspace_dir / filename
+
+    def on_runtime_bound(self) -> None:
+        """Refresh workspace-dependent state after manager binding."""
+
     def _is_native_payload(self, payload: Any) -> bool:
         """True if payload is a native dict that can be time-debounced."""
         return isinstance(payload, dict) and "content_parts" in payload
@@ -985,7 +996,10 @@ class BaseChannel(ABC):
 
             if self._on_reply_sent:
                 args = self.get_on_reply_sent_args(request, to_handle)
-                self._on_reply_sent(self.channel, *args)
+                self._on_reply_sent(
+                    self.channel,
+                    *args,
+                )
 
         except asyncio.CancelledError:
             logger.info(
@@ -1362,7 +1376,10 @@ class BaseChannel(ABC):
                 )
             if self._on_reply_sent:
                 args = self.get_on_reply_sent_args(request, to_handle)
-                self._on_reply_sent(self.channel, *args)
+                self._on_reply_sent(
+                    self.channel,
+                    *args,
+                )
         except asyncio.CancelledError:
             logger.info(
                 "channel task cancelled: session=%s",
@@ -1393,7 +1410,7 @@ class BaseChannel(ABC):
         target = getattr(process_request, "reply_target", None)
         if not isinstance(target, ReplyTarget):
             target = ReplyTarget(
-                endpoint_id=str(self.channel),
+                channel_type=self.channel,
                 conversation_id=to_handle or session_id,
                 metadata=send_meta,
             )

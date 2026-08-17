@@ -34,7 +34,6 @@ from .config import (
     LastApiConfig,
     LastDispatchConfig,
     load_agent_config,
-    migrate_channel_display_fields,
     save_agent_config,
 )
 
@@ -535,14 +534,6 @@ def _load_and_validate_config(
     data: dict,
 ) -> Config:
     """Load and validate config data, handling validation errors."""
-    channels = data.get("channels")
-    migrated_weixin = False
-    if isinstance(channels, dict) and "weixin" in channels:
-        legacy = channels.pop("weixin")
-        channels.setdefault("wechat", legacy)
-        migrated_weixin = True
-    migrated_display = migrate_channel_display_fields(channels)
-    migrated_data = data
     data = _normalize_working_dir_bound_paths(data)
     # Backward compat: top-level last_api_host / last_api_port -> last_api
     if "last_api_host" in data or "last_api_port" in data:
@@ -572,27 +563,6 @@ def _load_and_validate_config(
             )
             return Config()
 
-    if migrated_weixin or migrated_display:
-        try:
-            migration_name = (
-                "channel-display" if migrated_display else "weixin"
-            )
-            backup_path = config_path.with_suffix(
-                f".{uuid.uuid4().hex[:8]}.{migration_name}-migrate.bak",
-            )
-            shutil.copy2(config_path, backup_path)
-            with open(config_path, "w", encoding="utf-8") as file:
-                json.dump(migrated_data, file, indent=2, ensure_ascii=False)
-            logger.warning(
-                "Migrated legacy channel configuration in %s (backup: %s)",
-                config_path,
-                backup_path,
-            )
-        except OSError:
-            logger.warning(
-                "Failed to persist channel configuration migration: %s",
-                config_path,
-            )
     return config
 
 

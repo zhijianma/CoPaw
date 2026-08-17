@@ -8,7 +8,6 @@ from pathlib import Path
 
 from ..config.config import (
     AgentProfileConfig,
-    ChannelConfig,
     HeartbeatConfig,
     MCPConfig,
     ToolsConfig,
@@ -79,7 +78,6 @@ def build_agent_template(
             workspace_dir=str(workspace_dir),
             template_id=template_id,
             language=resolved_language,
-            channels=ChannelConfig(),
             mcp=MCPConfig(),
             heartbeat=HeartbeatConfig(),
             tools=ToolsConfig(),
@@ -100,7 +98,6 @@ def build_agent_template(
             workspace_dir=str(workspace_dir),
             template_id=template_id,
             language=resolved_language,
-            channels=ChannelConfig(),
             mcp=MCPConfig(),
             heartbeat=HeartbeatConfig(),
             tools=build_local_agent_tools_config(),
@@ -119,7 +116,6 @@ def build_agent_template(
             workspace_dir=str(workspace_dir),
             template_id=template_id,
             language=resolved_language,
-            channels=ChannelConfig(),
             mcp=MCPConfig(),
             heartbeat=HeartbeatConfig(),
             tools=build_qa_agent_tools_config(),

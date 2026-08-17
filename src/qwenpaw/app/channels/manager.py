@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-
 from typing import (
     Any,
     Callable,
@@ -21,21 +20,13 @@ from typing import (
 from .base import BaseChannel, ContentType, ProcessHandler, TextContent
 from .renderer import ChannelDisplayConfig
 from .command_registry import CommandRegistry
-from .legacy_routing import resolve_agent_channel_routes
 from .registry import get_channel_registry
 from .unified_queue_manager import UnifiedQueueManager
 from ...config import get_available_channels
-from ...domain.channels.models import (
-    AgentBinding,
-    ChannelEndpoint,
-    ChannelRoute,
-)
-from ...domain.channels.routing import BindingRouter
 from ...runtime.channel_request_bridge import ChannelRequestBridge
 
 if TYPE_CHECKING:
-    from ...config.channel_routing import ChannelRoutingConfig
-    from ...config.config import Config
+    from ...config.config import AgentProfileConfig, Config
 
 logger = logging.getLogger(__name__)
 
@@ -84,21 +75,12 @@ class ChannelManager:
         self,
         channels: List[BaseChannel],
         *,
-        endpoints: List[ChannelEndpoint] | None = None,
-        bindings: List[AgentBinding] | None = None,
         transports: List[BaseChannel] | None = None,
     ):
         self.channels = channels
         self._transports = {
             transport.channel: transport for transport in transports or []
         }
-        self.endpoints = tuple(endpoints or ())
-        self.bindings = tuple(bindings or ())
-        self._binding_router = BindingRouter(
-            self.endpoints,
-            self.bindings,
-        )
-        self._attach_request_bridges()
         self._lock = asyncio.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -116,28 +98,10 @@ class ChannelManager:
         # Track channel-start tasks for graceful shutdown
         self._start_tasks: set[asyncio.Task] = set()
 
-    def _attach_request_bridges(self) -> None:
-        """Give each adapter its unique endpoint-to-agent route."""
-        adapters = [*self.channels, *self._transports.values()]
-        for channel in adapters:
-            endpoints = [
-                endpoint
-                for endpoint in self.endpoints
-                if endpoint.enabled and endpoint.channel_key == channel.channel
-            ]
-            if not endpoints:
-                continue
-            if len(endpoints) > 1:
-                raise ValueError(
-                    f"Multiple endpoints require separate adapters: "
-                    f"{channel.channel}",
-                )
-            channel.set_request_bridge(
-                ChannelRequestBridge(
-                    endpoints[0].endpoint_id,
-                    self._binding_router,
-                ),
-            )
+    @staticmethod
+    def _runtime_id(channel: BaseChannel) -> str:
+        """Return the Channel type used as the runtime identity."""
+        return channel.channel
 
     @classmethod
     def from_env(
@@ -168,74 +132,30 @@ class ChannelManager:
         config: "Config",
         on_last_dispatch: OnLastDispatch = None,
         workspace_dir: Path | None = None,
-        agent_id: str = "default",
+        agent_config: "AgentProfileConfig | None" = None,
         transports: List[BaseChannel] | None = None,
-        routing: "ChannelRoutingConfig | None" = None,
     ) -> "ChannelManager":
-        """Create channels from config (config.json or agent.json).
+        """Create one adapter for each enabled agent Channel type.
 
         Args:
             process: Process handler for agent communication
-            config: Configuration object with channels
+            config: Root configuration for shared display preferences
             on_last_dispatch: Callback for dispatch events
             workspace_dir: Agent workspace directory for channel state files
         """
         available = get_available_channels()
-        ch = config.channels
+        if agent_config is None:
+            raise ValueError("Agent configuration is required")
         show_tool_details = getattr(config, "show_tool_details", True)
-        extra = getattr(ch, "__pydantic_extra__", None) or {}
-        endpoints, bindings = resolve_agent_channel_routes(
-            agent_id,
-            ch,
-            routing,
-        )
-        explicit_routing = bool(
-            routing is not None and (routing.endpoints or routing.bindings),
-        )
-        endpoints_by_key: dict[str, list[ChannelEndpoint]] = {}
-        for endpoint in endpoints:
-            endpoints_by_key.setdefault(endpoint.channel_key, []).append(
-                endpoint,
-            )
-
         channels: list[BaseChannel] = []
-        for key, ch_cls in get_channel_registry(surface="channel").items():
-            if key not in available:
+        registry = get_channel_registry(surface="channel")
+        for channel_type, channel_config in agent_config.channels.items():
+            if not channel_config.enabled or channel_type not in available:
                 continue
-            configured_endpoints = endpoints_by_key.get(key, [])
-            if len(configured_endpoints) > 1:
-                raise ValueError(
-                    f"Agent has multiple endpoints for channel: {key}",
-                )
-            if explicit_routing:
-                if not configured_endpoints:
-                    continue
-                endpoint = configured_endpoints[0]
-                ch_cfg = dict(endpoint.settings)
-                ch_cfg["enabled"] = endpoint.enabled
-            else:
-                ch_cfg = getattr(ch, key, None)
-                if ch_cfg is None and key in extra:
-                    ch_cfg = extra[key]
-            if ch_cfg is None:
+            ch_cls = registry.get(channel_type)
+            if ch_cls is None:
                 continue
-            if isinstance(ch_cfg, dict):
-                from types import SimpleNamespace
-                from ...config.config import BaseChannelConfig
-
-                defaults = BaseChannelConfig().model_dump()
-                defaults.update(ch_cfg)
-                ch_cfg = SimpleNamespace(**defaults)
-
-            # Check if channel is enabled
-            # Handle both Pydantic objects (built-in)
-            # and dicts (customchannels)
-            if isinstance(ch_cfg, dict):
-                enabled = ch_cfg.get("enabled", False)
-            else:
-                enabled = getattr(ch_cfg, "enabled", False)
-            if not enabled:
-                continue
+            ch_cfg = channel_config.typed_config(channel_type)
 
             no_text_debounce = getattr(ch_cfg, "no_text_debounce", True)
 
@@ -271,34 +191,26 @@ class ChannelManager:
                 }
 
             try:
-                channels.append(ch_cls.from_config(**filtered_kwargs))
+                channel = ch_cls.from_config(**filtered_kwargs)
+                channel.on_runtime_bound()
+                channel.set_request_bridge(
+                    ChannelRequestBridge(
+                        agent_config.id,
+                        channel_type,
+                    ),
+                )
+                channels.append(channel)
             except Exception as e:
                 logger.warning(
                     "Failed to initialize channel '%s', skipping: %s",
-                    key,
+                    channel_type,
                     e,
                 )
                 continue
 
         return cls(
             channels,
-            endpoints=endpoints,
-            bindings=bindings,
             transports=transports,
-        )
-
-    def resolve_route(
-        self,
-        endpoint_id: str,
-        *,
-        conversation_id: str,
-        agent_hint: str | None = None,
-    ) -> ChannelRoute:
-        """Resolve an explicit endpoint binding for inbound dispatch."""
-        return self._binding_router.resolve(
-            endpoint_id,
-            conversation_id=conversation_id,
-            agent_hint=agent_hint,
         )
 
     def _make_enqueue_cb(self, channel_id: str) -> Callable[[Any], None]:
@@ -356,7 +268,7 @@ class ChannelManager:
 
         # Get channel instance
         ch = next(
-            (c for c in self.channels if c.channel == channel_id),
+            (c for c in self.channels if self._runtime_id(c) == channel_id),
             None,
         )
         if not ch:
@@ -564,7 +476,9 @@ class ChannelManager:
 
         for ch in snapshot:
             if getattr(ch, "uses_manager_queue", True):
-                ch.set_enqueue(self._make_enqueue_cb(ch.channel))
+                ch.set_enqueue(
+                    self._make_enqueue_cb(self._runtime_id(ch)),
+                )
 
         logger.debug(
             f"Starting channels: {[g.channel for g in snapshot]}",
@@ -646,7 +560,7 @@ class ChannelManager:
     async def get_channel(self, channel: str) -> Optional[BaseChannel]:
         async with self._lock:
             for ch in self.channels:
-                if ch.channel == channel:
+                if self._runtime_id(ch) == channel:
                     return ch
             return self._transports.get(channel)
 
@@ -712,45 +626,34 @@ class ChannelManager:
             logger.info("Restarting channel: %s", channel_name)
 
             # Load the latest config for this channel
-            from ...config.config import load_agent_config
-
-            agent_id = self._workspace.agent_id if self._workspace else None
-            if agent_id is None:
+            if self._workspace is None:
                 raise RuntimeError(
                     "Cannot restart channel: workspace not set"
                     " on ChannelManager",
                 )
 
-            agent_config = load_agent_config(agent_id)
-            channels_cfg = agent_config.channels
-            if channels_cfg is None:
-                raise RuntimeError(
-                    f"No channels config found for agent" f" {agent_id}",
+            if channel_name == "console":
+                channel_cfg = self._workspace.config.transports.console
+            else:
+                channel_config = self._workspace.config.channels.get(
+                    channel_name,
                 )
-
-            # Get channel-specific config
-            channel_cfg = getattr(
-                channels_cfg,
-                channel_name,
-                None,
-            )
-            if channel_cfg is None:
-                extra = (
-                    getattr(
-                        channels_cfg,
-                        "__pydantic_extra__",
-                        None,
+                if channel_config is None:
+                    raise RuntimeError(
+                        f"No config found for Channel '{channel_name}'",
                     )
-                    or {}
-                )
-                channel_cfg = extra.get(channel_name)
-            if channel_cfg is None:
-                raise RuntimeError(
-                    f"No config found for channel" f" '{channel_name}'",
-                )
+                channel_cfg = channel_config.typed_config(channel_name)
 
             # Clone a fresh instance and replace
             new_channel = channel_instance.clone(channel_cfg)
+            new_channel.on_runtime_bound()
+            if channel_name != "console":
+                new_channel.set_request_bridge(
+                    ChannelRequestBridge(
+                        self._workspace.config.id,
+                        channel_instance.channel,
+                    ),
+                )
             if self._workspace is not None:
                 new_channel.set_workspace(
                     self._workspace,
@@ -820,7 +723,7 @@ class ChannelManager:
         Note:
             Queue and consumer are created on-demand by UnifiedQueueManager
         """
-        new_channel_name = new_channel.channel
+        new_channel_name = self._runtime_id(new_channel)
 
         # 1) Set enqueue callback before start() so the channel
         #    (e.g. DingTalk) can register its handler
@@ -845,7 +748,7 @@ class ChannelManager:
         async with self._lock:
             old_channel = None
             for i, ch in enumerate(self.channels):
-                if ch.channel == new_channel_name:
+                if self._runtime_id(ch) == new_channel_name:
                     old_channel = ch
                     self.channels[i] = new_channel
                     break

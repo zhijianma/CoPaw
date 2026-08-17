@@ -13,6 +13,13 @@ export interface BaseChannelConfig {
   no_text_debounce?: boolean;
 }
 
+export interface ChannelConfig {
+  type: string;
+  name: string;
+  enabled: boolean;
+  settings: Record<string, unknown>;
+}
+
 export interface IMessageChannelConfig extends BaseChannelConfig {
   db_path: string;
   poll_sec: number;
@@ -184,27 +191,6 @@ export interface OneBotConfig extends BaseChannelConfig {
   media_base64: boolean;
   media_base64_max_mb: number;
   share_session_in_group: boolean;
-}
-
-export interface ChannelConfig {
-  imessage: IMessageChannelConfig;
-  discord: DiscordConfig;
-  dingtalk: DingTalkConfig;
-  feishu: FeishuConfig;
-  qq: QQConfig;
-  telegram: TelegramConfig;
-  slack: SlackConfig;
-  mqtt: MQTTConfig;
-  matrix: MatrixConfig;
-  mattermost: MattermostConfig;
-  wecom: WecomConfig;
-  console: ConsoleConfig;
-  voice: VoiceChannelConfig;
-  sip: SIPChannelConfig;
-  xiaoyi: XiaoYiConfig;
-  yuanbao: YuanbaoConfig;
-  wechat: WeChatConfig;
-  onebot: OneBotConfig;
 }
 
 export type SingleChannelConfig =

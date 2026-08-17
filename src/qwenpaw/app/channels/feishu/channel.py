@@ -1229,7 +1229,10 @@ class FeishuChannel(BaseChannel):
         to global config directory for backward compatibility.
         """
         if self._workspace_dir:
-            return self._workspace_dir / "feishu_receive_ids.json"
+            return self.channel_state_path(
+                self._workspace_dir,
+                "feishu_receive_ids.json",
+            )
         return get_config_path().parent / "feishu_receive_ids.json"
 
     def _load_receive_id_store_from_disk(self) -> None:
