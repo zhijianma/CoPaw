@@ -41,6 +41,10 @@ from .schema import ChannelType
 from .access_control import get_access_control_store
 from ..task_event_encoder import TaskEventEncoder
 from ...config.utils import load_config
+from ...domain.channels.models import ReplyTarget
+from ...domain.channels.ports import ReplyEventType
+from ...runtime.legacy_reply_adapter import LegacyReplyAdapter
+from .reply_delivery import ChannelReplyDelivery
 
 # Optional callback to enqueue payload (set by manager)
 EnqueueCallback = Optional[Callable[[Any], None]]
@@ -922,13 +926,16 @@ class BaseChannel(ABC):
         process_iterator = None
         msg_id_to_stream_type: Dict[str, str] = {}
         streaming_buffers: Dict[str, str] = {}
+        process_request = self._request_for_process(request)
+        adapter, delivery = self._create_reply_delivery(
+            request,
+            process_request,
+            to_handle,
+            send_meta,
+        )
         try:
-            process_iterator = self._process(
-                self._request_for_process(request),
-            )
+            process_iterator = self._process(process_request)
             async for event in process_iterator:
-                obj = getattr(event, "object", None)
-                status = getattr(event, "status", None)
                 data = TaskEventEncoder.encode(event)
 
                 yield f"data: {data}\n\n"
@@ -947,27 +954,14 @@ class BaseChannel(ABC):
                         )
                     )
 
-                # --- non-streaming / fallback path ---
-                if obj == "content":
-                    if await self.on_event_content(
-                        request,
-                        to_handle,
-                        event,
-                        send_meta,
-                    ):
-                        continue
-                if obj == "message" and status == RunStatus.Completed:
-                    if not handled_by_streaming:
-                        await self.on_event_message_completed(
-                            request,
-                            to_handle,
-                            event,
-                            send_meta,
-                        )
-                elif obj == "response":
-                    last_response = event
-                    await self.on_event_response(request, event)
+                reply = adapter.project(event)
+                if not (
+                    handled_by_streaming
+                    and reply.type == ReplyEventType.MESSAGE
+                ):
+                    await delivery.deliver(reply)
 
+            last_response = delivery.last_response
             err_msg = self._get_response_error_message(last_response)
             if err_msg:
                 self._clear_session_turn_usage(session_id)
@@ -1333,34 +1327,21 @@ class BaseChannel(ABC):
         Run _process and send events. Override to use channel-specific
         loop (e.g. DingTalk _process_one_request with webhook sends).
         """
-        last_response = None
         session_id = getattr(request, "session_id", "") or ""
         self._clear_session_turn_usage(session_id)
+        process_request = self._request_for_process(request)
+        adapter, delivery = self._create_reply_delivery(
+            request,
+            process_request,
+            to_handle,
+            send_meta,
+        )
         try:
-            async for event in self._process(
-                self._request_for_process(request),
-            ):
-                obj = getattr(event, "object", None)
-                status = getattr(event, "status", None)
-                if obj == "content":
-                    if await self.on_event_content(
-                        request,
-                        to_handle,
-                        event,
-                        send_meta,
-                    ):
-                        continue
-                if obj == "message" and status == RunStatus.Completed:
-                    await self.on_event_message_completed(
-                        request,
-                        to_handle,
-                        event,
-                        send_meta,
-                    )
-                elif obj == "response":
-                    last_response = event
-                    await self.on_event_response(request, event)
-            err_msg = self._get_response_error_message(last_response)
+            async for event in self._process(process_request):
+                await delivery.deliver(adapter.project(event))
+            err_msg = self._get_response_error_message(
+                delivery.last_response,
+            )
             if err_msg:
                 self._clear_session_turn_usage(session_id)
                 await self._on_consume_error(
@@ -1399,6 +1380,34 @@ class BaseChannel(ABC):
             )
         finally:
             await self._finish_response_cycle(session_id)
+
+    def _create_reply_delivery(
+        self,
+        request: "AgentRequest",
+        process_request: Any,
+        to_handle: str,
+        send_meta: Dict[str, Any],
+    ) -> tuple[LegacyReplyAdapter, ChannelReplyDelivery]:
+        """Create the per-turn compatibility projector and delivery port."""
+        session_id = getattr(request, "session_id", "") or ""
+        target = getattr(process_request, "reply_target", None)
+        if not isinstance(target, ReplyTarget):
+            target = ReplyTarget(
+                endpoint_id=str(self.channel),
+                conversation_id=to_handle or session_id,
+                metadata=send_meta,
+            )
+        adapter = LegacyReplyAdapter(
+            str(getattr(process_request, "turn_id", "") or session_id),
+            target,
+        )
+        delivery = ChannelReplyDelivery(
+            channel=self,
+            request=request,
+            to_handle=to_handle,
+            send_meta=send_meta,
+        )
+        return adapter, delivery
 
     def _get_response_error_message(self, last_response: Any) -> Optional[str]:
         """

@@ -601,7 +601,9 @@ class SIPChannel(BaseChannel):
             from qwenpaw.schemas import RunStatus
 
             completed = RunStatus.Completed
-            async for event in self._process(request):
+            async for event in self._process(
+                self._request_for_process(request),
+            ):
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)
                 if obj != "message" or status is None:

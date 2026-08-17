@@ -166,3 +166,23 @@ def test_empty_explicit_routing_falls_back_to_legacy_projection() -> None:
         endpoint.endpoint_id == "telegram:sales" for endpoint in endpoints
     )
     assert any(binding.agent_id == "sales" for binding in bindings)
+
+
+def test_manager_injects_bridge_into_external_transport() -> None:
+    endpoints, bindings = project_agent_channels(
+        "sales",
+        ChannelConfig(
+            console={"enabled": True},
+        ),
+    )
+    transport = _Channel()
+    transport.channel = "console"
+
+    ChannelManager(
+        [],
+        endpoints=endpoints,
+        bindings=bindings,
+        transports=[transport],  # type: ignore[list-item]
+    )
+
+    assert transport.bridge is not None

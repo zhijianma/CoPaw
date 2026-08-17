@@ -147,7 +147,7 @@ async def voice_ws(websocket: WebSocket) -> None:
 
     handler = ConversationRelayHandler(
         ws=websocket,
-        process=voice_ch.process,
+        process=voice_ch.process_request,
         session_mgr=voice_ch.session_mgr,
         channel_type=voice_ch.channel,
     )

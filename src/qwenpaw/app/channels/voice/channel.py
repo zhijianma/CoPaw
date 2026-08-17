@@ -5,7 +5,7 @@ from __future__ import annotations
 import collections
 import logging
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any, AsyncIterator, Dict, Optional
 
 from ..renderer import ChannelDisplayConfig
 from ..base import BaseChannel, OnReplySent, ProcessHandler
@@ -234,6 +234,13 @@ class VoiceChannel(BaseChannel):
     def process(self) -> ProcessHandler:
         """Public accessor for the process handler."""
         return self._process
+
+    async def process_request(self, request: Any) -> AsyncIterator[Any]:
+        """Route a Voice request through the canonical core boundary."""
+        async for event in self._process(
+            self._request_for_process(request),
+        ):
+            yield event
 
     _MAX_PENDING_TOKENS = 100
 

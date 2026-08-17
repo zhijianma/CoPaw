@@ -26,6 +26,7 @@ function ChannelsPage() {
   const {
     channels,
     orderedKeys,
+    channelCatalog,
     channelSchemas,
     isBuiltin,
     loading,
@@ -309,6 +310,9 @@ function ChannelsPage() {
         initialValues={activeKey ? channels[activeKey] : undefined}
         isBuiltin={activeKey ? isBuiltin(activeKey) : true}
         channelSchema={activeKey ? channelSchemas[activeKey] : undefined}
+        channelDefinition={channelCatalog.find(
+          (definition) => definition.key === activeKey,
+        )}
         onClose={handleDrawerClose}
         onSubmit={handleSubmit}
       />

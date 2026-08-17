@@ -429,7 +429,9 @@ class ConsoleTransport(BaseChannel):
             event_count = 0
             sse_encoder = ConsoleSseEncoder()
 
-            async for event in self._process(request):
+            async for event in self._process(
+                self._request_for_process(request),
+            ):
                 event_count += 1
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)

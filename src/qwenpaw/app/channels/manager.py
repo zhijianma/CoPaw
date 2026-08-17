@@ -118,7 +118,8 @@ class ChannelManager:
 
     def _attach_request_bridges(self) -> None:
         """Give each adapter its unique endpoint-to-agent route."""
-        for channel in self.channels:
+        adapters = [*self.channels, *self._transports.values()]
+        for channel in adapters:
             endpoints = [
                 endpoint
                 for endpoint in self.endpoints

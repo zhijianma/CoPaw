@@ -15,28 +15,13 @@ import { useEffect } from "react";
 import type { FormInstance } from "antd";
 import { getChannelLabel, isLoopbackHost, type ChannelKey } from "./constants";
 import { QrcodeAuthBlock } from "./QrcodeAuthBlock";
-import type { ChannelSchema } from "../../../../api/modules/channel";
+import type {
+  ChannelDefinition,
+  ChannelSchema,
+} from "../../../../api/modules/channel";
 import styles from "../index.module.less";
 import { useAgentStore } from "../../../../stores/agentStore";
 import { openExternalLink } from "../../../../utils/openExternalLink";
-
-const CHANNELS_WITH_ACCESS_CONTROL: ChannelKey[] = [
-  "telegram",
-  "dingtalk",
-  "discord",
-  "feishu",
-  "wecom",
-  "mattermost",
-  "matrix",
-  "wechat",
-  "imessage",
-  "onebot",
-  "qq",
-  "mqtt",
-  "xiaoyi",
-  "yuanbao",
-  "slack",
-];
 
 // Doc EN URLs per channel (anchors on https://qwenpaw.agentscope.io/docs/channels)
 const CHANNEL_DOC_EN_URLS: Partial<Record<ChannelKey, string>> = {
@@ -148,6 +133,7 @@ interface ChannelDrawerProps {
   initialValues: Record<string, unknown> | undefined;
   isBuiltin: boolean;
   channelSchema?: ChannelSchema;
+  channelDefinition?: ChannelDefinition;
   onClose: () => void;
   onSubmit: (values: Record<string, unknown>) => void;
 }
@@ -161,6 +147,7 @@ export function ChannelDrawer({
   initialValues,
   isBuiltin,
   channelSchema,
+  channelDefinition,
   onClose,
   onSubmit,
 }: ChannelDrawerProps) {
@@ -1730,13 +1717,7 @@ export function ChannelDrawer({
             )}
           </>
 
-          {(activeKey === "wecom" ||
-            activeKey === "telegram" ||
-            activeKey === "dingtalk" ||
-            activeKey === "feishu" ||
-            activeKey === "discord" ||
-            activeKey === "slack" ||
-            activeKey === "matrix") && (
+          {channelDefinition?.supports_streaming && (
             <Form.Item
               name="streaming_enabled"
               label={t("channels.streamingEnabled")}
@@ -1757,7 +1738,7 @@ export function ChannelDrawer({
             ? renderBuiltinExtraFields(activeKey)
             : renderCustomExtraFields(initialValues)}
 
-          {CHANNELS_WITH_ACCESS_CONTROL.includes(activeKey) &&
+          {channelDefinition?.supports_access_control &&
             renderAccessControlFields()}
 
           {activeKey !== "console" && (

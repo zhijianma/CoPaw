@@ -116,6 +116,8 @@ const CHANNEL_SOURCE_FALLBACK_LABELS: Record<string, string> = {
   voice: "Voice",
   sip: "SIP",
   xiaoyi: "XiaoYi",
+  yuanbao: "Yuanbao",
+  slack: "Slack",
 };
 
 function channelSourceOptions(

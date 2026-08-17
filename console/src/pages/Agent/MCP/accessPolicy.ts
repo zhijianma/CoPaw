@@ -62,6 +62,8 @@ export const MCP_CHANNEL_SOURCE_VALUES = [
   "voice",
   "sip",
   "xiaoyi",
+  "yuanbao",
+  "slack",
 ] as const;
 
 export function normalizeMCPAccessPolicy(

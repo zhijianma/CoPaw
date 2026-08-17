@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Migration gates for Channel and Runtime protocol boundaries."""
 
+# pylint: disable=protected-access
+
 from __future__ import annotations
 
 import inspect
@@ -8,6 +10,7 @@ import re
 from pathlib import Path
 
 from qwenpaw.app.channels.base import BaseChannel
+from qwenpaw.domain.channels.catalog import BUILTIN_CHANNEL_KEYS
 from qwenpaw.runtime.runtime import Runtime
 
 
@@ -103,3 +106,29 @@ def test_legacy_channel_protocol_dependency_does_not_expand() -> None:
         "New Channel files must use transport-neutral messaging models: "
         f"{sorted(added)}"
     )
+
+
+def test_base_channel_uses_delivery_port_for_common_reply_loops() -> None:
+    direct_source = inspect.getsource(BaseChannel._run_process_loop)
+    tracker_source = inspect.getsource(BaseChannel._stream_with_tracker)
+
+    assert "ChannelReplyDelivery" not in direct_source
+    assert "_create_reply_delivery" in direct_source
+    assert "_create_reply_delivery" in tracker_source
+    assert "on_event_message_completed" not in direct_source
+    assert "on_event_message_completed" not in tracker_source
+
+
+def test_frontend_mcp_channel_values_match_canonical_catalog() -> None:
+    source = Path(
+        "console/src/pages/Agent/MCP/accessPolicy.ts",
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        r"MCP_CHANNEL_SOURCE_VALUES\s*=\s*\[(.*?)\]\s*as const",
+        source,
+        re.DOTALL,
+    )
+
+    assert match is not None
+    frontend_keys = set(re.findall(r'"([a-z0-9_]+)"', match.group(1)))
+    assert frontend_keys == set(BUILTIN_CHANNEL_KEYS)

@@ -21,6 +21,8 @@ class ChannelDefinition:
     order: int
     surface: ChannelSurface = "channel"
     required: bool = False
+    supports_access_control: bool = False
+    supports_streaming: bool = False
     identity_fields: tuple[str, ...] = ()
 
     def to_public_dict(self) -> dict[str, str | int | bool]:
@@ -50,6 +52,8 @@ BUILTIN_CHANNEL_CATALOG = (
         "DingTalkChannel",
         "DingTalkConfig",
         10,
+        supports_access_control=True,
+        supports_streaming=True,
         identity_fields=("client_id",),
     ),
     ChannelDefinition(
@@ -58,6 +62,8 @@ BUILTIN_CHANNEL_CATALOG = (
         "FeishuChannel",
         "FeishuConfig",
         20,
+        supports_access_control=True,
+        supports_streaming=True,
         identity_fields=("app_id",),
     ),
     ChannelDefinition(
@@ -66,6 +72,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "IMessageChannel",
         "IMessageChannelConfig",
         30,
+        supports_access_control=True,
     ),
     ChannelDefinition(
         "discord",
@@ -73,6 +80,8 @@ BUILTIN_CHANNEL_CATALOG = (
         "DiscordChannel",
         "DiscordConfig",
         40,
+        supports_access_control=True,
+        supports_streaming=True,
         identity_fields=("bot_token",),
     ),
     ChannelDefinition(
@@ -81,6 +90,8 @@ BUILTIN_CHANNEL_CATALOG = (
         "TelegramChannel",
         "TelegramConfig",
         50,
+        supports_access_control=True,
+        supports_streaming=True,
         identity_fields=("bot_token",),
     ),
     ChannelDefinition(
@@ -89,6 +100,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "QQChannel",
         "QQConfig",
         60,
+        supports_access_control=True,
         identity_fields=("app_id",),
     ),
     ChannelDefinition(
@@ -97,6 +109,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "WeChatChannel",
         "WeChatConfig",
         70,
+        supports_access_control=True,
         identity_fields=("bot_token",),
     ),
     ChannelDefinition(
@@ -105,6 +118,8 @@ BUILTIN_CHANNEL_CATALOG = (
         "WecomChannel",
         "WecomConfig",
         80,
+        supports_access_control=True,
+        supports_streaming=True,
         identity_fields=("bot_id",),
     ),
     ChannelDefinition(
@@ -113,6 +128,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "YuanbaoChannel",
         "YuanbaoConfig",
         90,
+        supports_access_control=True,
         identity_fields=("app_id",),
     ),
     ChannelDefinition(
@@ -121,6 +137,8 @@ BUILTIN_CHANNEL_CATALOG = (
         "MatrixChannel",
         "MatrixConfig",
         100,
+        supports_access_control=True,
+        supports_streaming=True,
         identity_fields=("homeserver", "user_id"),
     ),
     ChannelDefinition(
@@ -136,6 +154,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "XiaoYiChannel",
         "XiaoYiConfig",
         120,
+        supports_access_control=True,
         identity_fields=("agent_id",),
     ),
     ChannelDefinition(
@@ -144,6 +163,8 @@ BUILTIN_CHANNEL_CATALOG = (
         "SlackChannel",
         "SlackConfig",
         130,
+        supports_access_control=True,
+        supports_streaming=True,
         identity_fields=("bot_token",),
     ),
     ChannelDefinition(
@@ -152,6 +173,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "MattermostChannel",
         "MattermostConfig",
         140,
+        supports_access_control=True,
         identity_fields=("url", "bot_token"),
     ),
     ChannelDefinition(
@@ -160,6 +182,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "MQTTChannel",
         "MQTTConfig",
         150,
+        supports_access_control=True,
     ),
     ChannelDefinition(
         "voice",
@@ -175,6 +198,7 @@ BUILTIN_CHANNEL_CATALOG = (
         "OneBotChannel",
         "OneBotConfig",
         170,
+        supports_access_control=True,
     ),
 )
 

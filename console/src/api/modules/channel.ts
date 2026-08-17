@@ -33,6 +33,8 @@ export interface ChannelDefinition {
   key: string;
   order: number;
   surface: "channel" | "web";
+  supports_access_control: boolean;
+  supports_streaming: boolean;
 }
 
 export interface ChannelConflictAgent {
