@@ -58,6 +58,7 @@ _TOOL_OUTPUT_MESSAGE_TYPES = {
 }
 
 if TYPE_CHECKING:
+    from qwenpaw.runtime.channel_request_bridge import ChannelRequestBridge
     from qwenpaw.schemas import (
         AgentRequest,
         AgentResponse,
@@ -152,6 +153,7 @@ class BaseChannel(ABC):
         self._language = "zh"
         self._enqueue: EnqueueCallback = None
         self._workspace = None
+        self._request_bridge: ChannelRequestBridge | None = None
         cfg = load_config()
         internal_tools = frozenset(
             name
@@ -921,7 +923,9 @@ class BaseChannel(ABC):
         msg_id_to_stream_type: Dict[str, str] = {}
         streaming_buffers: Dict[str, str] = {}
         try:
-            process_iterator = self._process(request)
+            process_iterator = self._process(
+                self._request_for_process(request),
+            )
             async for event in process_iterator:
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)
@@ -1109,6 +1113,16 @@ class BaseChannel(ABC):
         if hasattr(payload, "session_id") and hasattr(payload, "input"):
             return payload
         return self.build_agent_request_from_native(payload)
+
+    def set_request_bridge(self, bridge: "ChannelRequestBridge") -> None:
+        """Attach the application-owned route into the agent core."""
+        self._request_bridge = bridge
+
+    def _request_for_process(self, request: "AgentRequest") -> Any:
+        """Return the canonical core request when routing is configured."""
+        if self._request_bridge is None:
+            return request
+        return self._request_bridge.build(request)
 
     def get_to_handle_from_request(self, request: "AgentRequest") -> str:
         """
@@ -1323,7 +1337,9 @@ class BaseChannel(ABC):
         session_id = getattr(request, "session_id", "") or ""
         self._clear_session_turn_usage(session_id)
         try:
-            async for event in self._process(request):
+            async for event in self._process(
+                self._request_for_process(request),
+            ):
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)
                 if obj == "content":

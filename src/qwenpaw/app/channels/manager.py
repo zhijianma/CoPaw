@@ -31,6 +31,7 @@ from ...domain.channels.models import (
     ChannelRoute,
 )
 from ...domain.channels.routing import BindingRouter
+from ...runtime.channel_request_bridge import ChannelRequestBridge
 
 if TYPE_CHECKING:
     from ...config.config import Config
@@ -96,6 +97,7 @@ class ChannelManager:
             self.endpoints,
             self.bindings,
         )
+        self._attach_request_bridges()
         self._lock = asyncio.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
@@ -112,6 +114,28 @@ class ChannelManager:
 
         # Track channel-start tasks for graceful shutdown
         self._start_tasks: set[asyncio.Task] = set()
+
+    def _attach_request_bridges(self) -> None:
+        """Give each adapter its unique endpoint-to-agent route."""
+        for channel in self.channels:
+            endpoints = [
+                endpoint
+                for endpoint in self.endpoints
+                if endpoint.enabled and endpoint.channel_key == channel.channel
+            ]
+            if not endpoints:
+                continue
+            if len(endpoints) > 1:
+                raise ValueError(
+                    f"Multiple endpoints require separate adapters: "
+                    f"{channel.channel}",
+                )
+            channel.set_request_bridge(
+                ChannelRequestBridge(
+                    endpoints[0].endpoint_id,
+                    self._binding_router,
+                ),
+            )
 
     @classmethod
     def from_env(

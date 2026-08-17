@@ -4,6 +4,18 @@
 from qwenpaw.app.channels.legacy_routing import project_agent_channels
 from qwenpaw.app.channels.manager import ChannelManager
 from qwenpaw.config.config import ChannelConfig, TelegramConfig
+from qwenpaw.domain.turns.models import TurnRequest
+from qwenpaw.schemas import AgentRequest
+
+
+class _Channel:
+    channel = "telegram"
+
+    def __init__(self) -> None:
+        self.bridge = None
+
+    def set_request_bridge(self, bridge: object) -> None:
+        self.bridge = bridge
 
 
 def test_project_agent_channels_creates_explicit_endpoint_and_binding() -> (
@@ -69,3 +81,30 @@ def test_channel_manager_exposes_explicit_route_resolution() -> None:
     )
 
     assert route.agent_id == "sales"
+
+
+def test_channel_manager_injects_canonical_request_bridge() -> None:
+    endpoints, bindings = project_agent_channels(
+        "sales",
+        ChannelConfig(
+            telegram=TelegramConfig(enabled=True, bot_token="secret"),
+        ),
+    )
+    channel = _Channel()
+
+    ChannelManager(
+        [channel],  # type: ignore[list-item]
+        endpoints=endpoints,
+        bindings=bindings,
+    )
+
+    assert channel.bridge is not None
+    turn = channel.bridge.build(
+        AgentRequest(
+            session_id="telegram:chat-1",
+            user_id="user-1",
+            channel="telegram",
+        ),
+    )
+    assert isinstance(turn, TurnRequest)
+    assert turn.agent_id == "sales"
