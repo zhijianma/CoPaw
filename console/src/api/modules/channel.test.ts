@@ -36,6 +36,14 @@ describe("channelApi", () => {
     ]);
   });
 
+  it("listChannelCatalog resolves ordered channel definitions", async () => {
+    const catalog = [{ key: "console", order: 0, surface: "web" }];
+    vi.mocked(request).mockResolvedValue(catalog);
+
+    await expect(channelApi.listChannelCatalog()).resolves.toEqual(catalog);
+    expect(request).toHaveBeenCalledWith("/config/channels/catalog");
+  });
+
   it("listChannels resolves to the ChannelConfig object", async () => {
     const cfg = { dingtalk: { enabled: true } } as unknown;
     vi.mocked(request).mockResolvedValue(cfg);

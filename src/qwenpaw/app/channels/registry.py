@@ -8,6 +8,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
+from ...domain.channels.catalog import BUILTIN_CHANNEL_CATALOG
 from .base import BaseChannel
 
 if TYPE_CHECKING:
@@ -16,28 +17,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _BUILTIN_SPECS: dict[str, tuple[str, str]] = {
-    "imessage": (".imessage", "IMessageChannel"),
-    "discord": (".discord_", "DiscordChannel"),
-    "dingtalk": (".dingtalk", "DingTalkChannel"),
-    "feishu": (".feishu", "FeishuChannel"),
-    "qq": (".qq", "QQChannel"),
-    "telegram": (".telegram", "TelegramChannel"),
-    "mattermost": (".mattermost", "MattermostChannel"),
-    "mqtt": (".mqtt", "MQTTChannel"),
-    "console": (".console", "ConsoleChannel"),
-    "matrix": (".matrix", "MatrixChannel"),
-    "slack": (".slack", "SlackChannel"),
-    "voice": (".voice", "VoiceChannel"),
-    "sip": (".sip", "SIPChannel"),
-    "wecom": (".wecom", "WecomChannel"),
-    "xiaoyi": (".xiaoyi", "XiaoYiChannel"),
-    "yuanbao": (".yuanbao", "YuanbaoChannel"),
-    "wechat": (".wechat", "WeChatChannel"),
-    "onebot": (".onebot", "OneBotChannel"),
+    item.key: (item.module_name, item.class_name)
+    for item in BUILTIN_CHANNEL_CATALOG
 }
 
 # Required channels must load; failures are raised, not skipped.
-_REQUIRED_CHANNEL_KEYS: frozenset[str] = frozenset({"console"})
+_REQUIRED_CHANNEL_KEYS = frozenset(
+    item.key for item in BUILTIN_CHANNEL_CATALOG if item.required
+)
 
 _BUILTIN_CHANNEL_CACHE: dict[str, type[BaseChannel]] | None = None
 _BUILTIN_CHANNEL_CACHE_LOCK = threading.Lock()

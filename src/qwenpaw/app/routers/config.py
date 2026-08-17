@@ -37,6 +37,7 @@ from ...config.config import (
     SkillScannerWhitelistEntry,
 )
 from ...config.timezone import normalize_tz
+from ...domain.channels.catalog import BUILTIN_CHANNEL_CATALOG
 from ..channels.conflict import (
     get_channel_bot_identity,
     get_channel_config,
@@ -133,6 +134,22 @@ async def list_channels(request: Request) -> dict:
 async def list_channel_types() -> List[str]:
     """Return available channel type identifiers (env-filtered)."""
     return list(get_available_channels())
+
+
+@router.get(
+    "/channels/catalog",
+    summary="List built-in channel definitions",
+    description="Return ordered public metadata for built-in channels",
+)
+async def list_channel_catalog() -> list[dict[str, Any]]:
+    """Return public built-in metadata from the canonical catalog."""
+    return [
+        item.to_public_dict()
+        for item in sorted(
+            BUILTIN_CHANNEL_CATALOG,
+            key=lambda definition: definition.order,
+        )
+    ]
 
 
 @router.get(

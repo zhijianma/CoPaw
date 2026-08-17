@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import api from "../../../api";
-import type { ChannelSchema } from "../../../api/modules/channel";
+import type {
+  ChannelDefinition,
+  ChannelSchema,
+} from "../../../api/modules/channel";
 import { useAgentStore } from "../../../stores/agentStore";
 
 export function useChannels() {
@@ -9,6 +12,7 @@ export function useChannels() {
     Record<string, Record<string, unknown>>
   >({});
   const [channelTypes, setChannelTypes] = useState<string[]>([]);
+  const [channelCatalog, setChannelCatalog] = useState<ChannelDefinition[]>([]);
   const [channelSchemas, setChannelSchemas] = useState<
     Record<string, ChannelSchema>
   >({});
@@ -17,13 +21,15 @@ export function useChannels() {
   const fetchChannels = useCallback(async () => {
     setLoading(true);
     try {
-      const [data, types] = await Promise.all([
+      const [data, types, catalog] = await Promise.all([
         api.listChannels(),
         api.listChannelTypes(),
+        api.listChannelCatalog(),
       ]);
       if (data)
         setChannels(data as unknown as Record<string, Record<string, unknown>>);
       if (types) setChannelTypes(types);
+      if (catalog) setChannelCatalog(catalog);
     } catch (error) {
       console.error("❌ Failed to load channels:", error);
     } finally {
@@ -42,24 +48,13 @@ export function useChannels() {
     fetchChannels();
   }, [fetchChannels, selectedAgent]);
 
-  // Built-in channels come first (in a fixed order), then custom channels
+  // Built-in order is owned by the backend catalog; plugins remain last.
   const builtinOrder = useMemo(
-    () => [
-      "console",
-      "dingtalk",
-      "feishu",
-      "imessage",
-      "discord",
-      "telegram",
-      "qq",
-      "wechat",
-      "wecom",
-      "yuanbao",
-      "matrix",
-      "sip",
-      "xiaoyi",
-    ],
-    [],
+    () =>
+      [...channelCatalog]
+        .sort((left, right) => left.order - right.order)
+        .map((item) => item.key),
+    [channelCatalog],
   );
 
   const orderedKeys = useMemo(
@@ -79,6 +74,7 @@ export function useChannels() {
   return {
     channels,
     channelTypes,
+    channelCatalog,
     channelSchemas,
     orderedKeys,
     isBuiltin,

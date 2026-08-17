@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
+from ...domain.channels.catalog import BUILTIN_CHANNEL_KEYS
+
 
 @dataclass
 class ChannelAddress:
@@ -28,21 +30,7 @@ class ChannelAddress:
 
 
 # Built-in channel type identifiers. Plugin channels use arbitrary str keys.
-BUILTIN_CHANNEL_TYPES = (
-    "imessage",
-    "discord",
-    "dingtalk",
-    "feishu",
-    "qq",
-    "telegram",
-    "mqtt",
-    "console",
-    "voice",
-    "sip",
-    "slack",
-    "xiaoyi",
-    "yuanbao",
-)
+BUILTIN_CHANNEL_TYPES = BUILTIN_CHANNEL_KEYS
 
 # ChannelType is str to allow plugin channels; built-in set above.
 ChannelType = str

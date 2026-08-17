@@ -14,6 +14,7 @@ from qwenpaw.app.channels.schema import (
     ChannelMessageConverter,
     ChannelType,
 )
+from qwenpaw.domain.channels.catalog import BUILTIN_CHANNEL_KEYS
 
 
 class TestChannelAddress:
@@ -90,6 +91,9 @@ class TestChannelSchemaConstants:
 
     def test_builtin_types_unique(self):
         assert len(BUILTIN_CHANNEL_TYPES) == len(set(BUILTIN_CHANNEL_TYPES))
+
+    def test_builtin_types_are_derived_from_catalog(self):
+        assert BUILTIN_CHANNEL_TYPES == BUILTIN_CHANNEL_KEYS
 
 
 class TestChannelMessageConverterProtocol:

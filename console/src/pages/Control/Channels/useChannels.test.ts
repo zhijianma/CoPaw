@@ -7,6 +7,7 @@ vi.mock("../../../api", () => ({
   default: {
     listChannels: vi.fn(),
     listChannelTypes: vi.fn(),
+    listChannelCatalog: vi.fn(),
   },
 }));
 
@@ -22,6 +23,7 @@ describe("useChannels", () => {
     vi.clearAllMocks();
     (api.listChannels as ReturnType<typeof vi.fn>).mockResolvedValue({});
     (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    (api.listChannelCatalog as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   });
 
   it("初始 loading=true，fetch 成功后 loading=false", async () => {
@@ -68,6 +70,10 @@ describe("useChannels", () => {
       "my-custom",
       "console",
     ]);
+    (api.listChannelCatalog as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { key: "console", order: 0, surface: "web" },
+      { key: "dingtalk", order: 10, surface: "channel" },
+    ]);
 
     const { result } = renderHook(() => useChannels());
 
@@ -89,6 +95,10 @@ describe("useChannels", () => {
       "feishu",
       "beta-custom",
       "telegram",
+    ]);
+    (api.listChannelCatalog as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { key: "feishu", order: 20, surface: "channel" },
+      { key: "telegram", order: 50, surface: "channel" },
     ]);
 
     const { result } = renderHook(() => useChannels());
@@ -112,6 +122,29 @@ describe("useChannels", () => {
     expect(lastBuiltinIndex).toBeLessThan(firstCustomIndex);
     // custom keys 都在末尾
     expect(keys.slice(-customKeys.length).sort()).toEqual(customKeys.sort());
+  });
+
+  it("orderedKeys 完全采用后端 catalog 顺序", async () => {
+    (api.listChannelTypes as ReturnType<typeof vi.fn>).mockResolvedValue([
+      "onebot",
+      "console",
+      "mattermost",
+    ]);
+    (api.listChannelCatalog as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { key: "console", order: 0, surface: "web" },
+      { key: "mattermost", order: 140, surface: "channel" },
+      { key: "onebot", order: 170, surface: "channel" },
+    ]);
+
+    const { result } = renderHook(() => useChannels());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.orderedKeys).toEqual([
+      "console",
+      "mattermost",
+      "onebot",
+    ]);
   });
 
   it("isBuiltin 返回 true 当 channels[key].isBuiltin === true", async () => {

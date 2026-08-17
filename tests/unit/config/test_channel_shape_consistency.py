@@ -20,6 +20,7 @@ from typing import get_args
 from qwenpaw.app.channels.registry import _BUILTIN_SPECS
 from qwenpaw.app.routers.config import _channel_config_class
 from qwenpaw.config.config import ChannelConfig, ChannelConfigUnion
+from qwenpaw.domain.channels.catalog import BUILTIN_CHANNEL_CATALOG
 
 
 def _declared_config_classes() -> set[type]:
@@ -30,6 +31,27 @@ def _declared_config_classes() -> set[type]:
 def test_builtin_specs_match_channel_config_fields() -> None:
     """Every built-in channel implementation has a config field."""
     assert set(_BUILTIN_SPECS) == set(ChannelConfig.model_fields)
+
+
+def test_catalog_is_the_source_for_builtin_specs() -> None:
+    expected = {
+        item.key: (item.module_name, item.class_name)
+        for item in BUILTIN_CHANNEL_CATALOG
+    }
+
+    assert _BUILTIN_SPECS == expected
+
+
+def test_catalog_config_models_match_channel_config_fields() -> None:
+    expected = {
+        item.key: item.config_class_name for item in BUILTIN_CHANNEL_CATALOG
+    }
+    actual = {
+        key: field.annotation.__name__
+        for key, field in ChannelConfig.model_fields.items()
+    }
+
+    assert actual == expected
 
 
 def test_channel_config_union_covers_every_builtin_channel() -> None:

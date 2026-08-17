@@ -103,6 +103,24 @@ def test_list_channel_types_returns_list(client):
     assert "console" in body
 
 
+def test_list_channel_catalog_returns_ordered_definitions(client):
+    response = client.get("/api/config/channels/catalog")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["key"] == "console"
+    assert body[0]["surface"] == "web"
+    assert [item["order"] for item in body] == sorted(
+        item["order"] for item in body
+    )
+    assert {item["key"] for item in body} >= {
+        "console",
+        "onebot",
+        "wechat",
+        "mattermost",
+    }
+
+
 # ---------------------------------------------------------------------------
 # /config/channels — list + put
 # ---------------------------------------------------------------------------

@@ -29,6 +29,12 @@ export interface ChannelSchema {
   doc_url?: LocalizedText;
 }
 
+export interface ChannelDefinition {
+  key: string;
+  order: number;
+  surface: "channel" | "web";
+}
+
 export interface ChannelConflictAgent {
   agent_id: string;
   agent_name: string;
@@ -41,6 +47,9 @@ export interface ChannelConflictResponse {
 
 export const channelApi = {
   listChannelTypes: () => request<string[]>("/config/channels/types"),
+
+  listChannelCatalog: () =>
+    request<ChannelDefinition[]>("/config/channels/catalog"),
 
   listChannels: () => request<ChannelConfig>("/config/channels"),
 
