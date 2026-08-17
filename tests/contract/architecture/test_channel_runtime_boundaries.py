@@ -51,6 +51,8 @@ def test_runtime_event_stream_is_transport_neutral() -> None:
 def test_console_sse_implementation_is_not_owned_by_base_channel() -> None:
     source = inspect.getsource(BaseChannel)
 
+    assert "ConsoleSseEncoder" not in source
+
     for forbidden_definition in (
         "def _sanitize_surrogate_text",
         "def _sanitize_for_json",

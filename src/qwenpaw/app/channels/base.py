@@ -39,8 +39,8 @@ from qwenpaw.schemas import (
 from .renderer import ChannelDisplayConfig, MessageRenderer, RenderStyle
 from .schema import ChannelType
 from .access_control import get_access_control_store
+from ..task_event_encoder import TaskEventEncoder
 from ...config.utils import load_config
-from ...transports.console.sse import ConsoleSseEncoder
 
 # Optional callback to enqueue payload (set by manager)
 EnqueueCallback = Optional[Callable[[Any], None]]
@@ -920,25 +920,12 @@ class BaseChannel(ABC):
         process_iterator = None
         msg_id_to_stream_type: Dict[str, str] = {}
         streaming_buffers: Dict[str, str] = {}
-        sse_encoder = ConsoleSseEncoder()
         try:
             process_iterator = self._process(request)
             async for event in process_iterator:
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)
-                if obj == "message" and status == RunStatus.Completed:
-                    msg_id = str(
-                        getattr(event, "msg_id", "")
-                        or getattr(event, "id", "")
-                        or "",
-                    )
-                    for pending_data in sse_encoder.flush(msg_id=msg_id):
-                        yield f"data: {pending_data}\n\n"
-                elif obj == "response" and status == RunStatus.Completed:
-                    for pending_data in sse_encoder.flush():
-                        yield f"data: {pending_data}\n\n"
-
-                data = sse_encoder.encode(event)
+                data = TaskEventEncoder.encode(event)
 
                 yield f"data: {data}\n\n"
 
@@ -976,9 +963,6 @@ class BaseChannel(ABC):
                 elif obj == "response":
                     last_response = event
                     await self.on_event_response(request, event)
-
-            for pending_data in sse_encoder.flush():
-                yield f"data: {pending_data}\n\n"
 
             err_msg = self._get_response_error_message(last_response)
             if err_msg:
