@@ -33,6 +33,7 @@ from qwenpaw.exceptions import (
 )
 
 from .timezone import detect_system_timezone
+from .channel_routing import ChannelRoutingConfig
 from ..constant import (
     HEARTBEAT_DEFAULT_EVERY,
     HEARTBEAT_DEFAULT_TARGET,
@@ -2679,6 +2680,9 @@ class Config(BaseModel):
     """Root config (config.json)."""
 
     channels: ChannelConfig = ChannelConfig()
+    channel_routing: ChannelRoutingConfig = Field(
+        default_factory=ChannelRoutingConfig,
+    )
     mcp: MCPConfig = MCPConfig()
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     last_api: LastApiConfig = LastApiConfig()

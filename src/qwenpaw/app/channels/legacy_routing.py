@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ...config.channel_routing import ChannelRoutingConfig
 from ...domain.channels.models import AgentBinding, ChannelEndpoint
 
 
@@ -62,4 +63,43 @@ def project_agent_channels(
     return endpoints, bindings
 
 
-__all__ = ["project_agent_channels"]
+def resolve_agent_channel_routes(
+    agent_id: str,
+    legacy_channels: Any,
+    routing: ChannelRoutingConfig | None,
+) -> tuple[list[ChannelEndpoint], list[AgentBinding]]:
+    """Prefer explicit root routing and fall back to legacy ownership."""
+    if routing is None or not (routing.endpoints or routing.bindings):
+        return project_agent_channels(agent_id, legacy_channels)
+
+    configured_bindings = [
+        item for item in routing.bindings if item.agent_id == agent_id
+    ]
+    endpoint_ids = {item.endpoint_id for item in configured_bindings}
+    configured_endpoints = [
+        item for item in routing.endpoints if item.endpoint_id in endpoint_ids
+    ]
+    endpoints = [
+        ChannelEndpoint(
+            endpoint_id=item.endpoint_id,
+            channel_key=item.channel_key,
+            account_id=item.account_id,
+            enabled=item.enabled,
+            settings=item.settings,
+        )
+        for item in configured_endpoints
+    ]
+    bindings = [
+        AgentBinding(
+            binding_id=item.binding_id,
+            endpoint_id=item.endpoint_id,
+            agent_id=item.agent_id,
+            enabled=item.enabled,
+            priority=item.priority,
+        )
+        for item in configured_bindings
+    ]
+    return endpoints, bindings
+
+
+__all__ = ["project_agent_channels", "resolve_agent_channel_routes"]

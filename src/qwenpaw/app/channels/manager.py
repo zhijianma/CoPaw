@@ -21,7 +21,7 @@ from typing import (
 from .base import BaseChannel, ContentType, ProcessHandler, TextContent
 from .renderer import ChannelDisplayConfig
 from .command_registry import CommandRegistry
-from .legacy_routing import project_agent_channels
+from .legacy_routing import resolve_agent_channel_routes
 from .registry import get_channel_registry
 from .unified_queue_manager import UnifiedQueueManager
 from ...config import get_available_channels
@@ -34,6 +34,7 @@ from ...domain.channels.routing import BindingRouter
 from ...runtime.channel_request_bridge import ChannelRequestBridge
 
 if TYPE_CHECKING:
+    from ...config.channel_routing import ChannelRoutingConfig
     from ...config.config import Config
 
 logger = logging.getLogger(__name__)
@@ -168,6 +169,7 @@ class ChannelManager:
         workspace_dir: Path | None = None,
         agent_id: str = "default",
         transports: List[BaseChannel] | None = None,
+        routing: "ChannelRoutingConfig | None" = None,
     ) -> "ChannelManager":
         """Create channels from config (config.json or agent.json).
 
@@ -181,14 +183,39 @@ class ChannelManager:
         ch = config.channels
         show_tool_details = getattr(config, "show_tool_details", True)
         extra = getattr(ch, "__pydantic_extra__", None) or {}
+        endpoints, bindings = resolve_agent_channel_routes(
+            agent_id,
+            ch,
+            routing,
+        )
+        explicit_routing = bool(
+            routing is not None and (routing.endpoints or routing.bindings),
+        )
+        endpoints_by_key: dict[str, list[ChannelEndpoint]] = {}
+        for endpoint in endpoints:
+            endpoints_by_key.setdefault(endpoint.channel_key, []).append(
+                endpoint,
+            )
 
         channels: list[BaseChannel] = []
         for key, ch_cls in get_channel_registry(surface="channel").items():
             if key not in available:
                 continue
-            ch_cfg = getattr(ch, key, None)
-            if ch_cfg is None and key in extra:
-                ch_cfg = extra[key]
+            configured_endpoints = endpoints_by_key.get(key, [])
+            if len(configured_endpoints) > 1:
+                raise ValueError(
+                    f"Agent has multiple endpoints for channel: {key}",
+                )
+            if explicit_routing:
+                if not configured_endpoints:
+                    continue
+                endpoint = configured_endpoints[0]
+                ch_cfg = dict(endpoint.settings)
+                ch_cfg["enabled"] = endpoint.enabled
+            else:
+                ch_cfg = getattr(ch, key, None)
+                if ch_cfg is None and key in extra:
+                    ch_cfg = extra[key]
             if ch_cfg is None:
                 continue
             if isinstance(ch_cfg, dict):
@@ -252,7 +279,6 @@ class ChannelManager:
                 )
                 continue
 
-        endpoints, bindings = project_agent_channels(agent_id, ch)
         return cls(
             channels,
             endpoints=endpoints,

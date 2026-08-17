@@ -29,6 +29,7 @@ from fastapi.testclient import TestClient
 from qwenpaw.app.crons import heartbeat
 from qwenpaw.app.routers.config import router as config_router
 from qwenpaw.config import get_available_channels
+from qwenpaw.config.channel_routing import ChannelRoutingConfig
 from qwenpaw.config.config import (
     ChannelConfig,
     ConsoleConfig,
@@ -119,6 +120,47 @@ def test_list_channel_catalog_returns_ordered_definitions(client):
         "wechat",
         "mattermost",
     }
+
+
+def test_channel_routing_round_trip(client):
+    root_config = MagicMock()
+    root_config.channel_routing = ChannelRoutingConfig()
+    payload = {
+        "endpoints": [
+            {
+                "endpoint_id": "telegram:corp",
+                "channel_key": "telegram",
+                "account_id": "corp",
+                "settings": {"bot_token": "secret"},
+            },
+        ],
+        "bindings": [
+            {
+                "binding_id": "telegram:corp->sales",
+                "endpoint_id": "telegram:corp",
+                "agent_id": "sales",
+            },
+        ],
+    }
+
+    with (
+        patch(
+            "qwenpaw.app.routers.config.load_config",
+            return_value=root_config,
+        ),
+        patch("qwenpaw.app.routers.config.save_config") as save,
+        patch(
+            "qwenpaw.app.routers.config.schedule_agent_reload",
+        ) as reload_agent,
+    ):
+        response = client.put("/api/config/channel-routing", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["endpoints"][0]["endpoint_id"] == ("telegram:corp")
+    assert response.json()["bindings"][0]["agent_id"] == "sales"
+    assert root_config.channel_routing.bindings[0].agent_id == "sales"
+    save.assert_called_once_with(root_config)
+    reload_agent.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

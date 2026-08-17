@@ -201,6 +201,7 @@ async def create_channel_service(ws: "Workspace", _):
         workspace_dir=ws.workspace_dir,
         agent_id=ws.agent_id,
         transports=[ws.console_transport] if ws.console_transport else None,
+        routing=root_config.channel_routing,
     )
     ws._service_manager.services["channel_manager"] = cm
 

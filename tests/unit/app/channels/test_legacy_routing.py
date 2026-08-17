@@ -1,8 +1,16 @@
 # -*- coding: utf-8 -*-
 """Legacy per-agent channel configuration routing projection tests."""
 
-from qwenpaw.app.channels.legacy_routing import project_agent_channels
+from qwenpaw.app.channels.legacy_routing import (
+    project_agent_channels,
+    resolve_agent_channel_routes,
+)
 from qwenpaw.app.channels.manager import ChannelManager
+from qwenpaw.config.channel_routing import (
+    AgentBindingConfig,
+    ChannelEndpointConfig,
+    ChannelRoutingConfig,
+)
 from qwenpaw.config.config import ChannelConfig, TelegramConfig
 from qwenpaw.domain.turns.models import TurnRequest
 from qwenpaw.schemas import AgentRequest
@@ -108,3 +116,53 @@ def test_channel_manager_injects_canonical_request_bridge() -> None:
     )
     assert isinstance(turn, TurnRequest)
     assert turn.agent_id == "sales"
+
+
+def test_explicit_routing_replaces_legacy_agent_ownership() -> None:
+    routing = ChannelRoutingConfig(
+        endpoints=[
+            ChannelEndpointConfig(
+                endpoint_id="telegram:corp",
+                channel_key="telegram",
+                account_id="corp",
+                settings={"bot_token": "root-secret"},
+            ),
+        ],
+        bindings=[
+            AgentBindingConfig(
+                binding_id="telegram:corp->sales",
+                endpoint_id="telegram:corp",
+                agent_id="sales",
+            ),
+        ],
+    )
+    legacy = ChannelConfig(
+        telegram=TelegramConfig(enabled=True, bot_token="legacy-secret"),
+    )
+
+    endpoints, bindings = resolve_agent_channel_routes(
+        "sales",
+        legacy,
+        routing,
+    )
+
+    assert [endpoint.endpoint_id for endpoint in endpoints] == [
+        "telegram:corp",
+    ]
+    assert endpoints[0].settings["bot_token"] == "root-secret"
+    assert bindings[0].agent_id == "sales"
+
+
+def test_empty_explicit_routing_falls_back_to_legacy_projection() -> None:
+    endpoints, bindings = resolve_agent_channel_routes(
+        "sales",
+        ChannelConfig(
+            telegram=TelegramConfig(enabled=True, bot_token="legacy"),
+        ),
+        ChannelRoutingConfig(),
+    )
+
+    assert any(
+        endpoint.endpoint_id == "telegram:sales" for endpoint in endpoints
+    )
+    assert any(binding.agent_id == "sales" for binding in bindings)

@@ -36,6 +36,7 @@ from ...config.config import (
     SkillScannerConfig,
     SkillScannerWhitelistEntry,
 )
+from ...config.channel_routing import ChannelRoutingConfig
 from ...config.timezone import normalize_tz
 from ...domain.channels.catalog import BUILTIN_CHANNEL_CATALOG
 from ..channels.conflict import (
@@ -150,6 +151,40 @@ async def list_channel_catalog() -> list[dict[str, Any]]:
             key=lambda definition: definition.order,
         )
     ]
+
+
+@router.get(
+    "/channel-routing",
+    response_model=ChannelRoutingConfig,
+    summary="Get Channel endpoint and agent bindings",
+)
+async def get_channel_routing() -> ChannelRoutingConfig:
+    """Return the authoritative root-level Channel routing graph."""
+    return load_config().channel_routing
+
+
+@router.put(
+    "/channel-routing",
+    response_model=ChannelRoutingConfig,
+    summary="Update Channel endpoint and agent bindings",
+)
+async def put_channel_routing(
+    request: Request,
+    body: ChannelRoutingConfig = Body(...),
+) -> ChannelRoutingConfig:
+    """Persist a validated routing graph and reload affected agents."""
+    config = load_config()
+    previous_agent_ids = {
+        binding.agent_id for binding in config.channel_routing.bindings
+    }
+    config.channel_routing = body
+    save_config(config)
+    agent_ids = previous_agent_ids | {
+        binding.agent_id for binding in body.bindings
+    }
+    for agent_id in sorted(agent_ids):
+        schedule_agent_reload(request, agent_id)
+    return body
 
 
 @router.get(
