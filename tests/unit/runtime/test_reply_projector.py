@@ -3,20 +3,24 @@
 
 from qwenpaw.domain.channels.models import ReplyTarget
 from qwenpaw.domain.channels.ports import ReplyEventType
-from qwenpaw.domain.turns.events import RuntimeEvent
+from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 from qwenpaw.runtime.reply_projector import ReplyProjector
 
 
 def test_projector_maps_all_runtime_event_categories() -> None:
     target = ReplyTarget("telegram:primary", "chat-1")
     projector = ReplyProjector(target)
-    native = object()
+    content = RuntimeEvent.canonical(
+        RuntimeEventType.CONTENT_DELTA,
+        turn_id="turn-1",
+        data={"content_kind": "text", "delta": "hello"},
+    )
 
     projected = [
         projector.project(event)
         for event in (
             RuntimeEvent.turn_started(turn_id="turn-1"),
-            RuntimeEvent.agent_event(native, turn_id="turn-1"),
+            content,
             RuntimeEvent.heartbeat(turn_id="turn-1"),
             RuntimeEvent.message("done", turn_id="turn-1"),
             RuntimeEvent.turn_completed(turn_id="turn-1"),
@@ -35,4 +39,4 @@ def test_projector_maps_all_runtime_event_categories() -> None:
         ReplyEventType.CANCELLED,
     ]
     assert all(event.target is target for event in projected)
-    assert projected[1].payload is native
+    assert projected[1].payload is content

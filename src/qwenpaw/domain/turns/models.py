@@ -5,37 +5,39 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
-RequestSourceKind = Literal[
-    "console",
-    "channel",
-    "cron",
-    "approval",
-    "system",
-]
-
-_REQUEST_SOURCE_KINDS = frozenset(
-    {
-        "console",
-        "channel",
-        "cron",
-        "approval",
-        "system",
-    },
-)
+RequestSourceKind = str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class RequestSource:
     """Describe where a turn entered the application core."""
 
-    kind: RequestSourceKind
+    protocol: str
+    endpoint_id: str | None
     channel_type: str | None = None
 
-    def __post_init__(self) -> None:
-        if self.kind not in _REQUEST_SOURCE_KINDS:
-            raise ValueError(f"Unsupported request source kind: {self.kind}")
+    def __init__(
+        self,
+        protocol: str | None = None,
+        endpoint_id: str | None = None,
+        channel_type: str | None = None,
+        *,
+        kind: str | None = None,
+    ) -> None:
+        """Accept open protocol keys and the legacy ``kind`` spelling."""
+        value = str(protocol or kind or "").strip()
+        if not value:
+            raise ValueError("protocol must not be empty")
+        object.__setattr__(self, "protocol", value)
+        object.__setattr__(self, "endpoint_id", endpoint_id)
+        object.__setattr__(self, "channel_type", channel_type)
+
+    @property
+    def kind(self) -> str:
+        """Legacy alias retained for callers during the boundary migration."""
+        return self.protocol
 
 
 @dataclass(frozen=True, slots=True)

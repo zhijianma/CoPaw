@@ -22,7 +22,8 @@ from ..domain.channels.models import ReplyTarget
 from ..domain.channels.ports import ReplyEvent
 from ..domain.turns.events import RuntimeEvent
 from ..domain.turns.models import TurnRequest
-from ..transports.console.presenter import ConsoleEventPresenter
+from ..protocols.builtins import create_default_presenter
+from ..protocols.ports import PresentationContext, TurnEventPresenter
 from .builder import AgentBuilder
 from .executor import AgentExecutor
 from .hooks import HookAction, HookContext
@@ -58,11 +59,22 @@ class Runtime:
     ) -> AsyncGenerator[Any, None]:
         """Present runtime events using the existing Console protocol."""
         request = self._normalize(request)
-        presenter = ConsoleEventPresenter(
-            session_id=str(getattr(request, "session_id", "") or ""),
+        presenter, context = create_default_presenter(
+            conversation_id=str(getattr(request, "session_id", "") or ""),
+            turn_id=str(getattr(request, "id", "") or ""),
         )
+        async for output in self.present(request, presenter, context):
+            yield output
+
+    async def present(
+        self,
+        request: Any,
+        presenter: TurnEventPresenter,
+        context: PresentationContext,
+    ) -> AsyncGenerator[Any, None]:
+        """Present a turn through an injected semantic protocol port."""
         async for runtime_event in self.stream_events(request):
-            async for output in presenter.present(runtime_event):
+            async for output in presenter.present(runtime_event, context):
                 yield output
 
     async def stream_replies(

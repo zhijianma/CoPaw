@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agentscope.event import TextBlockDeltaEvent, ToolCallStartEvent
 
 from qwenpaw.domain.turns.events import RuntimeEventType
 from qwenpaw.runtime.executor import AgentExecutor
@@ -25,17 +26,26 @@ class _Agent:
 
 @pytest.mark.asyncio
 async def test_executor_yields_transport_neutral_agent_events() -> None:
-    first = object()
-    second = object()
+    first = TextBlockDeltaEvent(
+        reply_id="reply-1",
+        block_id="block-1",
+        delta="hello",
+    )
+    second = ToolCallStartEvent(
+        reply_id="reply-1",
+        tool_call_id="call-1",
+        tool_call_name="search",
+    )
     executor = AgentExecutor(_Agent([first, second]))
 
     events = [event async for event in executor.run(["input"])]
 
     assert [event.type for event in events] == [
-        RuntimeEventType.AGENT_EVENT,
-        RuntimeEventType.AGENT_EVENT,
+        RuntimeEventType.CONTENT_DELTA,
+        RuntimeEventType.TOOL_CALL_STARTED,
     ]
-    assert [event.payload for event in events] == [first, second]
+    assert events[0].data["delta"] == "hello"
+    assert events[1].data["name"] == "search"
 
 
 def test_executor_module_has_no_envelope_dependency() -> None:

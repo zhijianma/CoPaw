@@ -4,6 +4,7 @@
 """
 Base Channel: bound to AgentRequest/AgentResponse, unified by process.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -43,7 +44,7 @@ from ..task_event_encoder import TaskEventEncoder
 from ...config.utils import load_config
 from ...domain.channels.models import ReplyTarget
 from ...domain.channels.ports import ReplyEventType
-from ...runtime.legacy_reply_adapter import LegacyReplyAdapter
+from .reply_presentation import ReplyPresentationAdapter
 from .reply_delivery import ChannelReplyDelivery
 
 # Optional callback to enqueue payload (set by manager)
@@ -141,6 +142,7 @@ class BaseChannel(ABC):
         access_control_group: bool = False,
     ):
         self._process = process
+        self._runtime_process = process
         self._on_reply_sent = on_reply_sent
         self._display_config = display_config or ChannelDisplayConfig()
         self._no_text_debounce = no_text_debounce
@@ -388,10 +390,12 @@ class BaseChannel(ABC):
             "id": "Anda telah diblokir dari agen ini.",
         },
         "pending": {
-            "zh": "您目前没有访问此智能体的权限，需要审批。\n" "ID: {sender_id}",
+            "zh": "您目前没有访问此智能体的权限，需要审批。\n"
+            "ID: {sender_id}",
             "en": "You do not have access to this agent. "
             "Approval required.\nID: {sender_id}",
-            "ja": "このエージェントへのアクセス権がありません。" "承認が必要です。\nID: {sender_id}",
+            "ja": "このエージェントへのアクセス権がありません。"
+            "承認が必要です。\nID: {sender_id}",
             "ru": "У вас нет доступа к этому агенту. "
             "Требуется одобрение.\nID: {sender_id}",
             "pt-BR": "Você não tem acesso a este agente. "
@@ -526,6 +530,9 @@ class BaseChannel(ABC):
         """
         self._workspace = workspace
         self._command_registry = command_registry
+        runtime_process = getattr(workspace, "stream_channel_events", None)
+        if callable(runtime_process):
+            self._runtime_process = runtime_process
 
     def _extract_chat_name(self, payload: Any) -> str:
         """Extract chat name from payload for chat creation.
@@ -980,32 +987,32 @@ class BaseChannel(ABC):
             send_meta,
         )
         try:
-            process_iterator = self._process(process_request)
-            async for event in process_iterator:
-                data = TaskEventEncoder.encode(event)
+            process_iterator = self._runtime_process(process_request)
+            async for runtime_event in process_iterator:
+                async for event, reply in adapter.project(runtime_event):
+                    data = TaskEventEncoder.encode(event)
 
-                yield f"data: {data}\n\n"
+                    yield f"data: {data}\n\n"
 
-                # --- streaming path ---
-                handled_by_streaming = False
-                if self.streaming_enabled:
-                    handled_by_streaming = (
-                        await self._dispatch_streaming_event(
-                            request,
-                            to_handle,
-                            event,
-                            send_meta,
-                            msg_id_to_stream_type,
-                            streaming_buffers,
+                    # --- streaming path ---
+                    handled_by_streaming = False
+                    if self.streaming_enabled:
+                        handled_by_streaming = (
+                            await self._dispatch_streaming_event(
+                                request,
+                                to_handle,
+                                event,
+                                send_meta,
+                                msg_id_to_stream_type,
+                                streaming_buffers,
+                            )
                         )
-                    )
 
-                reply = adapter.project(event)
-                if not (
-                    handled_by_streaming
-                    and reply.type == ReplyEventType.MESSAGE
-                ):
-                    await delivery.deliver(reply)
+                    if not (
+                        handled_by_streaming
+                        and reply.type == ReplyEventType.MESSAGE
+                    ):
+                        await delivery.deliver(reply)
 
             last_response = delivery.last_response
             err_msg = self._get_response_error_message(last_response)
@@ -1386,8 +1393,9 @@ class BaseChannel(ABC):
             send_meta,
         )
         try:
-            async for event in self._process(process_request):
-                await delivery.deliver(adapter.project(event))
+            async for event in self._runtime_process(process_request):
+                async for _, reply in adapter.project(event):
+                    await delivery.deliver(reply)
             err_msg = self._get_response_error_message(
                 delivery.last_response,
             )
@@ -1439,7 +1447,7 @@ class BaseChannel(ABC):
         process_request: Any,
         to_handle: str,
         send_meta: Dict[str, Any],
-    ) -> tuple[LegacyReplyAdapter, ChannelReplyDelivery]:
+    ) -> tuple[ReplyPresentationAdapter, ChannelReplyDelivery]:
         """Create the per-turn compatibility projector and delivery port."""
         session_id = getattr(request, "session_id", "") or ""
         target = getattr(process_request, "reply_target", None)
@@ -1449,9 +1457,13 @@ class BaseChannel(ABC):
                 conversation_id=to_handle or session_id,
                 metadata=send_meta,
             )
-        adapter = LegacyReplyAdapter(
-            str(getattr(process_request, "turn_id", "") or session_id),
-            target,
+        turn_id = str(
+            getattr(process_request, "turn_id", "") or session_id,
+        )
+        adapter = ReplyPresentationAdapter(
+            turn_id=turn_id,
+            target=target,
+            conversation_id=session_id,
         )
         delivery = ChannelReplyDelivery(
             channel=self,

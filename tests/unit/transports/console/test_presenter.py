@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from qwenpaw.domain.turns.events import RuntimeEvent
+from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 from qwenpaw.transports.console.presenter import ConsoleEventPresenter
 
 
@@ -63,13 +63,21 @@ async def _present(
 async def test_presenter_maps_every_runtime_event() -> None:
     envelope = _Envelope()
     presenter = ConsoleEventPresenter(envelope=envelope)
-    native = object()
+    content = RuntimeEvent.canonical(
+        RuntimeEventType.CONTENT_DELTA,
+        data={
+            "reply_id": "reply-1",
+            "block_id": "block-1",
+            "content_kind": "text",
+            "delta": "hello",
+        },
+    )
     message = object()
 
     outputs = []
     for event in (
         RuntimeEvent.turn_started(),
-        RuntimeEvent.agent_event(native),
+        content,
         RuntimeEvent.heartbeat(),
         RuntimeEvent.message(message),
         RuntimeEvent.turn_completed(),
@@ -87,9 +95,11 @@ async def test_presenter_maps_every_runtime_event() -> None:
         "failed",
         "cancelled",
     ]
-    assert envelope.calls == [
-        ("started", None),
-        ("agent", native),
+    assert envelope.calls[:1] == [("started", None)]
+    native_view = envelope.calls[1][1]
+    assert native_view.type == RuntimeEventType.CONTENT_DELTA.value
+    assert native_view.delta == "hello"
+    assert envelope.calls[2:] == [
         ("heartbeat", None),
         ("message", message),
         ("completed", None),

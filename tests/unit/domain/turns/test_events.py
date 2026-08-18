@@ -14,14 +14,19 @@ from qwenpaw.domain.turns.events import (
 )
 
 
-def test_agent_event_preserves_native_payload_without_ui_schema() -> None:
-    payload = object()
+def test_canonical_event_copies_normalized_data() -> None:
+    data = {"content_kind": "text", "delta": "hello"}
 
-    event = RuntimeEvent.agent_event(payload, turn_id="turn-1")
+    event = RuntimeEvent.canonical(
+        RuntimeEventType.CONTENT_DELTA,
+        turn_id="turn-1",
+        data=data,
+    )
+    data["delta"] = "changed"
 
-    assert event.type is RuntimeEventType.AGENT_EVENT
+    assert event.type is RuntimeEventType.CONTENT_DELTA
     assert event.turn_id == "turn-1"
-    assert event.payload is payload
+    assert event.data["delta"] == "hello"
     assert event.occurred_at.tzinfo is timezone.utc
 
 

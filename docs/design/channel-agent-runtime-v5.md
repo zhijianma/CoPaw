@@ -1,4 +1,4 @@
-# QwenPaw Channel 与 Agent 架构重构方案（最终版）
+# QwenPaw Channel / Transport / Protocol 架构（最终版）
 
 > 状态：已实施。本文是唯一有效设计；V4 及开发阶段迁移方案已废止。
 
@@ -87,31 +87,39 @@ Core 协议和展示协议四条边界，从根源消除耦合与重复。
 - 每种 Channel 的首实例 ID 固定等于类型，例如 `feishu`。
 - 后续实例使用 `feishu-{8位随机ID}`，不得改变首实例身份。
 - Console 是 Web Transport，不是外部 Channel。
+- AgentScope 只是 Engine 实现，不是 Runtime、Channel 或 Console 的协议。
+- Runtime 只发布 QwenPaw canonical `RuntimeEvent`，不发布原生 Engine Event。
+- Protocol 负责请求和事件语义；Transport 只负责连接与帧。
 - 迁移只支持发布前最原始的 flat channels dict，不兼容开发阶段格式。
 
 ## 2. 总体架构
 
 ```mermaid
 flowchart TB
-    A[Agent / agent.json] --> C[Channel instances dict]
-    C --> I1[feishu / primary]
-    C --> I2[feishu-2f87b8f4 / secondary]
-    C --> I3[dingtalk / primary]
-
-    I1 --> M[ChannelManager]
-    I2 --> M
-    I3 --> M
-    M --> B[ChannelRequestBridge]
-    B --> T[TurnRequest]
-    T --> R[Agent Runtime]
-    R --> E[RuntimeEvent]
-
-    E --> P[ConsoleEventPresenter]
-    P --> V[Envelope + SSE]
-    V --> W[Console WebUI]
-
-    E --> O[Channel reply conversion]
-    O --> X[External platform]
+    subgraph Edge[接入边界]
+        C[Channel<br/>平台账号/机器人实例]
+        T[Transport<br/>HTTP/SSE/WS/SDK 连接与帧]
+        P[Protocol<br/>请求语义与事件展示]
+    end
+    subgraph Core[稳定核心]
+        TR[TurnRequest]
+        R[Runtime]
+        RE[RuntimeEvent]
+    end
+    subgraph Engine[执行引擎]
+        AS[AgentScope Event]
+        N[AgentScopeEventNormalizer]
+    end
+    C --> P
+    T --> P
+    P --> TR
+    TR --> R
+    R --> AS
+    AS --> N
+    N --> RE
+    RE --> P
+    P --> C
+    P --> T
 ```
 
 边界说明：
@@ -119,13 +127,79 @@ flowchart TB
 | 层 | 职责 | 不负责 |
 |---|---|---|
 | Agent 配置 | Channel 所有权、实例配置 | 平台协议转换 |
-| Channel Adapter | 平台收发、鉴权、原生消息解析 | Console 展示协议 |
+| Channel Adapter | 平台账号实例、原生收发、鉴权、会话目标 | Runtime、Console 展示协议 |
+| Transport | HTTP/SSE/WebSocket/SDK 连接、帧序列化 | Agent/工具/消息语义 |
+| Protocol | 原生请求转 `TurnRequest`，`RuntimeEvent` 转协议输出 | 网络连接、平台凭据 |
 | ChannelRequestBridge | Channel 请求转 `TurnRequest` | 平台响应渲染 |
-| Agent Runtime | 统一执行并产生 `RuntimeEvent` | SSE/卡片格式 |
-| Console Presenter | RuntimeEvent 转 Envelope/SSE | 外部 Channel 消息转换 |
+| Engine Normalizer | 一次性把 Engine 原生事件转为 canonical event | UI 或平台展示 |
+| Agent Runtime | 统一编排并发布 `RuntimeEvent` | Engine Event、SSE、卡片格式 |
+| Console Presenter | RuntimeEvent 转 Host/Envelope 对象 | SSE 字节编码、外部平台 API |
 
-`Envelope` 保留在 `transports/console`，只服务 Console/WebUI。其他
-Channel 不再为 Console 的 `AgentRequest/AgentResponse` 展示协议做重复转换。
+`transports/console/envelope.py` 的路径暂时保留，以兼容已有 import；它的输入已经
+从 AgentScope Event 改为 canonical RuntimeEvent 语义，所有权属于 Console
+Protocol。`ConsoleSseEncoder` 才是纯 Transport。外部 Channel 直接接收
+RuntimeEvent，并在自己的应用边界选择 Presenter；不再解析 AgentScope Event。
+
+### 2.1 强制依赖规则
+
+```text
+Engine Adapter ──> domain.turns <── Runtime
+                         │
+                         v
+                  Protocol ports/registry
+                    /              \
+              Channel edge     Transport edge
+```
+
+- `domain.turns` 不得 import AgentScope、Console、Channel SDK。
+- `runtime` 不得 import 具体 Presenter、Transport 或 Channel。
+- `protocols` 不得 import AgentScope；A2A/AG-UI 只能消费 TurnRequest/RuntimeEvent。
+- `transports` 不得解释 Agent 推理、工具调用等语义。
+- Channel 可以在边界选择 Protocol，但 Runtime 不能反向选择 Channel。
+
+这些规则由 `tests/unit/architecture/test_channel_transport_protocol_boundaries.py`
+持续检查，避免重构后再次出现反向依赖。
+
+### 2.2 Canonical RuntimeEvent
+
+`RuntimeEventType.AGENT_EVENT + payload: Any` 已删除。事件按稳定语义分组：
+
+```text
+turn_started / turn_completed / turn_failed / turn_cancelled
+reply_started / reply_completed
+model_call_started / model_call_completed
+content_started / content_delta / content_completed
+tool_call_started / tool_call_delta / tool_call_completed
+tool_result_started / tool_result_delta / tool_result_completed
+interaction_required / interaction_result / limit_reached / custom
+heartbeat / message
+```
+
+文本、reasoning、data 通过 `data.content_kind` 区分，而不是把 Engine 的类名暴露
+给消费者。AgentScope 的全部 EventType 由一个 normalizer 覆盖；升级 AgentScope
+新增事件时，覆盖测试会立即失败。
+
+### 2.3 Protocol 扩展原型
+
+```python
+registry.register(
+    ProtocolRegistration(
+        key="agui",
+        ingress_factory=AguiIngress,
+        presenter_factory=lambda context: AguiPresenter(context),
+        config_model=AguiProtocolConfig,
+        capabilities={"resume": True},
+    ),
+)
+```
+
+`Runtime.present(request, presenter, context)` 只依赖 `TurnEventPresenter` 端口。
+所以接入 A2A、AG-UI 或其他协议时，不修改 Runtime、AgentScope normalizer 和任何
+Channel 实现；只增加 ingress、presenter、transport 组合与注册。
+
+现有 Console registration 同时注册 `ConsoleTurnIngress` 和
+`ConsoleEventPresenter`。Ingress 继续接受原 `AgentRequest` API 类型，在边界转成
+`TurnRequest`，因此架构调整不要求 WebUI 修改请求/响应数据类型。
 
 ## 3. 配置与身份模型
 
@@ -239,6 +313,8 @@ sequenceDiagram
     participant I as ChannelIdentity
     participant B as ChannelRequestBridge
     participant R as Agent Runtime
+    participant N as Engine Normalizer
+    participant PR as Selected Presenter
     participant C as ChatManager
 
     P->>A: native event
@@ -248,7 +324,10 @@ sequenceDiagram
     A->>B: request + instance metadata
     B->>R: TurnRequest
     A->>C: register/update chat
-    R-->>A: RuntimeEvent stream
+    R-->>N: AgentScope Event stream
+    N-->>A: canonical RuntimeEvent stream
+    A->>PR: present(RuntimeEvent)
+    PR-->>A: delivery objects
     A-->>P: platform-native reply
 ```
 
@@ -264,13 +343,17 @@ sequenceDiagram
 
     W->>C: console request
     C->>R: TurnRequest
-    R-->>P: RuntimeEvent
-    P-->>S: AgentResponse/Envelope items
+    R-->>P: canonical RuntimeEvent
+    P-->>S: Host/Envelope items
     S-->>W: SSE
 ```
 
-Console 的 Event 展示转换只存在一份。外部 Channel 直接消费 RuntimeEvent
-并渲染平台消息，不依赖 Console Envelope。
+Console 的语义展示转换只存在一份，SSE Encoder 不理解 RuntimeEvent。外部
+内置 BaseChannel 通过独立的 `Workspace.stream_channel_events()` 端口接收 canonical
+事件；ChannelManager 原有 `process` 回调继续返回旧展示对象，避免破坏直接调用
+`_process` 的第三方插件。当前遗留 Channel send hook 通过集中式
+`ReplyPresentationAdapter` 复用 Host Presenter，后续平台原生 Presenter 可以按
+Channel 能力逐个替换，不再触碰 Runtime。
 
 ### 5.3 主动发送
 
@@ -382,7 +465,16 @@ instance envelope 回写成 flat map，形成产品不支持的 mixed 格式。
 - [x] 首实例 ID、Chat、Session 和状态路径保持历史兼容
 - [x] 次实例队列、Session、Chat metadata 和状态隔离
 - [x] API 与 Console 按实例 ID 寻址
-- [x] Console Envelope 从外部 Channel 转换链路中隔离
+- [x] AgentScope 协议从外部 Channel 链路中隔离；遗留 Host 转换集中在 Presenter
+- [x] AgentScope Event 在 Engine 边界一次性规范化
+- [x] 删除 `RuntimeEventType.AGENT_EVENT` 和原生 event payload 泄漏
+- [x] Runtime 不再实例化或 import Console Presenter
+- [x] Protocol ports、registration、可扩展 registry 已实现
+- [x] Console Envelope 改为直接消费 canonical event 语义
+- [x] Console Protocol 与 Envelope 不再 import AgentScope EventType
+- [x] ChannelManager 直接接收 RuntimeEvent，在 Channel 边界选择 Presenter
+- [x] ConsoleSseEncoder 满足纯 TransportEncoder 端口
+- [x] RequestSource 接受开放 protocol/endpoint 标识，保留 kind 读取兼容
 - [x] 内置 Channel 定义集中到 Catalog
 - [x] Channel CLI 由 Catalog/config model 生成，删除逐平台 configurator
 - [x] CLI 支持按 instance_id 编辑、新增和删除同类型实例
@@ -390,8 +482,7 @@ instance envelope 回写成 flat map，形成产品不支持的 mixed 格式。
 - [x] 旧插件 `config_fields` 与位置参数 API 保持兼容
 - [x] 迁移器只接受最原始 flat dict
 - [x] 删除开发阶段 list/routing/mixed/session 修复逻辑
-- [x] 原始迁移、API、当前格式加载定向回归：48 passed
-- [x] CLI/Catalog/插件配置模型定向回归：52 passed
+- [x] Channel/Runtime/Protocol/Transport 定向回归：336 passed
 - [x] 未执行 `npm run build`
 
 关键实施提交：

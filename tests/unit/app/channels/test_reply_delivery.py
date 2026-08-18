@@ -7,9 +7,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from qwenpaw.app.channels.reply_delivery import ChannelReplyDelivery
+from qwenpaw.app.channels.reply_presentation import ReplyPresentationAdapter
+from qwenpaw.app.channels.base import BaseChannel
 from qwenpaw.domain.channels.models import ReplyTarget
 from qwenpaw.domain.channels.ports import ReplyEventType
 from qwenpaw.runtime.legacy_reply_adapter import LegacyReplyAdapter
+from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 from qwenpaw.schemas import RunStatus
 
 
@@ -37,6 +40,52 @@ def test_legacy_reply_adapter_classifies_events() -> None:
     assert content.type == ReplyEventType.CONTENT
     assert message.type == ReplyEventType.MESSAGE
     assert response.type == ReplyEventType.COMPLETED
+
+
+def test_workspace_injects_runtime_port_without_replacing_plugin_process() -> (
+    None
+):
+    legacy_process = object()
+
+    async def runtime_process(_request):
+        yield None
+
+    channel = object.__new__(BaseChannel)
+    channel._process = legacy_process
+    channel._runtime_process = legacy_process
+    workspace = SimpleNamespace(stream_channel_events=runtime_process)
+
+    channel.set_workspace(workspace)
+
+    assert channel._process is legacy_process
+    assert channel._runtime_process is runtime_process
+
+
+@pytest.mark.asyncio
+async def test_reply_adapter_converts_canonical_runtime_event() -> None:
+    adapter = ReplyPresentationAdapter(
+        turn_id="turn-1",
+        target=_target(),
+        conversation_id="session-1",
+    )
+    event = RuntimeEvent.canonical(
+        RuntimeEventType.CONTENT_DELTA,
+        turn_id="turn-1",
+        data={
+            "reply_id": "reply-1",
+            "block_id": "text-1",
+            "content_kind": "text",
+            "delta": "hello",
+        },
+    )
+
+    presented = [item async for item in adapter.project(event)]
+
+    assert [reply.type for _, reply in presented] == [
+        ReplyEventType.MESSAGE,
+        ReplyEventType.CONTENT,
+    ]
+    assert presented[1][0].text == "hello"
 
 
 @pytest.mark.asyncio

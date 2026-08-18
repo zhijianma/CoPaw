@@ -14,7 +14,23 @@ class RuntimeEventType(str, Enum):
     """Stable event categories exposed by the runtime core."""
 
     TURN_STARTED = "turn_started"
-    AGENT_EVENT = "agent_event"
+    REPLY_STARTED = "reply_started"
+    REPLY_COMPLETED = "reply_completed"
+    MODEL_CALL_STARTED = "model_call_started"
+    MODEL_CALL_COMPLETED = "model_call_completed"
+    CONTENT_STARTED = "content_started"
+    CONTENT_DELTA = "content_delta"
+    CONTENT_COMPLETED = "content_completed"
+    TOOL_CALL_STARTED = "tool_call_started"
+    TOOL_CALL_DELTA = "tool_call_delta"
+    TOOL_CALL_COMPLETED = "tool_call_completed"
+    TOOL_RESULT_STARTED = "tool_result_started"
+    TOOL_RESULT_DELTA = "tool_result_delta"
+    TOOL_RESULT_COMPLETED = "tool_result_completed"
+    INTERACTION_REQUIRED = "interaction_required"
+    INTERACTION_RESULT = "interaction_result"
+    LIMIT_REACHED = "limit_reached"
+    CUSTOM = "custom"
     HEARTBEAT = "heartbeat"
     MESSAGE = "message"
     TURN_COMPLETED = "turn_completed"
@@ -28,6 +44,7 @@ class RuntimeEvent:
 
     type: RuntimeEventType
     turn_id: str = ""
+    data: Mapping[str, Any] = field(default_factory=dict)
     payload: Any = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
     occurred_at: datetime = field(
@@ -37,22 +54,30 @@ class RuntimeEvent:
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
+            "data",
+            MappingProxyType(dict(self.data)),
+        )
+        object.__setattr__(
+            self,
             "metadata",
             MappingProxyType(dict(self.metadata)),
         )
 
     @classmethod
-    def agent_event(
+    def canonical(
         cls,
-        payload: Any,
+        event_type: RuntimeEventType,
         *,
         turn_id: str = "",
+        data: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> "RuntimeEvent":
-        """Wrap one native AgentScope event without translating it."""
+        """Create a normalized engine-independent runtime event."""
         return cls(
-            type=RuntimeEventType.AGENT_EVENT,
+            type=event_type,
             turn_id=turn_id,
-            payload=payload,
+            data=data or {},
+            metadata=metadata or {},
         )
 
     @classmethod

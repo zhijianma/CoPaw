@@ -10,6 +10,7 @@ import pytest
 from agentscope.event import EventType
 
 from qwenpaw.runtime.envelope import Envelope, _propagate_event_metadata
+from qwenpaw.domain.turns.events import RuntimeEventType
 from qwenpaw.schemas import ContentType, MessageType, RunStatus, TextContent
 
 
@@ -31,10 +32,49 @@ class _SyntheticEnvelope(Envelope):
         yield self._tag_seq(output)
 
 
+_CANONICAL_TYPES = {
+    EventType.TEXT_BLOCK_START: (RuntimeEventType.CONTENT_STARTED, "text"),
+    EventType.TEXT_BLOCK_DELTA: (RuntimeEventType.CONTENT_DELTA, "text"),
+    EventType.TEXT_BLOCK_END: (RuntimeEventType.CONTENT_COMPLETED, "text"),
+    EventType.THINKING_BLOCK_START: (
+        RuntimeEventType.CONTENT_STARTED,
+        "reasoning",
+    ),
+    EventType.THINKING_BLOCK_DELTA: (
+        RuntimeEventType.CONTENT_DELTA,
+        "reasoning",
+    ),
+    EventType.THINKING_BLOCK_END: (
+        RuntimeEventType.CONTENT_COMPLETED,
+        "reasoning",
+    ),
+    EventType.DATA_BLOCK_START: (RuntimeEventType.CONTENT_STARTED, "data"),
+    EventType.DATA_BLOCK_DELTA: (RuntimeEventType.CONTENT_DELTA, "data"),
+    EventType.DATA_BLOCK_END: (RuntimeEventType.CONTENT_COMPLETED, "data"),
+    EventType.TOOL_CALL_START: (RuntimeEventType.TOOL_CALL_STARTED, ""),
+    EventType.TOOL_CALL_DELTA: (RuntimeEventType.TOOL_CALL_DELTA, ""),
+    EventType.TOOL_CALL_END: (RuntimeEventType.TOOL_CALL_COMPLETED, ""),
+    EventType.TOOL_RESULT_START: (RuntimeEventType.TOOL_RESULT_STARTED, ""),
+    EventType.TOOL_RESULT_TEXT_DELTA: (
+        RuntimeEventType.TOOL_RESULT_DELTA,
+        "text",
+    ),
+    EventType.TOOL_RESULT_DATA_DELTA: (
+        RuntimeEventType.TOOL_RESULT_DELTA,
+        "data",
+    ),
+    EventType.TOOL_RESULT_END: (RuntimeEventType.TOOL_RESULT_COMPLETED, ""),
+}
+
+
 def _event(event_type: EventType, **fields: Any) -> SimpleNamespace:
     metadata = fields.pop("metadata", {"event": event_type.value})
+    runtime_type, content_kind = _CANONICAL_TYPES[event_type]
+    if "tool_call_name" in fields:
+        fields["name"] = fields.pop("tool_call_name")
     return SimpleNamespace(
-        type=event_type.value,
+        type=runtime_type.value,
+        content_kind=content_kind,
         metadata=metadata,
         **fields,
     )

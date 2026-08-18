@@ -3,18 +3,16 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
-from agentscope.event import EventType
-
-from qwenpaw.domain.turns.events import RuntimeEvent
+from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 from qwenpaw.runtime.turn_state_accumulator import TurnStateAccumulator
 
 
-def _event(event_type: EventType, **fields: Any) -> RuntimeEvent:
-    return RuntimeEvent.agent_event(
-        SimpleNamespace(type=event_type.value, **fields),
+def _event(event_type: RuntimeEventType, **fields: Any) -> RuntimeEvent:
+    return RuntimeEvent.canonical(
+        event_type,
+        data=fields,
     )
 
 
@@ -22,20 +20,32 @@ def test_accumulator_collects_unfinished_text_and_reasoning() -> None:
     state = TurnStateAccumulator()
 
     state.consume(
-        _event(EventType.THINKING_BLOCK_START, block_id="thinking"),
+        _event(
+            RuntimeEventType.CONTENT_STARTED,
+            block_id="thinking",
+            content_kind="reasoning",
+        ),
     )
     state.consume(
         _event(
-            EventType.THINKING_BLOCK_DELTA,
+            RuntimeEventType.CONTENT_DELTA,
             block_id="thinking",
+            content_kind="reasoning",
             delta="plan",
         ),
     )
-    state.consume(_event(EventType.TEXT_BLOCK_START, block_id="text"))
     state.consume(
         _event(
-            EventType.TEXT_BLOCK_DELTA,
+            RuntimeEventType.CONTENT_STARTED,
             block_id="text",
+            content_kind="text",
+        ),
+    )
+    state.consume(
+        _event(
+            RuntimeEventType.CONTENT_DELTA,
+            block_id="text",
+            content_kind="text",
             delta="answer",
         ),
     )
@@ -49,17 +59,26 @@ def test_accumulator_collects_unfinished_text_and_reasoning() -> None:
 def test_accumulator_excludes_completed_reasoning() -> None:
     state = TurnStateAccumulator()
     state.consume(
-        _event(EventType.THINKING_BLOCK_START, block_id="thinking"),
+        _event(
+            RuntimeEventType.CONTENT_STARTED,
+            block_id="thinking",
+            content_kind="reasoning",
+        ),
     )
     state.consume(
         _event(
-            EventType.THINKING_BLOCK_DELTA,
+            RuntimeEventType.CONTENT_DELTA,
             block_id="thinking",
+            content_kind="reasoning",
             delta="done",
         ),
     )
     state.consume(
-        _event(EventType.THINKING_BLOCK_END, block_id="thinking"),
+        _event(
+            RuntimeEventType.CONTENT_COMPLETED,
+            block_id="thinking",
+            content_kind="reasoning",
+        ),
     )
 
     assert not state.collect_partial_blocks()
@@ -69,21 +88,23 @@ def test_accumulator_collects_partial_tool_output() -> None:
     state = TurnStateAccumulator()
     state.consume(
         _event(
-            EventType.TOOL_RESULT_START,
+            RuntimeEventType.TOOL_RESULT_STARTED,
             tool_call_id="call-1",
         ),
     )
     state.consume(
         _event(
-            EventType.TOOL_RESULT_TEXT_DELTA,
+            RuntimeEventType.TOOL_RESULT_DELTA,
             tool_call_id="call-1",
+            content_kind="text",
             delta="first",
         ),
     )
     state.consume(
         _event(
-            EventType.TOOL_RESULT_TEXT_DELTA,
+            RuntimeEventType.TOOL_RESULT_DELTA,
             tool_call_id="call-1",
+            content_kind="text",
             delta=" second",
         ),
     )

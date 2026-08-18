@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """SSE envelope state machine.
 
-Translates agentscope ``EventType`` events into the frontend's
-streaming envelope protocol.  Tracks per-request state (text blocks,
-reasoning blocks, tool calls) and emits the correct event sequence
-that ``Builder.tsx`` expects.
+Translates canonical ``RuntimeEvent`` semantics into the frontend's streaming
+envelope protocol. Tracks per-request state (text blocks, reasoning blocks,
+tool calls) and emits the sequence that ``Builder.tsx`` expects.
 """
 
 from __future__ import annotations
@@ -17,6 +16,7 @@ from datetime import datetime, timezone
 from functools import wraps
 from typing import Any, AsyncGenerator, Callable, Dict
 
+from ...domain.turns.events import RuntimeEventType
 from ...runtime.message_convert import _media_type_to_block_type
 
 logger = logging.getLogger(__name__)
@@ -196,8 +196,7 @@ class Envelope:
         self,
         event: Any,
     ) -> AsyncGenerator[Any, None]:
-        """Translate an AgentScope event into real-time Host objects."""
-        from agentscope.event import EventType
+        """Translate a canonical protocol event into real-time Host objects."""
         from ...schemas import (
             ContentType,
             DataContent,
@@ -216,9 +215,13 @@ class Envelope:
         evt_type = getattr(event, "type", None)
         if hasattr(evt_type, "value"):
             evt_type = evt_type.value
+        content_kind = str(getattr(event, "content_kind", "") or "")
 
         # === TEXT BLOCK ===
-        if evt_type == EventType.TEXT_BLOCK_START.value:
+        if (
+            evt_type == RuntimeEventType.CONTENT_STARTED.value
+            and content_kind == "text"
+        ):
             if not self._message_started:
                 yield self._tag_seq(self._completed_message)
                 self._message_started = True
@@ -226,7 +229,10 @@ class Envelope:
             index = len(self._text_blocks)
             self._text_blocks[block_id] = {"index": index, "text": ""}
 
-        elif evt_type == EventType.TEXT_BLOCK_DELTA.value:
+        elif (
+            evt_type == RuntimeEventType.CONTENT_DELTA.value
+            and content_kind == "text"
+        ):
             if not self._message_started:
                 yield self._tag_seq(self._completed_message)
                 self._message_started = True
@@ -246,7 +252,10 @@ class Envelope:
             chunk.msg_id = self._message_id
             yield self._tag_seq(chunk)
 
-        elif evt_type == EventType.TEXT_BLOCK_END.value:
+        elif (
+            evt_type == RuntimeEventType.CONTENT_COMPLETED.value
+            and content_kind == "text"
+        ):
             block_id = event.block_id
             state = self._text_blocks.get(block_id)
             if state is None:
@@ -269,7 +278,10 @@ class Envelope:
             )
 
         # === THINKING BLOCK ===
-        elif evt_type == EventType.THINKING_BLOCK_START.value:
+        elif (
+            evt_type == RuntimeEventType.CONTENT_STARTED.value
+            and content_kind == "reasoning"
+        ):
             # A new reasoning block marks the start of a fresh ReAct
             # iteration.  Finalize any accumulated (not-yet-rotated) text
             # message first so it becomes its own ``output`` entry ordered
@@ -300,7 +312,10 @@ class Envelope:
             }
             yield self._tag_seq(r_envelope)
 
-        elif evt_type == EventType.THINKING_BLOCK_DELTA.value:
+        elif (
+            evt_type == RuntimeEventType.CONTENT_DELTA.value
+            and content_kind == "reasoning"
+        ):
             block_id = event.block_id
             delta = getattr(event, "delta", "") or ""
             state = self._reasoning_blocks.get(block_id)
@@ -338,7 +353,10 @@ class Envelope:
             r_chunk.msg_id = state["msg_id"]
             yield self._tag_seq(r_chunk)
 
-        elif evt_type == EventType.THINKING_BLOCK_END.value:
+        elif (
+            evt_type == RuntimeEventType.CONTENT_COMPLETED.value
+            and content_kind == "reasoning"
+        ):
             block_id = event.block_id
             state = self._reasoning_blocks.get(block_id)
             if state is None:
@@ -364,7 +382,7 @@ class Envelope:
             yield self._tag_seq(state["envelope"])
 
         # === TOOL CALL ===
-        elif evt_type == EventType.TOOL_CALL_START.value:
+        elif evt_type == RuntimeEventType.TOOL_CALL_STARTED.value:
             # P0-5: finalize current text message if needed
             if self._should_finalize_text_message():
                 async for obj in self._finalize_text_message():
@@ -386,7 +404,7 @@ class Envelope:
                 type=ContentType.DATA,
                 data=FunctionCall(
                     call_id=call_id,
-                    name=event.tool_call_name,
+                    name=event.name,
                     arguments="",
                 ).model_dump(),
                 delta=True,
@@ -398,14 +416,14 @@ class Envelope:
             yield self._tag_seq(stub_content.in_progress())
 
             self._tool_calls[call_id] = {
-                "name": event.tool_call_name,
+                "name": event.name,
                 "argument_fragments": [],
                 "message": plugin_call_message,
                 "output_text_acc": "",
                 "output_data_blocks": {},
             }
 
-        elif evt_type == EventType.TOOL_CALL_DELTA.value:
+        elif evt_type == RuntimeEventType.TOOL_CALL_DELTA.value:
             call_id = event.tool_call_id
             state = self._tool_calls.get(call_id)
             if state is None:
@@ -427,7 +445,7 @@ class Envelope:
             delta_content.msg_id = state["message"].id
             yield self._tag_seq(delta_content.in_progress())
 
-        elif evt_type == EventType.TOOL_CALL_END.value:
+        elif evt_type == RuntimeEventType.TOOL_CALL_COMPLETED.value:
             call_id = event.tool_call_id
             state = self._tool_calls.get(call_id)
             if state is None:
@@ -449,12 +467,12 @@ class Envelope:
             yield self._tag_seq(state["message"].completed())
 
         # === TOOL RESULT ===
-        elif evt_type == EventType.TOOL_RESULT_START.value:
+        elif evt_type == RuntimeEventType.TOOL_RESULT_STARTED.value:
             call_id = event.tool_call_id
             state = self._tool_calls.get(call_id)
             if state is None:
                 state = {
-                    "name": event.tool_call_name,
+                    "name": event.name,
                     "argument_fragments": [],
                     "output_text_acc": "",
                     "output_data_blocks": {},
@@ -491,7 +509,10 @@ class Envelope:
             state["output_text_acc"] = ""
             state["output_data_blocks"] = {}
 
-        elif evt_type == EventType.TOOL_RESULT_TEXT_DELTA.value:
+        elif (
+            evt_type == RuntimeEventType.TOOL_RESULT_DELTA.value
+            and content_kind == "text"
+        ):
             call_id = event.tool_call_id
             state = self._tool_calls.get(call_id)
             if state is None:
@@ -507,7 +528,10 @@ class Envelope:
             delta_content.msg_id = state["output_message"].id
             yield self._tag_seq(delta_content.in_progress())
 
-        elif evt_type == EventType.TOOL_RESULT_DATA_DELTA.value:
+        elif (
+            evt_type == RuntimeEventType.TOOL_RESULT_DELTA.value
+            and content_kind == "data"
+        ):
             call_id = event.tool_call_id
             state = self._tool_calls.get(call_id)
             if state is None:
@@ -555,7 +579,7 @@ class Envelope:
             delta_content.msg_id = state["output_message"].id
             yield self._tag_seq(delta_content.in_progress())
 
-        elif evt_type == EventType.TOOL_RESULT_END.value:
+        elif evt_type == RuntimeEventType.TOOL_RESULT_COMPLETED.value:
             call_id = event.tool_call_id
             state = self._tool_calls.get(call_id)
             if state is None:
@@ -591,7 +615,10 @@ class Envelope:
             yield self._tag_seq(out_message.completed())
 
         # === DATA BLOCK ===
-        elif evt_type == EventType.DATA_BLOCK_START.value:
+        elif (
+            evt_type == RuntimeEventType.CONTENT_STARTED.value
+            and content_kind == "data"
+        ):
             block_id = event.block_id
             media_type = getattr(event, "media_type", "")
 
@@ -604,7 +631,10 @@ class Envelope:
                 "data_acc": "",
             }
 
-        elif evt_type == EventType.DATA_BLOCK_DELTA.value:
+        elif (
+            evt_type == RuntimeEventType.CONTENT_DELTA.value
+            and content_kind == "data"
+        ):
             block_id = event.block_id
             state = self._data_blocks.get(block_id)
             if state is None:
@@ -614,7 +644,10 @@ class Envelope:
             # rendered by the frontend.  Content is emitted once on
             # DATA_BLOCK_END with the complete payload.
 
-        elif evt_type == EventType.DATA_BLOCK_END.value:
+        elif (
+            evt_type == RuntimeEventType.CONTENT_COMPLETED.value
+            and content_kind == "data"
+        ):
             block_id = event.block_id
             state = self._data_blocks.get(block_id)
             if state is None:
@@ -656,7 +689,7 @@ class Envelope:
             yield self._tag_seq(content_block)
 
         # === MODEL_CALL_END ===
-        elif evt_type == EventType.MODEL_CALL_END.value:
+        elif evt_type == RuntimeEventType.MODEL_CALL_COMPLETED.value:
             input_tokens = getattr(event, "input_tokens", 0)
             output_tokens = getattr(event, "output_tokens", 0)
             usage = {
@@ -668,7 +701,7 @@ class Envelope:
                 self._completed_message.usage = usage
 
         # === EXCEED_MAX_ITERS ===
-        elif evt_type == EventType.EXCEED_MAX_ITERS.value:
+        elif evt_type == RuntimeEventType.LIMIT_REACHED.value:
             agent_name = getattr(event, "name", "agent")
             err_msg_id = _gen_msg_id()
             err_message = Message(
@@ -699,12 +732,10 @@ class Envelope:
             self._response.output.append(err_message)
             yield self._tag_seq(err_message)
 
-        # === HINT_BLOCK (P2-2: warn and drop) ===
-        # ``EventType.HINT_BLOCK`` does not exist in every agentscope version;
-        # guard the lookup so an unmatched event falls through to a no-op
-        # instead of raising AttributeError and killing the whole turn.
-        elif (_hb := getattr(EventType, "HINT_BLOCK", None)) is not None and (
-            evt_type == _hb.value
+        # === HINT BLOCK (warn and drop) ===
+        elif (
+            evt_type == RuntimeEventType.CONTENT_COMPLETED.value
+            and content_kind == "hint"
         ):
             source = getattr(event, "source", None) or ""
             logger.warning(

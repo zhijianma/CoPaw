@@ -10,6 +10,7 @@ Each Workspace represents a standalone agent workspace with its own:
 
 Request processing is handled by ``Runtime`` (see ``stream_query``).
 """
+
 import logging
 from pathlib import Path
 from typing import Any, AsyncGenerator, Iterable, Optional
@@ -334,6 +335,27 @@ class Workspace:
         rt = Runtime(workspace=self, app_services=self._app_services)
         async for item in rt.run(request):
             yield item
+
+    async def stream_channel_events(
+        self,
+        request: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Expose canonical events to Channels for the native runtime.
+
+        External harness backends keep their existing presented event stream
+        until they implement the RuntimeEvent engine boundary.
+        """
+        config = load_agent_config(self.agent_id)
+        if config.backend != "qwenpaw":
+            async for item in self.stream_query(request):
+                yield item
+            return
+
+        from ...runtime import Runtime
+
+        runtime = Runtime(workspace=self, app_services=self._app_services)
+        async for event in runtime.stream_events(request):
+            yield event
 
     def _register_services(  # pylint: disable=too-many-statements
         self,

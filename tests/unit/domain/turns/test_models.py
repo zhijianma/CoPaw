@@ -73,6 +73,13 @@ def test_turn_request_rejects_missing_identity(
         TurnRequest(**values)
 
 
-def test_request_source_rejects_unknown_kind() -> None:
-    with pytest.raises(ValueError, match="kind"):
-        RequestSource(kind="unknown")
+def test_request_source_accepts_registered_protocol_keys() -> None:
+    source = RequestSource(protocol="a2a", endpoint_id="remote-1")
+
+    assert source.kind == "a2a"
+    assert source.endpoint_id == "remote-1"
+
+
+def test_request_source_rejects_empty_protocol() -> None:
+    with pytest.raises(ValueError, match="protocol"):
+        RequestSource(protocol="")

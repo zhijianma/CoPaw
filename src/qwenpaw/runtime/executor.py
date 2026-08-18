@@ -7,6 +7,7 @@ import logging
 from typing import Any, AsyncGenerator
 
 from ..domain.turns.events import RuntimeEvent
+from ..engines.agentscope import AgentScopeEventNormalizer
 from .heartbeat import (
     _iter_with_heartbeat,
     _HEARTBEAT_TICK,
@@ -27,6 +28,7 @@ class AgentExecutor:
     def __init__(self, agent: Any, *, turn_id: str = "") -> None:
         self._agent = agent
         self._turn_id = turn_id
+        self._normalizer = AgentScopeEventNormalizer()
 
     async def run(
         self,
@@ -46,7 +48,7 @@ class AgentExecutor:
                 yield RuntimeEvent.heartbeat(turn_id=self._turn_id)
                 continue
 
-            yield RuntimeEvent.agent_event(
+            yield self._normalizer.normalize(
                 event,
                 turn_id=self._turn_id,
             )

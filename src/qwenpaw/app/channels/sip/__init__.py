@@ -6,6 +6,7 @@ Two backend modes via ``SIPChannelConfig.sip_mode``:
 * ``"dev"``     -- **PyVoIPBackend**: pure-Python pyVoIP.
 * ``"livekit"`` -- **LiveKitBackend**: LiveKit SIP Server.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -601,8 +602,15 @@ class SIPChannel(BaseChannel):
             from qwenpaw.schemas import RunStatus
 
             completed = RunStatus.Completed
-            async for event in self._process(
-                self._request_for_process(request),
+            from ..reply_presentation import present_reply_stream
+
+            process_request = self._request_for_process(request)
+            stream = self._runtime_process(process_request)
+            async for event in present_reply_stream(
+                stream,
+                request=process_request,
+                channel_type=self.channel,
+                conversation_id=session.session_id,
             ):
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)

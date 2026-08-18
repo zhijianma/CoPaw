@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Voice Channel: Twilio ConversationRelay + Cloudflare Tunnel."""
+
 from __future__ import annotations
 
 import collections
@@ -237,8 +238,16 @@ class VoiceChannel(BaseChannel):
 
     async def process_request(self, request: Any) -> AsyncIterator[Any]:
         """Route a Voice request through the canonical core boundary."""
-        async for event in self._process(
-            self._request_for_process(request),
+        from ..reply_presentation import present_reply_stream
+
+        process_request = self._request_for_process(request)
+        session_id = str(getattr(request, "session_id", "") or "voice")
+        stream = self._runtime_process(process_request)
+        async for event in present_reply_stream(
+            stream,
+            request=process_request,
+            channel_type=self.channel,
+            conversation_id=session_id,
         ):
             yield event
 

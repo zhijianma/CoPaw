@@ -52,17 +52,16 @@ class _Builder:
 
 
 class _Executor:
-    native_event = object()
-
     def __init__(self, agent: Any, *, turn_id: str = "") -> None:
         del agent
         self.turn_id = turn_id
 
     async def run(self, msgs: list[Any]):
         del msgs
-        yield RuntimeEvent.agent_event(
-            self.native_event,
+        yield RuntimeEvent.canonical(
+            RuntimeEventType.CONTENT_DELTA,
             turn_id=self.turn_id,
+            data={"content_kind": "text", "delta": "hello"},
         )
 
 
@@ -93,10 +92,10 @@ async def test_stream_events_emits_runtime_lifecycle(
 
     assert [event.type for event in events] == [
         RuntimeEventType.TURN_STARTED,
-        RuntimeEventType.AGENT_EVENT,
+        RuntimeEventType.CONTENT_DELTA,
         RuntimeEventType.TURN_COMPLETED,
     ]
-    assert events[1].payload is _Executor.native_event
+    assert events[1].data["delta"] == "hello"
     assert all(event.turn_id == "turn-1" for event in events)
     assert _Builder.agent.closed is True
 
