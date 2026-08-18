@@ -136,6 +136,18 @@ Binding 只用于一次性确定 Agent owner，迁移完成后删除：
 - 后续 Endpoint 保留 `endpoint_id` 作为次实例 ID。
 - 不再持久化 Endpoint/Binding 运行时投影。
 
+### 5.4 降级回写后的加载时修复
+
+Channel 迁移不仅在应用启动时执行。`load_agent_config()` 在 Pydantic
+校验前按数据结构检查并触发幂等迁移，以处理旧版进程在新版启动后回写
+`agent.json` 的情况。
+
+- 同一个 `channels` dict 可以逐项识别旧 flat 配置和 V5 实例包装。
+- 已被旧迁移嵌套进 `settings` 的实例包装会被解包恢复。
+- `{channel_type}-{8位十六进制}` 次实例若被误标为自身类型，会依据仍存在的
+  主实例恢复真实类型。
+- 每次持久化修复都先进入 `channel-config-v5` 备份目录。
+
 ## 6. API 与 Console
 
 API 返回结构：
@@ -163,6 +175,7 @@ API 返回结构：
 - [x] 增加 V4 → V5 历史文件零改写测试
 - [x] 增加 V2 多实例保留测试
 - [x] 增加 V2 次实例历史索引修复测试
+- [x] 增加旧版运行期回写和混合格式修复测试
 - [x] 配置模型改为 `dict[instance_id, AgentChannelConfig]`
 - [x] 后端 CRUD 改为实例寻址
 - [x] ChannelManager 支持同类型多个适配器
@@ -186,7 +199,7 @@ API 返回结构：
 ## 9. 实施验证记录
 
 - 后端完整 unit 基线：`6839 passed, 16 skipped`；最终迁移增量回归：
-  `39 passed`。
+  `45 passed`。
 - Channel API 集成回归：`11 passed`。
 - Console 完整 Vitest：`1736 passed`，共 604 个 suite。
 - TypeScript：`tsc -b --noEmit` 通过。

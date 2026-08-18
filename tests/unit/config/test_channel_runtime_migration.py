@@ -488,6 +488,42 @@ def test_migrates_legacy_channel_map_into_type_keyed_configs(
     AgentProfileConfig.model_validate(migrated)
 
 
+def test_migration_repairs_generated_secondary_type_from_primary(
+    tmp_path: Path,
+) -> None:
+    config_path, agent_path = _install(tmp_path)
+    agent = _read_json(agent_path)
+    agent["channel_schema_version"] = 5
+    agent["channels"] = {
+        "feishu": {
+            "type": "feishu",
+            "name": "Primary",
+            "enabled": True,
+            "settings": {},
+        },
+        "feishu-2f87b8f4": {
+            "type": "feishu-2f87b8f4",
+            "name": "Feishu 2F87B8F4",
+            "enabled": True,
+            "settings": {
+                "type": "feishu",
+                "name": "Secondary",
+                "settings": {"app_id": "secondary-app"},
+            },
+        },
+    }
+    _write_json(agent_path, agent)
+
+    result = migrate_channel_configuration(config_path)
+
+    assert result.migrated is True
+    migrated = _read_json(agent_path)
+    secondary = migrated["channels"]["feishu-2f87b8f4"]
+    assert secondary["type"] == "feishu"
+    assert secondary["name"] == "Secondary"
+    assert secondary["settings"] == {"app_id": "secondary-app"}
+
+
 def test_migrates_onebot_download_limit_without_data_loss(
     tmp_path: Path,
 ) -> None:

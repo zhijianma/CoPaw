@@ -21,8 +21,8 @@ from qwenpaw.constant import (
 from qwenpaw.config.config import ModelSlotConfig
 
 
-@pytest.fixture
-def mock_agent_workspace(tmp_path, monkeypatch):
+@pytest.fixture(name="mock_agent_workspace")
+def mock_agent_workspace_fixture(tmp_path, monkeypatch):
     """Create a temporary agent workspace for testing."""
     import json
     from qwenpaw.config.utils import get_config_path
@@ -70,6 +70,46 @@ def test_agent_model_config_defaults_to_none(
     """Test that agent model config defaults to None."""
     agent_config = load_agent_config("test_agent")
     assert agent_config.active_model is None
+
+
+def test_load_migrates_channels_rewritten_by_legacy_runtime(
+    mock_agent_workspace,
+) -> None:
+    """A legacy rewrite after startup is migrated before validation."""
+    import json
+
+    agent_path = mock_agent_workspace / "agent.json"
+    data = json.loads(agent_path.read_text(encoding="utf-8"))
+    data.pop("channel_schema_version", None)
+    data["channels"] = {
+        "feishu": {
+            "enabled": True,
+            "app_id": "legacy-app",
+            "app_secret": "legacy-secret",
+        },
+        "feishu-2f87b8f4": {
+            "type": "feishu",
+            "name": "Secondary Feishu",
+            "enabled": True,
+            "settings": {
+                "app_id": "secondary-app",
+                "app_secret": "secondary-secret",
+            },
+        },
+    }
+    agent_path.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    agent_config = load_agent_config("test_agent")
+
+    assert agent_config.channels["feishu"].type == "feishu"
+    assert agent_config.channels["feishu"].settings["app_id"] == ("legacy-app")
+    assert agent_config.channels["feishu-2f87b8f4"].type == "feishu"
+    persisted = json.loads(agent_path.read_text(encoding="utf-8"))
+    assert persisted["channel_schema_version"] == 5
+    assert persisted["channels"]["feishu"]["type"] == "feishu"
 
 
 def test_agent_model_config_can_be_set(

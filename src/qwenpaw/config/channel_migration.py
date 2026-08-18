@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import uuid
 from dataclasses import dataclass
@@ -80,6 +81,9 @@ _CHANNEL_STATE_FILES = {
     "yuanbao": "yuanbao_sessions.json",
 }
 
+_INSTANCE_ID_RE = re.compile(r"^(.+)-[0-9a-f]{8}$")
+_INSTANCE_CONFIG_FIELDS = {"type", "name", "enabled", "settings"}
+
 
 def _read_object(path: Path) -> dict[str, Any]:
     try:
@@ -93,6 +97,72 @@ def _read_object(path: Path) -> dict[str, Any]:
             f"Migration source must contain a JSON object: {path}",
         )
     return value
+
+
+def _generated_primary_type(
+    instance_id: str,
+    channels: dict[str, Any],
+) -> str | None:
+    """Infer a generated secondary's type from its primary entry."""
+    match = _INSTANCE_ID_RE.fullmatch(instance_id)
+    if match is None:
+        return None
+    channel_type = match.group(1)
+    primary = channels.get(channel_type)
+    if not isinstance(primary, dict):
+        return None
+    primary_type = str(primary.get("type") or channel_type)
+    return channel_type if primary_type == channel_type else None
+
+
+def _is_wrapped_instance_config(value: object) -> bool:
+    """Return whether a value uses the Agent-owned instance envelope."""
+    return (
+        isinstance(value, dict)
+        and {"name", "settings"}.issubset(value)
+        and set(value).issubset(_INSTANCE_CONFIG_FIELDS)
+        and isinstance(value.get("settings"), dict)
+    )
+
+
+def _unwrap_nested_instance_config(
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    """Repair an instance envelope nested by a legacy flat migration."""
+    nested = value.get("settings")
+    if not isinstance(nested, dict) or not _is_wrapped_instance_config(
+        nested,
+    ):
+        return value
+    repaired = dict(nested)
+    repaired.setdefault("enabled", bool(value.get("enabled", True)))
+    return repaired
+
+
+def channel_configuration_requires_migration(data: object) -> bool:
+    """Return whether one Agent has pre-V5 or damaged Channel data."""
+    if not isinstance(data, dict):
+        return False
+    channels = data.get("channels", {})
+    if (
+        not isinstance(channels, dict)
+        or int(
+            data.get("channel_schema_version") or 0,
+        )
+        != CHANNEL_RUNTIME_MIGRATION_VERSION
+    ):
+        return True
+    for instance_id, value in channels.items():
+        if not isinstance(value, dict) or not {
+            "type",
+            "name",
+            "settings",
+        }.issubset(value):
+            return True
+        inferred = _generated_primary_type(str(instance_id), channels)
+        if inferred and str(value.get("type") or "") == instance_id:
+            return True
+    return False
 
 
 def _agent_sources(
@@ -165,6 +235,13 @@ def _legacy_map_to_channels(
     channels = {}
     for channel_type, raw_value in sorted(values.items()):
         if not isinstance(raw_value, dict):
+            continue
+        if _is_wrapped_instance_config(raw_value):
+            channel = dict(raw_value)
+            channel.setdefault("type", channel_type)
+            wrapped_type = str(channel.get("type") or "")
+            _validate_channel(wrapped_type, channel)
+            channels[channel_type] = channel
             continue
         raw = dict(raw_value)
         _migrate_display_fields(raw)
@@ -827,9 +904,20 @@ def migrate_channel_configuration(
                             f"Agent {agent_id} Channel {instance_id} "
                             f"must be an object",
                         )
-                    migrated_channel = dict(channel)
+                    migrated_channel = _unwrap_nested_instance_config(
+                        dict(channel),
+                    )
                     if schema_version < 5:
                         migrated_channel.setdefault("type", instance_id)
+                    inferred_type = _generated_primary_type(
+                        str(instance_id),
+                        raw_channels,
+                    )
+                    if (
+                        inferred_type
+                        and migrated_channel.get("type") == instance_id
+                    ):
+                        migrated_channel["type"] = inferred_type
                     channel_type = str(
                         migrated_channel.get("type") or "",
                     )
@@ -976,5 +1064,6 @@ __all__ = [
     "CHANNEL_RUNTIME_MIGRATION_VERSION",
     "ChannelMigrationError",
     "ChannelMigrationResult",
+    "channel_configuration_requires_migration",
     "migrate_channel_configuration",
 ]

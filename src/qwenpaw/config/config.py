@@ -2910,6 +2910,22 @@ def load_agent_config(  # pylint: disable=too-many-branches,too-many-statements
                 ),
             ) from e
 
+        from .channel_migration import (
+            channel_configuration_requires_migration,
+            migrate_channel_configuration,
+        )
+
+        if channel_configuration_requires_migration(data):
+            from .utils import get_config_path
+
+            migrate_channel_configuration(get_config_path())
+            with open(agent_config_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
+            try:
+                current_mtime = agent_config_path.stat().st_mtime
+            except OSError:
+                pass
+
         project_dir_migrated = migrate_project_directory_config(data)
 
         if project_dir_migrated:
