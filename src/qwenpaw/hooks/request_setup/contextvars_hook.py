@@ -8,6 +8,7 @@ Injects per-request ContextVars before agent execution so that tools
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 import uuid
 
@@ -57,9 +58,10 @@ class ContextVarsSetupHook(LifecycleHook):
 
         set_current_computer_use_turn_id(uuid.uuid4().hex)
         set_current_user_id(ctx.request.user_id)
-        set_current_channel(getattr(ctx.request, "channel", None))
-        request_context = getattr(ctx.request, "request_context", None)
-        if isinstance(request_context, dict) and request_context.get(
+        channel = ctx.request.source.channel_type or ""
+        set_current_channel(channel)
+        request_context = ctx.request.context
+        if isinstance(request_context, Mapping) and request_context.get(
             "_spawn_subagent",
         ):
             approval_route = {
@@ -75,10 +77,10 @@ class ContextVarsSetupHook(LifecycleHook):
             approval_route = {
                 "root_session_id": ctx.root_session_id or ctx.session_id or "",
                 "user_id": getattr(ctx.request, "user_id", None) or "",
-                "channel": getattr(ctx.request, "channel", None) or "",
-                "channel_meta": getattr(ctx.request, "channel_meta", None),
+                "channel": channel,
+                "channel_meta": dict(request_context),
             }
-        if isinstance(request_context, dict) and request_context.get(
+        if isinstance(request_context, Mapping) and request_context.get(
             "approval_level",
         ):
             approval_route["approval_level"] = request_context.get(
@@ -116,7 +118,7 @@ class ContextVarsSetupHook(LifecycleHook):
 
         workspace_dir = ctx.workspace_dir or Path(WORKING_DIR)
         fork_dir = None
-        if isinstance(request_context, dict):
+        if isinstance(request_context, Mapping):
             from ...agents.fork_project import resolve_allowed_fork_project_dir
 
             fork_dir = resolve_allowed_fork_project_dir(
@@ -129,7 +131,7 @@ class ContextVarsSetupHook(LifecycleHook):
         )
 
         trusted_override = None
-        if isinstance(request_context, dict):
+        if isinstance(request_context, Mapping):
             value = request_context.get("project_dir")
             if isinstance(value, str):
                 trusted_override = value

@@ -182,7 +182,7 @@ class _FakeWorkspace:
         self.driver_manager = _FakeDriverManager()
         self.requests: list[Any] = []
 
-    async def stream_query(
+    async def stream_events(
         self,
         request: Any,
     ) -> AsyncIterator[Any]:
@@ -244,7 +244,7 @@ async def test_acp_session_mcp_lifecycle_and_request_scope(tmp_path) -> None:
         prompt=[text_block("hello")],
         session_id=response.session_id,
     )
-    request_context = workspace.requests[0].request_context
+    request_context = workspace.requests[0].context
     assert request_context[DRIVER_SCOPE_CONTEXT_KEY] == scope_id
 
     await agent.resume_session(
@@ -421,7 +421,7 @@ async def test_acp_close_waits_for_prompt_before_removing_mcp(
             super().__init__()
             self.driver_manager = _OrderedDriverManager()
 
-        async def stream_query(
+        async def stream_events(
             self,
             request: Any,
         ) -> AsyncIterator[Any]:

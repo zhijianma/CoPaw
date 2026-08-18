@@ -9,7 +9,10 @@ from typing import Any, AsyncGenerator
 import pytest
 from agentscope.event import EventType
 
-from qwenpaw.transports.console.envelope import Envelope, _propagate_event_metadata
+from qwenpaw.protocols.console.envelope import (
+    Envelope,
+    _propagate_event_metadata,
+)
 from qwenpaw.domain.turns.events import RuntimeEventType
 from qwenpaw.schemas import ContentType, MessageType, RunStatus, TextContent
 
@@ -212,7 +215,9 @@ async def test_metadata_is_added_to_existing_stream_outputs():
         for event, expected_count in zip(events, expected_counts):
             payloads = await _translate(envelope, event)
             assert len(payloads) == expected_count
-            assert all(payload["metadata"] == event.metadata for payload in payloads)
+            assert all(
+                payload["metadata"] == event.metadata for payload in payloads
+            )
 
 
 @pytest.mark.asyncio
@@ -255,7 +260,9 @@ async def test_tool_metadata_is_scoped_to_its_own_outputs():
     assert len(payloads) == 3
     assert payloads[0]["type"] == MessageType.MESSAGE
     assert payloads[0]["metadata"] is None
-    assert all(payload["metadata"] == tool_metadata for payload in payloads[1:])
+    assert all(
+        payload["metadata"] == tool_metadata for payload in payloads[1:]
+    )
 
     await _translate(
         envelope,

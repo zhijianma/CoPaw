@@ -30,7 +30,7 @@ class ConsoleEventPresenter:
         envelope: Any | None = None,
     ) -> None:
         if envelope is None:
-            from ...transports.console.envelope import Envelope
+            from .envelope import Envelope
 
             envelope = Envelope(session_id=session_id)
         self.envelope = envelope

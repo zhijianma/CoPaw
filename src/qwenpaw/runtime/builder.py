@@ -341,7 +341,7 @@ class AgentBuilder:
 
         # Model + formatter (built before the toolkit so the scroll context
         # strategy, which needs the model for token counting, can wire in).
-        model_slot_override = getattr(ctx.request, "model_slot_override", None)
+        model_slot_override = ctx.request.context.get("model_slot_override")
         model, _formatter = self.build_model(
             agent_config,
             model_slot_override=model_slot_override,
@@ -431,7 +431,9 @@ class AgentBuilder:
             request_context=request_context,
             offloader=offloader,
             context_config=self._build_context_config(agent_config),
-            context_manager=(scroll.context_manager if scroll is not None else None),
+            context_manager=(
+                scroll.context_manager if scroll is not None else None
+            ),
             effective_skills=effective_skills,
             governor=governor,
         )
@@ -441,7 +443,8 @@ class AgentBuilder:
             agent.load_state_dict(ctx.session_state)
 
         _logger.info(
-            "builder: built agent for session=%s agent=%s" " model=%s/%s tools=%d",
+            "builder: built agent for session=%s agent=%s"
+            " model=%s/%s tools=%d",
             getattr(ctx, "session_id", ""),
             agent_id,
             active.provider_id,
@@ -563,8 +566,12 @@ class AgentBuilder:
         rc: dict[str, Any] = {
             "session_id": getattr(ctx, "session_id", "") or "",
             "agent_id": getattr(ctx, "agent_id", "") or "",
-            "channel": ((request.source.channel_type or "") if request else ""),
-            "user_id": ((getattr(request, "user_id", None) or "") if request else ""),
+            "channel": (
+                (request.source.channel_type or "") if request else ""
+            ),
+            "user_id": (
+                (getattr(request, "user_id", None) or "") if request else ""
+            ),
             "root_session_id": getattr(ctx, "root_session_id", "") or "",
             "root_agent_id": getattr(ctx, "root_agent_id", "") or "",
         }
@@ -704,7 +711,9 @@ class AgentBuilder:
         )
         _active = getattr(agent_config, "active_model", None)
         _model_name = (
-            _active.model if _active and getattr(_active, "model", None) else None
+            _active.model
+            if _active and getattr(_active, "model", None)
+            else None
         )
         return build_env_context(
             session_id=getattr(ctx, "session_id", ""),
@@ -744,7 +753,9 @@ class AgentBuilder:
         recovery_store: TurnRecoveryStore | None = None,
     ) -> list[Any]:
         """Collect the optional visual-context recovery tool."""
-        config = agent_config.running.light_context_config.visual_compact_config
+        config = (
+            agent_config.running.light_context_config.visual_compact_config
+        )
         if not config.enabled:
             return []
 
@@ -753,7 +764,11 @@ class AgentBuilder:
             make_recover_visual_context_tool,
         )
 
-        store = recovery_store if recovery_store is not None else TurnRecoveryStore()
+        store = (
+            recovery_store
+            if recovery_store is not None
+            else TurnRecoveryStore()
+        )
         recover_visual_context = make_recover_visual_context_tool(store)
         return [
             AgentBuilder._wrap_tool(
@@ -1067,7 +1082,9 @@ class AgentBuilder:
             else ""
         )
         tool_results_dir = (
-            os.path.join(workspace_dir, trc.tool_results_cache) if workspace_dir else ""
+            os.path.join(workspace_dir, trc.tool_results_cache)
+            if workspace_dir
+            else ""
         )
 
         return ToolResultPruningMiddleware(
@@ -1079,7 +1096,9 @@ class AgentBuilder:
                 else trc.pruning_old_msg_max_bytes
             ),
             recent_max_bytes=trc.pruning_recent_msg_max_bytes,
-            exempt_file_extensions={e.lower() for e in trc.exempt_file_extensions},
+            exempt_file_extensions={
+                e.lower() for e in trc.exempt_file_extensions
+            },
             exempt_tool_names={n.lower() for n in trc.exempt_tool_names},
             tool_results_dir=tool_results_dir,
             agent_id=getattr(agent_config, "id", "default"),
@@ -1104,9 +1123,11 @@ class AgentBuilder:
 
         pruning_middleware = None
         try:
-            pruning_middleware = AgentBuilder._build_tool_result_pruning_middleware(
-                ctx,
-                agent_config,
+            pruning_middleware = (
+                AgentBuilder._build_tool_result_pruning_middleware(
+                    ctx,
+                    agent_config,
+                )
             )
         except Exception:
             _logger.debug(
@@ -1190,7 +1211,9 @@ class AgentBuilder:
             VisualCompressionMiddleware,
         )
 
-        visual_config = agent_config.running.light_context_config.visual_compact_config
+        visual_config = (
+            agent_config.running.light_context_config.visual_compact_config
+        )
         mws.append(
             VisualCompressionMiddleware(
                 visual_config,

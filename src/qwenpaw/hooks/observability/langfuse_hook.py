@@ -4,6 +4,7 @@
 Applies ``agent_trace_scope`` as a PRE_EXECUTE / FINALLY hook pair,
 grouping each agent request into a single Langfuse trace.
 """
+
 from __future__ import annotations
 
 import logging
@@ -45,7 +46,7 @@ class LangfuseTraceHook(LifecycleHook):
             "agent_id": ctx.agent_id,
             "root_agent_id": ctx.root_agent_id,
             "user_id": getattr(ctx.request, "user_id", None) or "",
-            "channel": getattr(ctx.request, "channel", None) or "",
+            "channel": ctx.request.source.channel_type or "",
         }
         scope = agent_trace_scope(
             trace_id=trace_id,

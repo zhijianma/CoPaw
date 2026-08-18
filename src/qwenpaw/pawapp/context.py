@@ -3,7 +3,7 @@
 """PawAppContext — The ``ctx`` object that PawApp developers interact with.
 
 Provides access to QwenPaw capabilities via thin delegation:
-- ctx.chat() / ctx.chat_stream() → Workspace.stream_query()
+- ctx.chat() / ctx.chat_stream() → Workspace.stream_events()
 - ctx.storage.get/set/search → SafeJSONSession (namespaced)
 - ctx.tools.invoke() → ToolCoordinator
 - ctx.notify() → ChannelManager
@@ -215,7 +215,7 @@ class PawAppContext:
     ) -> Any:
         """Send a message to the Agent and get a reply.
 
-        Delegates to Workspace.stream_query().
+        Delegates to Workspace.stream_events().
 
         Args:
             message: User message text
@@ -229,7 +229,7 @@ class PawAppContext:
             raise RuntimeError("No workspace available for chat")
 
         chunks: List[Any] = []
-        async for event in self._stream_query(
+        async for event in self._stream_events(
             workspace,
             message,
             skill,
@@ -265,7 +265,7 @@ class PawAppContext:
                 "No workspace available for chat_stream",
             )
 
-        async for event in self._stream_query(
+        async for event in self._stream_events(
             workspace,
             message,
             skill,
@@ -371,7 +371,7 @@ class PawAppContext:
         except Exception:
             return None
 
-    async def _stream_query(
+    async def _stream_events(
         self,
         workspace: Any,
         message: str,
@@ -381,36 +381,32 @@ class PawAppContext:
         channel: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> AsyncIterator[Any]:
-        """Internal: delegate to workspace's stream_query.
+        """Build a PawApp turn and delegate to Workspace.stream_events.
 
         ``session_id`` overrides the default ``pawapp:{app_id}``
         session key, allowing callers to isolate conversations
         (e.g. per-issue in Kanban).
         """
-        # pylint: disable=unused-argument
-        if hasattr(workspace, "stream_query"):
-            from ..schemas import AgentRequest
+        if hasattr(workspace, "stream_events"):
+            from ..app.turn_factory import create_text_turn
 
             sid = session_id or f"pawapp:{self.app_id}"
-            request = AgentRequest(
-                input=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": message},
-                        ],
-                    },
-                ],
+            context = {"source": "pawapp", "app_id": self.app_id}
+            if skill:
+                context["skill"] = skill
+            request = create_text_turn(
+                agent_id=self.agent_id or "default",
                 session_id=sid,
                 user_id=user_id or self.user_id,
-                channel=channel or self.channel,
-                agent_id=self.agent_id or "default",
+                protocol="pawapp",
+                channel_type=channel or self.channel,
+                text=message,
+                context=context,
             )
-            async for event in workspace.stream_query(request):
+            async for event in workspace.stream_events(request):
                 yield event
         else:
-            # Fallback: try direct agent call
-            logger.warning("Workspace has no stream_query; using fallback")
+            logger.warning("Workspace has no stream_events; using fallback")
             yield {
                 "type": "text",
                 "content": f"[PawApp ctx.chat fallback] {message}",
@@ -524,83 +520,38 @@ class ChatReply:
 
     @property
     def text(self) -> str:
-        """Extract assistant text from the streamed chunks.
+        """Extract assistant text from canonical runtime events."""
 
-        The runtime yields Pydantic objects (``AgentResponse`` /
-        ``Message`` / ``TextContent``) rather than plain dicts. Prefer the
-        final ``AgentResponse.output``; fall back to completed messages,
-        then streaming text deltas, then legacy dict/str chunks.
-        """
-        # pylint: disable=too-many-branches
+        from ..domain.turns.events import RuntimeEventType, RuntimeFailure
 
-        def _content_text(content_list: Any) -> str:
-            parts: List[str] = []
-            for block in content_list or []:
-                if getattr(block, "delta", False):
-                    continue  # skip streaming deltas (avoid double count)
-                t = getattr(block, "text", None)
-                if t is None and isinstance(block, dict):
-                    t = block.get("text")
-                if t:
-                    parts.append(str(t))
-            return "".join(parts)
-
-        # 1) Last AgentResponse (.output list of messages)
-        final_response = None
+        deltas: List[str] = []
+        completed_messages: List[str] = []
         for chunk in self._chunks:
-            out = getattr(chunk, "output", None)
-            if isinstance(out, list):
-                final_response = chunk
-        if final_response is not None:
-            joined = "".join(
-                _content_text(getattr(msg, "content", []))
-                for msg in final_response.output
-            ).strip()
-            if joined:
-                logger.debug("ChatReply: resolved via AgentResponse.output")
-                return joined
-            err = getattr(final_response, "error", None)
-            if err:
-                logger.debug("ChatReply: resolved via AgentResponse.error")
-                return str(err)
-
-        # 2) Completed Message objects (non-delta)
-        msg_texts = []
-        for chunk in self._chunks:
-            if getattr(chunk, "output", None) is not None:
-                continue
-            content = getattr(chunk, "content", None)
-            if isinstance(content, list):
-                msg_texts.append(_content_text(content))
-        joined = "".join(msg_texts).strip()
-        if joined:
-            logger.debug("ChatReply: resolved via Message objects")
-            return joined
-
-        # 3) Streaming text deltas
-        delta_texts = [
-            str(chunk.text)
-            for chunk in self._chunks
-            if getattr(chunk, "delta", False) and getattr(chunk, "text", None)
-        ]
-        if delta_texts:
-            logger.debug("ChatReply: resolved via streaming deltas")
-            return "".join(delta_texts).strip()
-
-        # 4) Legacy dict/str chunks
-        logger.debug("ChatReply: falling back to legacy dict/str")
-        texts = []
-        for chunk in self._chunks:
-            if isinstance(chunk, dict):
-                content = chunk.get(
-                    "content",
-                    chunk.get("text", ""),
-                )
-                if content:
-                    texts.append(str(content))
-            elif isinstance(chunk, str):
-                texts.append(chunk)
-        return "".join(texts)
+            event_type = getattr(chunk, "type", None)
+            if event_type is RuntimeEventType.CONTENT_DELTA and (
+                chunk.data.get("content_kind") == "text"
+            ):
+                deltas.append(str(chunk.data.get("delta") or ""))
+            elif event_type is RuntimeEventType.MESSAGE:
+                payload = chunk.payload
+                get_text_content = getattr(payload, "get_text_content", None)
+                if callable(get_text_content):
+                    text = get_text_content()
+                else:
+                    text = "".join(
+                        str(getattr(part, "text", "") or "")
+                        for part in (getattr(payload, "content", None) or [])
+                    )
+                if text:
+                    completed_messages.append(str(text))
+            elif event_type is RuntimeEventType.TURN_FAILED and isinstance(
+                chunk.payload,
+                RuntimeFailure,
+            ):
+                return chunk.payload.error_text
+        if completed_messages:
+            return "".join(completed_messages).strip()
+        return "".join(deltas).strip()
 
     @property
     def chunks(self) -> List[Any]:

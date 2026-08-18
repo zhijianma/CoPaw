@@ -97,8 +97,8 @@ async def _run_task(
 
     from agentscope.message import UserMsg
 
+    from ..app.turn_factory import create_text_turn
     from ..runtime.builder import AgentBuilder
-    from ..schemas import AgentRequest
 
     agent_config.running.max_iters = max_iters
 
@@ -107,16 +107,14 @@ async def _run_task(
         base_workspace = Path(agent_config.workspace_dir).expanduser()
 
     with _isolated_skills_workspace(skills_dir, base_workspace) as workspace:
-        req = AgentRequest(
-            input=[
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": instruction}],
-                },
-            ],
+        req = create_text_turn(
+            agent_id=request_context.get("agent_id", "default"),
             session_id=request_context.get("session_id", "headless-task"),
             user_id=request_context.get("user_id", "headless"),
-            channel=request_context.get("channel", "console"),
+            protocol="task-cli",
+            channel_type=request_context.get("channel", "console"),
+            text=instruction,
+            context=request_context,
         )
         ctx = SimpleNamespace(
             request=req,

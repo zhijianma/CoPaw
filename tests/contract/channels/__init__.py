@@ -102,7 +102,7 @@ class ChannelContractTest(BaseContractTest):
             "start",
             "stop",
             "send",
-            "build_agent_request_from_native",
+            "build_channel_turn_from_native",
         ]
 
         for method_name in required_methods:
@@ -179,9 +179,9 @@ class ChannelContractTest(BaseContractTest):
             getattr(cls, "from_config"),
         ), "from_config must be callable"
 
-    def test_has_build_agent_request_from_native_method(self, instance):
-        """All channels must implement build_agent_request_from_native."""
-        attr_name = "build_agent_request_from_native"
+    def test_has_build_channel_turn_from_native_method(self, instance):
+        """All channels must implement build_channel_turn_from_native."""
+        attr_name = "build_channel_turn_from_native"
         assert hasattr(instance, attr_name), f"Missing {attr_name}"
         method = getattr(instance, attr_name)
         assert callable(method), f"{attr_name} must be callable"

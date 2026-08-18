@@ -7,21 +7,41 @@ import pytest
 
 from qwenpaw.app.crons.executor import CronExecutor
 from qwenpaw.app.crons.models import DispatchSpec, DispatchTarget
-from qwenpaw.schemas import Event, RunStatus
+from qwenpaw.domain.turns.events import RuntimeEvent
+from qwenpaw.schemas import Message, Role, RunStatus, TextContent
 from tests.unit.app.conftest import make_cron_job_spec
 
 
 class _Workspace:
     chat_manager = None
+    agent_id = "default"
 
     def __init__(self, events=None) -> None:
         self.events_consumed = 0
-        self.events = events if events is not None else ("first", "second")
+        self.events = (
+            events
+            if events is not None
+            else (
+                _message_event("first"),
+                _message_event("second"),
+            )
+        )
 
-    async def stream_query(self, _request):
+    async def stream_events(self, _request):
         for event in self.events:
             self.events_consumed += 1
             yield event
+
+
+def _message_event(text: str) -> RuntimeEvent:
+    return RuntimeEvent.message(
+        Message(
+            role=Role.ASSISTANT,
+            status=RunStatus.Completed,
+            content=[TextContent(text=text)],
+        ),
+        turn_id="turn-1",
+    )
 
 
 def _patch_trace_storage(monkeypatch):
@@ -88,17 +108,9 @@ async def test_agent_job_still_delivers_by_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_final_mode_delivers_only_last_completed_message(monkeypatch):
-    first = Event(
-        object="message",
-        status=RunStatus.Completed,
-        data={"text": "first"},
-    )
-    progress = Event(object="message", status=RunStatus.InProgress)
-    final = Event(
-        object="message",
-        status=RunStatus.Completed,
-        data={"text": "final"},
-    )
+    first = _message_event("first")
+    progress = RuntimeEvent.turn_started(turn_id="turn-1")
+    final = _message_event("final")
     workspace = _Workspace([first, progress, final])
     channel_manager = AsyncMock()
     job = make_cron_job_spec(job_id="final-job")
@@ -116,13 +128,14 @@ async def test_final_mode_delivers_only_last_completed_message(monkeypatch):
 
     assert workspace.events_consumed == 3
     channel_manager.send_event.assert_awaited_once()
-    assert channel_manager.send_event.await_args.kwargs["event"] is final
+    delivered = channel_manager.send_event.await_args.kwargs["event"]
+    assert delivered is final.payload
     assert result["delivery_status"] == "success"
 
 
 @pytest.mark.asyncio
 async def test_final_mode_reports_delivery_failure(monkeypatch):
-    final = Event(object="message", status=RunStatus.Completed)
+    final = _message_event("")
     workspace = _Workspace([final])
     channel_manager = AsyncMock()
     channel_manager.send_event.side_effect = RuntimeError("channel down")
@@ -146,7 +159,7 @@ async def test_final_mode_reports_delivery_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_final_mode_no_completed_message_returns_no_content(monkeypatch):
-    progress = Event(object="message", status=RunStatus.InProgress)
+    progress = RuntimeEvent.turn_started(turn_id="turn-1")
     workspace = _Workspace([progress])
     channel_manager = AsyncMock()
     job = make_cron_job_spec(job_id="final-empty-job")

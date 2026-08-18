@@ -9,6 +9,7 @@ agent state back to session storage after the response completes.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 
 from ..base import LifecycleHook
 from ...agents.acp.meta import ACP_EPHEMERAL_META_KEY
@@ -22,8 +23,8 @@ logger = logging.getLogger(__name__)
 
 def _is_ephemeral_request(ctx: HookContext) -> bool:
     request = ctx.request
-    request_context = getattr(request, "request_context", None)
-    if isinstance(request_context, dict):
+    request_context = getattr(request, "context", None)
+    if isinstance(request_context, Mapping):
         value = request_context.get(ACP_EPHEMERAL_META_KEY)
         if value is True:
             return True
@@ -50,7 +51,7 @@ class SessionLoadHook(LifecycleHook):
         try:
             request = ctx.request
             user_id = getattr(request, "user_id", "") or ctx.session_id
-            channel = getattr(request, "channel", "") or ""
+            channel = request.source.channel_type or ""
 
             proxy = StateProxy()
             await session.load_session_state(
@@ -95,7 +96,7 @@ class SessionSaveHook(LifecycleHook):
         try:
             request = ctx.request
             user_id = getattr(request, "user_id", "") or ctx.session_id
-            channel = getattr(request, "channel", "") or ""
+            channel = request.source.channel_type or ""
 
             proxy = StateProxy()
             proxy.data = ctx.agent.state_dict()

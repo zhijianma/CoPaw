@@ -22,7 +22,7 @@ class _FakeWorkspace:
     def __init__(self) -> None:
         self.requests = []
 
-    async def stream_query(self, request):  # noqa: ANN001
+    async def stream_events(self, request):  # noqa: ANN001
         self.requests.append(request)
         for event in ():
             yield event
@@ -54,7 +54,7 @@ async def test_acp_project_dir_flows_to_request_context(tmp_path):
     )
 
     assert workspace.requests
-    assert workspace.requests[0].request_context["project_dir"] == project_dir
+    assert workspace.requests[0].context["project_dir"] == project_dir
 
 
 async def test_acp_project_dir_preserves_trailing_space(tmp_path):
@@ -74,10 +74,7 @@ async def test_acp_project_dir_preserves_trailing_space(tmp_path):
         session_id=response.session_id,
     )
 
-    assert (
-        workspace.requests[0].request_context["project_dir"]
-        == provided_project_dir
-    )
+    assert workspace.requests[0].context["project_dir"] == provided_project_dir
 
 
 async def test_acp_resume_project_dir_preserves_trailing_space(tmp_path):
@@ -99,10 +96,7 @@ async def test_acp_resume_project_dir_preserves_trailing_space(tmp_path):
         session_id=response.session_id,
     )
 
-    assert (
-        workspace.requests[0].request_context["project_dir"]
-        == provided_project_dir
-    )
+    assert workspace.requests[0].context["project_dir"] == provided_project_dir
 
 
 async def test_acp_ephemeral_metadata_flows_to_request_context(tmp_path):
@@ -122,6 +116,4 @@ async def test_acp_ephemeral_metadata_flows_to_request_context(tmp_path):
     )
 
     assert workspace.requests
-    assert (
-        workspace.requests[0].request_context[ACP_EPHEMERAL_META_KEY] is True
-    )
+    assert workspace.requests[0].context[ACP_EPHEMERAL_META_KEY] is True

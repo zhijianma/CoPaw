@@ -14,7 +14,7 @@ import pytest
 
 from qwenpaw.app.workspace.workspace import Workspace
 from qwenpaw.domain.turns.events import RuntimeEvent
-from qwenpaw.domain.turns.models import TurnRequest
+from qwenpaw.domain.turns.models import RequestSource, TurnRequest
 
 
 class FakeHarnessRuntime:
@@ -23,7 +23,10 @@ class FakeHarnessRuntime:
     def __init__(self) -> None:
         self.call: dict[str, Any] | None = None
 
-    async def stream_events(self, **kwargs: Any) -> AsyncIterator[RuntimeEvent]:
+    async def stream_events(
+        self,
+        **kwargs: Any,
+    ) -> AsyncIterator[RuntimeEvent]:
         self.call = kwargs
         yield RuntimeEvent.turn_completed(turn_id="turn-1")
 
@@ -44,17 +47,23 @@ async def test_coding_mode_routes_directly_to_harness(
     workspace = Workspace("agent-1", str(tmp_path / "workspace"))
     runtime = FakeHarnessRuntime()
     workspace._harness_runtime = runtime
-    request = object()
+    request = TurnRequest(
+        turn_id="turn-1",
+        agent_id="agent-1",
+        session_id="session-1",
+        user_id="user-1",
+        messages=(),
+        source=RequestSource(protocol="console", channel_type="console"),
+    )
 
-    output = [item async for item in workspace.stream_query(request)]
+    output = [item async for item in workspace.stream_events(request)]
 
-    assert output[-1].object == "response"
-    assert output[-1].status == "completed"
+    assert output[-1].type.value == "turn_completed"
     assert runtime.call is not None
     assert runtime.call["backend"] == "codex"
     assert runtime.call["cwd"] == (tmp_path / "workspace").resolve()
     core_request = runtime.call["request"]
-    assert isinstance(core_request, TurnRequest)
+    assert core_request is request
     assert core_request.agent_id == "agent-1"
     assert runtime.call["settings"]["_request_context"] == {
         "agent_id": "agent-1",

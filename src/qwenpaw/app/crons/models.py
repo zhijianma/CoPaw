@@ -181,10 +181,7 @@ class JobRuntimeSpec(BaseModel):
 
 
 class CronJobRequest(BaseModel):
-    """Passthrough payload to workspace.stream_query(request=...).
-
-    This is aligned with AgentRequest(extra="allow"). We keep it permissive.
-    """
+    """Input used to create a canonical scheduled TurnRequest."""
 
     model_config = ConfigDict(extra="allow")
 

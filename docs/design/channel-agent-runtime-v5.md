@@ -92,7 +92,7 @@ flowchart TB
 | Channel Adapter | 平台 payload、鉴权、会话目标、平台发送 | `AgentRequest`、`AgentResponse`、SSE |
 | Protocol | 外部语义与 `TurnRequest/RuntimeEvent` 的双向映射 | 网络连接、平台凭据、执行引擎 |
 | Transport | HTTP/SSE/WS/SDK 连接与帧编码 | 推理、工具、Agent 生命周期语义 |
-| Workspace | 选择 Native/Harness Engine，选择 Console Protocol | 平台 SDK 细节 |
+| Workspace | 校验 `TurnRequest`，选择 Native/Harness Engine | Protocol、Transport、平台 SDK、外部 API schema |
 | Runtime/Engine | 执行一次 Turn，发布 canonical event | Console、Channel、Presenter、ReplyTarget |
 | TaskTracker | 缓存和重放 `RuntimeEvent` 对象 | JSON、SSE 字符串、Console schema |
 
@@ -114,8 +114,37 @@ Platform SDK -> ChannelTurn -> TurnRequest <- Protocol Ingress
 - `runtime` 不 import `protocols`、`transports`、`domain.channels`。
 - Harness 不创建 `AgentResponse`，也不先生成 Console 对象再反向转换。
 - `app/channels` 不出现 `AgentRequest`、`AgentResponse`。
-- Console Envelope 只存在于 `transports/console`，没有 Runtime 兼容 re-export。
+- Console Envelope 只存在于 `protocols/console`，Transport 单向依赖 Protocol，且没有
+  Runtime 兼容 re-export。
 - 以上规则由架构测试直接读取源码和文件存在性约束。
+
+### 3.3 Workspace 是纯执行端口
+
+`Workspace` 现在只有一个公开执行入口：
+
+```python
+async def stream_events(request: TurnRequest) -> AsyncIterator[RuntimeEvent]:
+    ...
+```
+
+它不再提供 `stream_query()`、`stream_channel_events()`，也不再调用
+`ConsoleTurnIngress` 或 `ConsoleEventPresenter`。传入非 `TurnRequest` 会立即抛出
+`TypeError`，避免错误协议在核心中被静默兼容。
+
+所有来源必须在进入 Workspace 前完成命令构造：
+
+```text
+Console AgentRequest --ConsoleTurnIngress--+
+Platform payload -----ChannelTurn----------+--> TurnRequest --> Workspace
+Cron -----------------TurnFactory----------+
+Heartbeat ------------TurnFactory----------+
+PawApp ----------------TurnFactory----------+
+ACP -------------------TurnFactory----------+
+Task CLI --------------TurnFactory----------+
+```
+
+所有输出也必须在离开 Workspace 后由调用方选择 Presenter。这样 Workspace 不会因
+Console WebUI、A2A 或 AG-UI 的接入而发生变化。
 
 ## 4. 核心模型
 
@@ -203,8 +232,10 @@ sequenceDiagram
 
     UI->>T: AgentRequest
     T->>I: decode
-    I->>W: TurnRequest
-    W-->>P: RuntimeEvent
+    I-->>T: TurnRequest
+    T->>W: stream_events(TurnRequest)
+    W-->>T: RuntimeEvent
+    T->>P: present(RuntimeEvent)
     P-->>S: AgentResponse / Message / Content
     S-->>UI: SSE frames
 ```
@@ -228,6 +259,18 @@ sequenceDiagram
 
 旧链路“`HarnessEvent -> AgentResponse -> HarnessEventNormalizer -> RuntimeEvent`”已删除。
 Harness Session 持久化直接消费 `TurnRequest + HarnessEvent`，不依赖 Console 响应。
+
+### 5.4 内部应用来源
+
+Cron、Heartbeat、PawApp、ACP 和 Task CLI 不再构造 `AgentRequest`。它们通过共享的
+`create_turn_request/create_text_turn` 工厂生成 canonical command，并为 `source`
+填写各自协议名。Cron/Heartbeat 的主动推送通过 `ChannelOutboundPresenter` 把
+`RuntimeEvent` 投影为 Channel 可发送的 `Message/Content`；ACP 则直接把同一事件流
+映射成 ACP update。内部来源不再伪装成 Console 客户端。
+
+Session、ContextVar、Skill 环境和可观测性 Hook 也已统一读取
+`TurnRequest.context` 与 `TurnRequest.source.channel_type`，不会再访问已删除的
+`request_context/channel/channel_meta` 旧字段。
 
 ## 6. TaskEventEncoder 为什么删除
 
@@ -370,5 +413,9 @@ Presenter 内表达，必要时通过 `custom` 事件扩展，不反向污染 Co
 - [x] 同一 Agent 支持同类型多个 Channel 实例
 - [x] 仅迁移最原始 flat channels dict
 - [x] Catalog/config model 驱动 Registry、CLI、API 和插件 schema
-- [x] 架构与高风险链路定向回归：1963 passed，1 skipped
+- [x] Workspace 仅保留 `stream_events(TurnRequest)`，零 Console/Protocol 依赖
+- [x] Cron/Heartbeat/PawApp/ACP/Task CLI 全部使用 canonical Turn Factory
+- [x] Session/ContextVar/Skill/Observability Hook 全部读取 canonical 字段
+- [x] pre-commit：AST、mypy、Black、flake8、pylint 全部通过
+- [x] 架构与高风险链路定向回归：1997 passed，1 skipped
 - [x] 按要求未执行 `npm run build`

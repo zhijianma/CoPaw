@@ -26,10 +26,11 @@ async def create_console_transport(ws: "Workspace", _service):
     from ..channels.renderer import ChannelDisplayConfig
 
     transport = ConsoleTransport.from_config(
-        process=ws.stream_query,
+        process=ws.stream_events,
         config=config,
         display_config=ChannelDisplayConfig.from_config(config),
         workspace_dir=ws.workspace_dir,
+        agent_id=ws.agent_id,
     )
     transport.set_workspace(ws)
     transport._language = getattr(ws._config, "language", "zh") or "zh"
@@ -193,7 +194,7 @@ async def create_channel_service(ws: "Workspace", _):
         )
 
     cm = ChannelManager.from_config(
-        process=ws.stream_query,
+        process=ws.stream_events,
         config=temp_config,
         on_last_dispatch=on_last_dispatch,
         workspace_dir=ws.workspace_dir,

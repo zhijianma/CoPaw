@@ -13,8 +13,10 @@ from ..inbox_trace_store import (
     read_session_messages,
 )
 from .models import CronJobSpec
+from ..channels.outbound import ChannelOutboundPresenter
+from ..turn_factory import create_turn_request
 from ...security.tool_guard.execution_level import ToolExecutionLevel
-from ...schemas import RunStatus
+from ...schemas import Message, RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +139,16 @@ class CronExecutor:
             )
             req["session_source"] = "cron"
 
+        turn_request = create_turn_request(
+            agent_id=getattr(self._workspace, "agent_id", "default"),
+            session_id=req["session_id"],
+            user_id=req["user_id"],
+            protocol="cron",
+            channel_type=storage_channel,
+            messages=req.get("input"),
+            context=request_context,
+        )
+
         # Register a ChatSpec so the session appears in the frontend list.
         chat_manager = getattr(self._workspace, "chat_manager", None)
         _chat_spec = None
@@ -188,6 +200,11 @@ class CronExecutor:
 
         async def _run() -> None:
             nonlocal delivery_error, final_no_content
+            presenter = ChannelOutboundPresenter(
+                channel_type=storage_channel,
+                conversation_id=target_session_id or req["session_id"],
+                metadata=dispatch_meta,
+            )
 
             async def _deliver(event: Any) -> None:
                 nonlocal delivery_error
@@ -211,18 +228,21 @@ class CronExecutor:
                         )
 
             final_event: Any | None = None
-            async for event in self._workspace.stream_query(req):
+            async for runtime_event in self._workspace.stream_events(
+                turn_request,
+            ):
                 if job.dispatch.silent:
                     continue
-                if job.dispatch.mode == "final":
-                    if (
-                        getattr(event, "object", None) == "message"
-                        and getattr(event, "status", None)
-                        == RunStatus.Completed
-                    ):
-                        final_event = event
-                    continue
-                await _deliver(event)
+                for event in presenter.present(runtime_event):
+                    if job.dispatch.mode == "final":
+                        if (
+                            isinstance(event, Message)
+                            and getattr(event, "status", None)
+                            == RunStatus.Completed
+                        ):
+                            final_event = event
+                        continue
+                    await _deliver(event)
 
             if final_event is not None:
                 await _deliver(final_event)

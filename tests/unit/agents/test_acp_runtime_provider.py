@@ -57,7 +57,7 @@ class _FakeWorkspace:
     def __init__(self) -> None:
         self.requests = []
 
-    async def stream_query(self, request):  # noqa: ANN001
+    async def stream_events(self, request):  # noqa: ANN001
         self.requests.append(request)
         for event in ():
             yield event
@@ -268,7 +268,10 @@ async def test_runtime_provider_forces_model_override(monkeypatch):
     )
 
     assert workspace.requests
-    assert workspace.requests[0].model_slot_override == _config().model_slot
+    assert (
+        workspace.requests[0].context["model_slot_override"]
+        == _config().model_slot
+    )
 
 
 async def test_runtime_provider_is_advertised_as_current_model(monkeypatch):
@@ -317,7 +320,7 @@ async def test_runtime_failure_is_an_acp_request_error(monkeypatch):
         raise RuntimeError("upstream returned secret-token")
 
     class _FailingWorkspace:
-        async def stream_query(self, request):  # noqa: ANN001
+        async def stream_events(self, request):  # noqa: ANN001
             del request
             yield await _raise_runtime_error()
 
@@ -352,7 +355,7 @@ async def test_cancel_stops_active_prompt(monkeypatch):
     cancelled = asyncio.Event()
 
     class _BlockingWorkspace:
-        async def stream_query(self, request):  # noqa: ANN001
+        async def stream_events(self, request):  # noqa: ANN001
             del request
             started.set()
             try:

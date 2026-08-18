@@ -10,15 +10,20 @@ session is created so clients (e.g. the paw TUI) can offer autocompletion.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from acp.schema import AllowedOutcome, RequestPermissionResponse
 
 from qwenpaw.agents.acp.meta import ACP_APPROVAL_EXPIRES_AT_META_KEY
 from qwenpaw.agents.acp.server import (
-    _EnvelopeTracker,
+    _RuntimeEventTracker,
     ACP_AGENT_META_KEY,
     ACP_ERROR_META_KEY,
     QwenPawACPAgent,
+)
+from qwenpaw.runtime.slash_command_registry import (
+    CommandSpec,
+    SlashCommandRegistry,
 )
 
 
@@ -30,6 +35,20 @@ class _FakeConn:
 
     async def session_update(self, session_id: str, update: object) -> None:
         self.updates.append((session_id, update))
+
+
+def _mark_workspace_ready(agent: QwenPawACPAgent) -> None:
+    class _DriverManager:
+        async def replace_transient_drivers(self, *_args, **_kwargs) -> None:
+            return None
+
+    agent._workspace = SimpleNamespace(
+        plugins=SimpleNamespace(
+            slash_command_registry=SlashCommandRegistry(),
+        ),
+        driver_manager=_DriverManager(),
+    )
+    agent._workspace_ready = True
 
 
 class _ApprovalConn(_FakeConn):
@@ -131,13 +150,6 @@ async def test_registered_help_text_command_is_executed_and_advertised():
     No secondary ``_ADVERTISED_*`` list is required — registering the
     command with ``help_text`` is enough for ACP autocomplete.
     """
-    from types import SimpleNamespace
-
-    from qwenpaw.runtime.slash_command_registry import (
-        CommandSpec,
-        SlashCommandRegistry,
-    )
-
     registry = SlashCommandRegistry()
     executed: list[str] = []
 
@@ -170,6 +182,7 @@ async def test_registered_help_text_command_is_executed_and_advertised():
 
 async def test_new_session_advertises_commands():
     agent = QwenPawACPAgent(agent_id="default")
+    _mark_workspace_ready(agent)
     conn = _FakeConn()
     agent.on_connect(conn)
 
@@ -188,6 +201,7 @@ async def test_new_session_advertises_commands():
 
 async def test_load_session_advertises_commands():
     agent = QwenPawACPAgent(agent_id="default")
+    _mark_workspace_ready(agent)
     conn = _FakeConn()
     agent.on_connect(conn)
 
@@ -214,7 +228,7 @@ async def test_prompt_passes_resolved_agent_id_to_runtime(monkeypatch):
         def __init__(self) -> None:
             self.request = None
 
-        async def stream_query(self, request):
+        async def stream_events(self, request):
             self.request = request
             if self.request is None:
                 yield None
@@ -634,19 +648,30 @@ def test_acp_bootstrap_includes_runtime_slash_commands():
 
 
 def _text_event(text: str, *, delta: bool, msg_id: str = "msg-1"):
-    from qwenpaw.schemas import TextContent
+    del msg_id
+    from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 
-    event = TextContent(text=text, delta=delta, index=0)
-    event.object = "content"
-    event.msg_id = msg_id
-    return event
+    return RuntimeEvent.canonical(
+        (
+            RuntimeEventType.CONTENT_DELTA
+            if delta
+            else RuntimeEventType.CONTENT_COMPLETED
+        ),
+        data={"content_kind": "text", "delta": text},
+    )
 
 
 def test_envelope_tracker_forwards_command_final_text():
-    tracker = _EnvelopeTracker()
+    from qwenpaw.domain.turns.events import RuntimeEvent
+
+    tracker = _RuntimeEventTracker()
 
     [update] = tracker.process(
-        _text_event("**Current Model**", delta=False),
+        RuntimeEvent.message(
+            SimpleNamespace(
+                get_text_content=lambda: "**Current Model**",
+            ),
+        ),
     )
 
     assert update.session_update == "agent_message_chunk"
@@ -654,7 +679,7 @@ def test_envelope_tracker_forwards_command_final_text():
 
 
 def test_envelope_tracker_does_not_duplicate_streamed_final_text():
-    tracker = _EnvelopeTracker()
+    tracker = _RuntimeEventTracker()
 
     [delta_update] = tracker.process(_text_event("hello", delta=True))
     final_updates = tracker.process(_text_event("hello", delta=False))
@@ -664,34 +689,29 @@ def test_envelope_tracker_does_not_duplicate_streamed_final_text():
 
 
 def test_envelope_tracker_forwards_tool_arguments_as_raw_input():
-    from qwenpaw.schemas import (
-        DataContent,
-        FunctionCall,
-        Message,
-        MessageType,
-        Role,
-        RunStatus,
-    )
+    from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 
-    tracker = _EnvelopeTracker()
-    message = Message(
-        id="msg-tool",
-        type=MessageType.PLUGIN_CALL,
-        role=Role.ASSISTANT,
-        status=RunStatus.Completed,
-        content=[
-            DataContent(
-                data=FunctionCall(
-                    call_id="t1",
-                    name="execute_shell_command",
-                    arguments='{"command": "pytest -q"}',
-                ).model_dump(),
-            ),
-        ],
-    )
-    message.object = "message"
-
-    [update] = tracker.process(message)
+    tracker = _RuntimeEventTracker()
+    events = [
+        RuntimeEvent.canonical(
+            RuntimeEventType.TOOL_CALL_STARTED,
+            data={"tool_call_id": "t1", "name": "execute_shell_command"},
+        ),
+        RuntimeEvent.canonical(
+            RuntimeEventType.TOOL_CALL_DELTA,
+            data={
+                "tool_call_id": "t1",
+                "delta": '{"command": "pytest -q"}',
+            },
+        ),
+        RuntimeEvent.canonical(
+            RuntimeEventType.TOOL_CALL_COMPLETED,
+            data={"tool_call_id": "t1"},
+        ),
+    ]
+    [update] = [
+        update for event in events for update in tracker.process(event)
+    ]
 
     assert update.session_update == "tool_call"
     assert update.tool_call_id == "t1"

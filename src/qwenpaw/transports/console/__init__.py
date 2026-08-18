@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Console protocol presentation."""
+"""Console network transport and SSE framing."""
 
-from .envelope import Envelope
-from .presenter import ConsoleEventPresenter
 from .sse import ConsoleSseEncoder
 
-__all__ = ["ConsoleEventPresenter", "ConsoleSseEncoder", "Envelope"]
+__all__ = ["ConsoleSseEncoder"]

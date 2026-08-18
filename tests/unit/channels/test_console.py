@@ -12,6 +12,7 @@ Key patterns demonstrated:
 3. Lifecycle testing (start/stop)
 4. Simple mocking (no external dependencies)
 """
+
 # pylint: disable=redefined-outer-name,reimported,protected-access
 # pylint: disable=unused-argument
 from __future__ import annotations
@@ -24,6 +25,41 @@ import pytest
 from qwenpaw.app.channels.renderer import ChannelDisplayConfig
 
 from qwenpaw.app.channels.console.channel import ConsoleChannel
+from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
+
+
+def _runtime_message_event(text: str) -> RuntimeEvent:
+    from qwenpaw.schemas import Message, Role, RunStatus, TextContent
+
+    message = Message(
+        role=Role.ASSISTANT,
+        status=RunStatus.Completed,
+        content=[TextContent(text=text)],
+    )
+    message.object = "message"
+    return RuntimeEvent.message(message, turn_id="turn-1")
+
+
+def _runtime_text_events(text: str) -> tuple[RuntimeEvent, ...]:
+    common = {"content_kind": "text", "block_id": "text-1"}
+    return (
+        RuntimeEvent.canonical(
+            RuntimeEventType.CONTENT_STARTED,
+            turn_id="turn-1",
+            data=common,
+        ),
+        RuntimeEvent.canonical(
+            RuntimeEventType.CONTENT_DELTA,
+            turn_id="turn-1",
+            data={**common, "delta": text},
+        ),
+        RuntimeEvent.canonical(
+            RuntimeEventType.CONTENT_COMPLETED,
+            turn_id="turn-1",
+            data=common,
+        ),
+        RuntimeEvent.turn_completed(turn_id="turn-1"),
+    )
 
 
 class _FakeDumpEvent:
@@ -603,29 +639,11 @@ class TestConsoleStreaming:
     async def test_stream_one_yields_events(self, stream_channel):
         """stream_one should yield SSE-formatted events."""
         from qwenpaw.schemas import (
-            RunStatus,
-            Event,
-            Message,
-            MessageType,
-            Role,
             TextContent,
             ContentType,
         )
 
-        mock_event = Event(
-            object="message",
-            status=RunStatus.Completed,
-            type="message.completed",
-            id="ev-1",
-            created_at=1234567890,
-            message=Message(
-                type=MessageType.MESSAGE,
-                role=Role.ASSISTANT,
-                content=[
-                    TextContent(type=ContentType.TEXT, text="Hello"),
-                ],
-            ),
-        )
+        mock_event = _runtime_message_event("Hello")
 
         async def mock_process(request):
             yield mock_event
@@ -659,45 +677,15 @@ class TestConsoleStreaming:
     ):
         from qwenpaw.schemas import (
             ContentType,
-            Event,
-            Message,
-            MessageType,
-            Role,
-            RunStatus,
             TextContent,
-        )
-
-        delta = _FakeDumpEvent(
-            {
-                "object": "content",
-                "delta": True,
-                "msg_id": "message-1",
-                "index": 0,
-                "text": "ordinary comparison ends in " + suffix,
-            },
-        )
-        completed = Event(
-            object="message",
-            status=RunStatus.Completed,
-            type="message.completed",
-            id="message-1",
-            created_at=1234567890,
-            message=Message(
-                type=MessageType.MESSAGE,
-                role=Role.ASSISTANT,
-                content=[
-                    TextContent(
-                        type=ContentType.TEXT,
-                        text="ordinary comparison ends in " + suffix,
-                    ),
-                ],
-            ),
         )
 
         async def mock_process(request):
             del request
-            yield delta
-            yield completed
+            for event in _runtime_text_events(
+                "ordinary comparison ends in " + suffix,
+            ):
+                yield event
 
         stream_channel._process = mock_process
         payload = {
@@ -714,9 +702,20 @@ class TestConsoleStreaming:
             for event in events
         ]
 
-        assert payloads[0]["text"] == "ordinary comparison ends in "
-        assert payloads[1]["text"] == suffix
-        assert payloads[2]["object"] == "message"
+        text_payloads = [item for item in payloads if "text" in item]
+        assert text_payloads[0]["text"] == "ordinary comparison ends in "
+        suffix_index = next(
+            index
+            for index, item in enumerate(payloads)
+            if item.get("text") == suffix
+        )
+        message_index = next(
+            index
+            for index, item in enumerate(payloads)
+            if item.get("object") == "message"
+            and item.get("status") == "completed"
+        )
+        assert suffix_index < message_index
 
     async def test_stream_one_touches_chat_in_one_manager_call(
         self,
@@ -725,28 +724,10 @@ class TestConsoleStreaming:
         """Console activity uses the single-transaction touch API."""
         from qwenpaw.schemas import (
             ContentType,
-            Event,
-            Message,
-            MessageType,
-            Role,
-            RunStatus,
             TextContent,
         )
 
-        mock_event = Event(
-            object="message",
-            status=RunStatus.Completed,
-            type="message.completed",
-            id="ev-touch",
-            created_at=1234567890,
-            message=Message(
-                type=MessageType.MESSAGE,
-                role=Role.ASSISTANT,
-                content=[
-                    TextContent(type=ContentType.TEXT, text="Hello"),
-                ],
-            ),
-        )
+        mock_event = _runtime_message_event("Hello")
 
         async def mock_process(_request):
             yield mock_event
@@ -774,29 +755,9 @@ class TestConsoleStreaming:
 
     async def test_stream_one_handles_dict_payload(self, stream_channel):
         """stream_one should handle dict payload with debounce."""
-        from qwenpaw.schemas import (
-            RunStatus,
-            Event,
-            Message,
-            MessageType,
-            Role,
-            TextContent,
-            ContentType,
-        )
         from unittest.mock import patch
 
-        mock_event = Event(
-            object="message",
-            status=RunStatus.Completed,
-            type="message.completed",
-            id="ev-1",
-            created_at=1234567890,
-            message=Message(
-                type=MessageType.MESSAGE,
-                role=Role.ASSISTANT,
-                content=[TextContent(type=ContentType.TEXT, text="Done")],
-            ),
-        )
+        mock_event = _runtime_message_event("Done")
 
         async def mock_process(request):
             yield mock_event
@@ -827,6 +788,8 @@ class TestConsoleStreaming:
         stream_channel,
     ):
         """stream_one should fallback instead of crashing on bad surrogate."""
+        from unittest.mock import patch
+
         from qwenpaw.schemas import (
             RunStatus,
             TextContent,
@@ -857,9 +820,16 @@ class TestConsoleStreaming:
                 }
 
         async def mock_process(_request):
-            yield BrokenJsonEvent()
+            yield RuntimeEvent.turn_completed(turn_id="turn-1")
 
         stream_channel._process = mock_process
+
+        class _BrokenPresenter:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def present(self, _event, _context):
+                yield BrokenJsonEvent()
 
         payload = {
             "sender_id": "user123",
@@ -873,9 +843,13 @@ class TestConsoleStreaming:
         }
 
         events = []
-        async for event in stream_channel.stream_one(payload):
-            events.append(event)
-            break
+        with patch(
+            "qwenpaw.transports.console.channel.ConsoleEventPresenter",
+            _BrokenPresenter,
+        ):
+            async for event in stream_channel.stream_one(payload):
+                events.append(event)
+                break
 
         assert len(events) == 1
         assert events[0].startswith("data: ")

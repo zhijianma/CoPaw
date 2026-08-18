@@ -31,7 +31,7 @@ class SkillEnvHook(LifecycleHook):
         from ...constant import WORKING_DIR
 
         wd = Path(ctx.workspace_dir or WORKING_DIR)
-        channel = getattr(ctx.request, "channel", None) or "console"
+        channel = ctx.request.source.channel_type or "console"
         try:
             cm = apply_skill_config_env_overrides(wd, channel)
             cm.__enter__()

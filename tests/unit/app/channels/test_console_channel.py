@@ -115,11 +115,11 @@ class TestPartsToText:
 
 
 # ---------------------------------------------------------------------------
-# build_agent_request_from_native
+# build_turn_request_from_native
 # ---------------------------------------------------------------------------
 
 
-class TestBuildAgentRequestFromNative:
+class TestBuildTurnRequestFromNative:
     def test_basic_payload(self, console_channel):
         payload = {
             "channel_id": "console",
@@ -127,11 +127,11 @@ class TestBuildAgentRequestFromNative:
             "content_parts": [TextContent(text="hi")],
             "meta": {"k": "v"},
         }
-        req = console_channel.build_agent_request_from_native(payload)
-        assert req.channel == "console"
+        req = console_channel.build_turn_request_from_native(payload)
+        assert req.source.channel_type == "console"
         assert req.user_id == "u1"
         assert req.session_id == "console:u1"
-        assert req.channel_meta == {"k": "v"}
+        assert req.context == {}
 
     def test_meta_request_context_propagated(self, console_channel):
         payload = {
@@ -139,8 +139,8 @@ class TestBuildAgentRequestFromNative:
             "content_parts": [],
             "meta": {"request_context": {"foo": "bar"}},
         }
-        req = console_channel.build_agent_request_from_native(payload)
-        assert req.request_context == {"foo": "bar"}
+        req = console_channel.build_turn_request_from_native(payload)
+        assert req.context == {"foo": "bar"}
 
     def test_message_metadata_propagated(self, console_channel):
         payload = {
@@ -151,9 +151,9 @@ class TestBuildAgentRequestFromNative:
             },
             "meta": {},
         }
-        req = console_channel.build_agent_request_from_native(payload)
+        req = console_channel.build_turn_request_from_native(payload)
 
-        assert req.input[0].metadata == {
+        assert req.messages[0].metadata == {
             "qwenpaw_client_message_id": "client-2",
         }
 
@@ -161,8 +161,8 @@ class TestBuildAgentRequestFromNative:
         self,
         console_channel,
     ):
-        req = console_channel.build_agent_request_from_native(None)
-        assert req.channel == "console"
+        req = console_channel.build_turn_request_from_native(None)
+        assert req.source.channel_type == "console"
 
 
 # ---------------------------------------------------------------------------

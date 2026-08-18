@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Write query-handler error log and agent/memory state to a temp JSON file."""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +8,8 @@ import logging
 import os
 import tempfile
 import traceback
+from collections.abc import Mapping
+from dataclasses import fields, is_dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -21,7 +24,7 @@ def _safe_json_serialize(obj: object) -> object:
         return obj
     if isinstance(obj, (list, tuple)):
         return [_safe_json_serialize(x) for x in obj]
-    if isinstance(obj, dict):
+    if isinstance(obj, Mapping):
         return {str(k): _safe_json_serialize(v) for k, v in obj.items()}
     return str(obj)
 
@@ -36,6 +39,11 @@ def _request_to_dict(request: Any) -> Any:
             raw = request.model_dump()
         elif hasattr(request, "dict"):
             raw = request.dict()
+        elif is_dataclass(request):
+            raw = {
+                field.name: getattr(request, field.name)
+                for field in fields(request)
+            }
         else:
             raw = dict(vars(request))
         if not isinstance(raw, dict):
@@ -61,7 +69,14 @@ def write_query_error_dump(
             request_info = {
                 "session_id": getattr(request, "session_id", None),
                 "user_id": getattr(request, "user_id", None),
-                "channel": getattr(request, "channel", DEFAULT_CHANNEL),
+                "channel": (
+                    getattr(
+                        getattr(request, "source", None),
+                        "channel_type",
+                        None,
+                    )
+                    or DEFAULT_CHANNEL
+                ),
             }
             request_full = _request_to_dict(request)
         trace_str = traceback.format_exc()

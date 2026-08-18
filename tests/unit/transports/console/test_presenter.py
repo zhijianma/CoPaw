@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
-from qwenpaw.transports.console.presenter import ConsoleEventPresenter
+from qwenpaw.protocols.console.presenter import ConsoleEventPresenter
 
 
 class _Envelope:

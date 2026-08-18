@@ -3,68 +3,52 @@
 
 from __future__ import annotations
 
-from qwenpaw.agents.acp.server import _EnvelopeTracker
-from qwenpaw.schemas import (
-    ContentType,
-    DataContent,
-    FunctionCall,
-    FunctionCallOutput,
-    Message,
-    MessageType,
-    Role,
-    RunStatus,
-)
+from qwenpaw.agents.acp.server import _RuntimeEventTracker
+from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 
 
-def _tool_call_message() -> Message:
-    message = Message(
-        id="message-call",
-        type=MessageType.PLUGIN_CALL,
-        role=Role.ASSISTANT,
-        status=RunStatus.Completed,
-        content=[
-            DataContent(
-                type=ContentType.DATA,
-                data=FunctionCall(
-                    call_id="call-1",
-                    name="benchmark__lookup",
-                    arguments='{"query": "documentation"}',
-                ).model_dump(),
-            ),
-        ],
+def _tool_call_events() -> list[RuntimeEvent]:
+    return [
+        RuntimeEvent.canonical(
+            RuntimeEventType.TOOL_CALL_STARTED,
+            data={"tool_call_id": "call-1", "name": "benchmark__lookup"},
+        ),
+        RuntimeEvent.canonical(
+            RuntimeEventType.TOOL_CALL_DELTA,
+            data={
+                "tool_call_id": "call-1",
+                "delta": '{"query": "documentation"}',
+            },
+        ),
+        RuntimeEvent.canonical(
+            RuntimeEventType.TOOL_CALL_COMPLETED,
+            data={"tool_call_id": "call-1"},
+        ),
+    ]
+
+
+def _tool_result_event(state: str) -> RuntimeEvent:
+    return RuntimeEvent.canonical(
+        RuntimeEventType.TOOL_RESULT_COMPLETED,
+        data={
+            "tool_call_id": "call-1",
+            "name": "benchmark__lookup",
+            "output": '{"answer": "found"}',
+            "state": state,
+        },
     )
-    message.object = "message"
-    return message
-
-
-def _tool_result_message(state: str) -> Message:
-    data = FunctionCallOutput(
-        call_id="call-1",
-        name="benchmark__lookup",
-        output='{"answer": "found"}',
-    ).model_dump()
-    data["state"] = state
-    message = Message(
-        id="message-result",
-        type=MessageType.PLUGIN_CALL_OUTPUT,
-        role=Role.TOOL,
-        status=RunStatus.Completed,
-        content=[
-            DataContent(
-                type=ContentType.DATA,
-                data=data,
-            ),
-        ],
-    )
-    message.object = "message"
-    return message
 
 
 def test_acp_tool_capture_preserves_id_name_arguments_and_output() -> None:
-    tracker = _EnvelopeTracker()
+    tracker = _RuntimeEventTracker()
 
-    [start] = tracker.process(_tool_call_message())
-    [result] = tracker.process(_tool_result_message("success"))
+    updates = [
+        update
+        for event in _tool_call_events()
+        for update in tracker.process(event)
+    ]
+    [start] = updates
+    [result] = tracker.process(_tool_result_event("success"))
 
     assert start.tool_call_id == "call-1"
     assert start.title == "benchmark__lookup"
@@ -77,9 +61,9 @@ def test_acp_tool_capture_preserves_id_name_arguments_and_output() -> None:
 
 
 def test_acp_tool_capture_marks_unsuccessful_results_failed() -> None:
-    tracker = _EnvelopeTracker()
+    tracker = _RuntimeEventTracker()
 
     for state in ("error", "denied", "interrupted"):
-        [result] = tracker.process(_tool_result_message(state))
+        [result] = tracker.process(_tool_result_event(state))
         assert result.tool_call_id == "call-1"
         assert result.status == "failed"

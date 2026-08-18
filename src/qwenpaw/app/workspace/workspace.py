@@ -8,7 +8,7 @@ Each Workspace represents a standalone agent workspace with its own:
 - CronManager (scheduled tasks)
 - WorkspacePlugins (tool/hook/command/prompt registries)
 
-Request processing is handled by ``Runtime`` (see ``stream_query``).
+Request processing is handled by ``Runtime`` through ``stream_events``.
 """
 
 import logging
@@ -17,6 +17,7 @@ from typing import Any, AsyncGenerator, Iterable, Optional
 
 from ...config.timezone import normalize_tz
 from ...config.utils import load_config
+from ...domain.turns.models import TurnRequest
 
 from .service_manager import ServiceDescriptor, ServiceManager
 from .workspace_plugins import WorkspacePlugins
@@ -48,8 +49,8 @@ class Workspace:
     - CronManager: Manages scheduled tasks
     - WorkspacePlugins: Per-workspace pluggable registries
 
-    Request processing goes through ``stream_query`` which delegates
-    to ``Runtime.run()``.
+    Request processing goes through ``stream_events`` which delegates
+    to the selected engine.
     """
 
     def __init__(self, agent_id: str, workspace_dir: str):
@@ -293,53 +294,16 @@ class Workspace:
         """Inject the cross-workspace AppServiceManager reference."""
         self._app_services = app_services
 
-    async def stream_query(
+    async def stream_events(
         self,
-        request: Any,
+        request: "TurnRequest",
     ) -> AsyncGenerator[Any, None]:
-        """Present one canonical turn using the Console protocol."""
-        from ...domain.turns.models import TurnRequest
-        from ...protocols.builtins import create_default_presenter
-        from ...protocols.console import ConsoleTurnIngress
-
-        core_request = (
-            request
-            if isinstance(request, TurnRequest)
-            else ConsoleTurnIngress(default_agent_id=self.agent_id).decode(
-                request,
+        """Execute one canonical turn using the configured engine."""
+        if not isinstance(request, TurnRequest):
+            raise TypeError(
+                "Workspace.stream_events requires a TurnRequest; "
+                f"got {type(request).__name__}",
             )
-        )
-        presenter, context = create_default_presenter(
-            conversation_id=core_request.session_id,
-            turn_id=core_request.turn_id,
-        )
-        async for event in self._stream_core_events(core_request):
-            async for item in presenter.present(event, context):
-                yield item
-
-    async def stream_channel_events(
-        self,
-        request: Any,
-    ) -> AsyncGenerator[Any, None]:
-        """Expose canonical events to Channels without protocol projection."""
-        from ...domain.turns.models import TurnRequest
-        from ...protocols.console import ConsoleTurnIngress
-
-        core_request = (
-            request
-            if isinstance(request, TurnRequest)
-            else ConsoleTurnIngress(default_agent_id=self.agent_id).decode(
-                request,
-            )
-        )
-        async for event in self._stream_core_events(core_request):
-            yield event
-
-    async def _stream_core_events(
-        self,
-        request: Any,
-    ) -> AsyncGenerator[Any, None]:
-        """Select an engine while preserving the canonical event contract."""
         config = load_agent_config(self.agent_id)
         if config.backend != "qwenpaw":
             settings = dict(getattr(config, "backend_settings", {}))
@@ -634,7 +598,8 @@ class Workspace:
             )
         except Exception as exc:
             logger.warning(
-                "weixin->wechat chats.json migration failed for " "agent %s: %s",
+                "weixin->wechat chats.json migration failed for "
+                "agent %s: %s",
                 self.agent_id,
                 exc,
             )
@@ -645,7 +610,8 @@ class Workspace:
             )
         except Exception as exc:
             logger.warning(
-                "weixin->wechat jobs.json migration failed for " "agent %s: %s",
+                "weixin->wechat jobs.json migration failed for "
+                "agent %s: %s",
                 self.agent_id,
                 exc,
             )

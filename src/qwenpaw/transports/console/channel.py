@@ -22,10 +22,8 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from qwenpaw.schemas import (
-    AgentRequest,
     MessageType,
     Message,
-    Role,
     RunStatus,
 )
 
@@ -46,7 +44,10 @@ from ...app.channels.utils import file_url_to_local_path
 from ...app.console_push_store import append as push_store_append
 from ...config.config import ConsoleTransportConfig
 from ...constant import DEFAULT_MEDIA_DIR
+from ...domain.turns.models import TurnRequest
 from ...exceptions import ModelQuotaExceededException
+from ...protocols.console import ConsoleEventPresenter, ConsoleTurnIngress
+from ...protocols.ports import PresentationContext
 from .sse import ConsoleSseEncoder
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class ConsoleTransport(BaseChannel):
         display_config: ChannelDisplayConfig | None = None,
         workspace_dir: Optional[Union[str, Path]] = None,
         media_dir: Optional[str] = None,
+        agent_id: str = "default",
     ):
         """Initialize ConsoleTransport.
 
@@ -114,6 +116,7 @@ class ConsoleTransport(BaseChannel):
         )
         self.enabled = enabled
         self.bot_prefix = bot_prefix
+        self._ingress = ConsoleTurnIngress(default_agent_id=agent_id)
         self._workspace_dir = (
             Path(workspace_dir).expanduser() if workspace_dir else None
         )
@@ -166,6 +169,7 @@ class ConsoleTransport(BaseChannel):
         display_config: ChannelDisplayConfig | None = None,
         no_text_debounce: bool = True,
         workspace_dir: Optional[Union[str, Path]] = None,
+        agent_id: str = "default",
     ) -> "ConsoleTransport":
         """Create ConsoleTransport from config.
 
@@ -184,9 +188,11 @@ class ConsoleTransport(BaseChannel):
             enabled=config.enabled,
             bot_prefix=config.bot_prefix or "",
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             workspace_dir=workspace_dir,
             media_dir=config.media_dir or "",
+            agent_id=agent_id,
         )
 
     def resolve_session_id(
@@ -238,7 +244,8 @@ class ConsoleTransport(BaseChannel):
                 if url:
                     return FileContent(
                         type=ContentType.FILE,
-                        filename=getattr(part, "filename", None) or Path(url).name,
+                        filename=getattr(part, "filename", None)
+                        or Path(url).name,
                         file_url=url,
                     )
             elif content_type == ContentType.TEXT:
@@ -252,43 +259,23 @@ class ConsoleTransport(BaseChannel):
                 input_content_parts.append(part)
         return input_content_parts
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
-        """
-        Build AgentRequest from console native payload (dict with
-        channel_id, sender_id, content_parts, meta). content_parts are
-        runtime Content types.
-        """
-        payload = native_payload if isinstance(native_payload, dict) else {}
-        channel_id = payload.get("channel_id") or self.channel
-        sender_id = payload.get("sender_id") or ""
-        content_parts = payload.get("content_parts") or []
-        meta = payload.get("meta") or {}
-        session_id = self.resolve_session_id(sender_id, meta)
-        if not content_parts:
-            content_parts = [TextContent(text=" ")]
-        request = AgentRequest(
-            session_id=session_id,
-            user_id=sender_id,
-            input=[
-                Message(
-                    type=MessageType.MESSAGE,
-                    role=Role.USER,
-                    content=content_parts,
-                ),
-            ],
-            channel=channel_id,
+    def build_turn_request_from_native(
+        self,
+        native_payload: Any,
+    ) -> TurnRequest:
+        """Decode the normalized Console payload at the protocol edge."""
+        payload = (
+            dict(native_payload) if isinstance(native_payload, dict) else {}
         )
-        message_metadata = payload.get("message_metadata")
-        if isinstance(message_metadata, dict) and request.input:
-            request.input[0].metadata = message_metadata
-        request.channel_meta = meta
-        rc = meta.get("request_context")
-        if isinstance(rc, dict) and rc:
-            request.request_context = rc
-        mso = payload.get("model_slot_override")
-        if mso is not None:
-            request.model_slot_override = mso
-        return request
+        meta = dict(payload.get("meta") or {})
+        meta["session_id"] = self.resolve_session_id(
+            str(payload.get("sender_id") or ""),
+            meta,
+        )
+        payload["meta"] = meta
+        if not payload.get("content_parts"):
+            payload["content_parts"] = [TextContent(text=" ")]
+        return self._ingress.decode(payload)
 
     async def _extract_media_message(self, message: Message) -> Message | None:
         """Extract media message from message."""
@@ -385,13 +372,17 @@ class ConsoleTransport(BaseChannel):
             if not should_process:
                 return
             payload = {**payload, "content_parts": merged}
-            request = self.build_agent_request_from_native(payload)
+            request = self.build_turn_request_from_native(payload)
         else:
-            request = payload
+            request = (
+                payload
+                if isinstance(payload, TurnRequest)
+                else self._ingress.decode(payload)
+            )
             session_id = getattr(request, "session_id", "") or ""
-            if getattr(request, "input", None):
+            if request.messages:
                 contents = list(
-                    getattr(request.input[0], "content", None) or [],
+                    getattr(request.messages[0], "content", None) or [],
                 )
                 should_process, merged = self._apply_no_text_debounce(
                     session_id,
@@ -399,12 +390,25 @@ class ConsoleTransport(BaseChannel):
                 )
                 if not should_process:
                     return
-                if merged and hasattr(request.input[0], "content"):
-                    request.input[0].content = merged
+                if merged:
+                    first = request.messages[0]
+                    request = TurnRequest(
+                        turn_id=request.turn_id,
+                        agent_id=request.agent_id,
+                        session_id=request.session_id,
+                        user_id=request.user_id,
+                        messages=(
+                            first.model_copy(update={"content": merged}),
+                            *request.messages[1:],
+                        ),
+                        source=request.source,
+                        reply_target=request.reply_target,
+                        context=request.context,
+                    )
         session_id = getattr(request, "session_id", "") or session_id
         self._clear_session_turn_usage(session_id)
         user_id = getattr(request, "user_id", "") or ""
-        channel_name = getattr(request, "channel", "") or self.channel
+        channel_name = request.source.channel_type or self.channel
 
         # Refresh the chat's updated_at so the console session list surfaces
         # this new message as the latest activity (issue #6131). stream_one is
@@ -429,13 +433,25 @@ class ConsoleTransport(BaseChannel):
                 )
 
         try:
-            send_meta = getattr(request, "channel_meta", None) or {}
-            send_meta.setdefault("bot_prefix", self.bot_prefix)
             last_response = None
             event_count = 0
             sse_encoder = ConsoleSseEncoder()
+            presenter = ConsoleEventPresenter(session_id=session_id)
+            presentation_context = PresentationContext(
+                protocol="console",
+                conversation_id=session_id,
+                turn_id=request.turn_id,
+            )
 
-            async for event in self._process(request):
+            async def _presented_events() -> AsyncGenerator[Any, None]:
+                async for runtime_event in self._process(request):
+                    async for output in presenter.present(
+                        runtime_event,
+                        presentation_context,
+                    ):
+                        yield output
+
+            async for event in _presented_events():
                 event_count += 1
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)
@@ -449,7 +465,10 @@ class ConsoleTransport(BaseChannel):
                     ev_type,
                 )
 
-                if event.object == "response" and event.status == RunStatus.Completed:
+                if (
+                    event.object == "response"
+                    and event.status == RunStatus.Completed
+                ):
                     event_output = event.output
                     event.output = []
                     if event_output is not None:
@@ -458,7 +477,9 @@ class ConsoleTransport(BaseChannel):
 
                 if obj == "message" and status == RunStatus.Completed:
                     msg_id = str(
-                        getattr(event, "msg_id", "") or getattr(event, "id", "") or "",
+                        getattr(event, "msg_id", "")
+                        or getattr(event, "id", "")
+                        or "",
                     )
                     for pending_data in sse_encoder.flush(msg_id=msg_id):
                         yield f"data: {pending_data}\n\n"
@@ -600,7 +621,11 @@ class ConsoleTransport(BaseChannel):
             elif t == ContentType.AUDIO and getattr(p, "data", None):
                 self._safe_print(f"{_YELLOW}🔊 [Audio]{_RESET}")
             elif t == ContentType.FILE:
-                url = getattr(p, "file_url", None) or getattr(p, "file_id", None) or ""
+                url = (
+                    getattr(p, "file_url", None)
+                    or getattr(p, "file_id", None)
+                    or ""
+                )
                 self._safe_print(f"{_YELLOW}📎 [File: {url}]{_RESET}")
         self._safe_print("")
 
@@ -681,7 +706,11 @@ class ConsoleTransport(BaseChannel):
             f"{prefix}{text}\n",
         )
         sid = (meta or {}).get("session_id")
-        if sid and text.strip() and not (meta or {}).get("suppress_console_push"):
+        if (
+            sid
+            and text.strip()
+            and not (meta or {}).get("suppress_console_push")
+        ):
             await push_store_append(sid, text.strip())
 
     async def send_content_parts(

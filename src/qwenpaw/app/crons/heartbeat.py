@@ -4,6 +4,7 @@ Heartbeat: run agent with HEARTBEAT.md as query at interval.
 Uses config functions (get_heartbeat_config, get_heartbeat_query_path,
 load_config) for paths and settings.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -195,6 +196,8 @@ async def run_heartbeat_once(
     dispatch to last channel (target=last).
     """
     from ...config.config import load_agent_config
+    from ..channels.outbound import ChannelOutboundPresenter
+    from ..turn_factory import create_text_turn
 
     hb = get_heartbeat_config(agent_id)
     if not _in_active_hours(hb.active_hours):
@@ -230,6 +233,15 @@ async def run_heartbeat_once(
         "channel": DEFAULT_CHANNEL,
         "request_context": {"source": "heartbeat"},
     }
+    turn_request = create_text_turn(
+        agent_id=agent_id or getattr(workspace, "agent_id", "default"),
+        session_id=req["session_id"],
+        user_id=req["user_id"],
+        protocol="heartbeat",
+        channel_type=req["channel"],
+        text=query_text,
+        context=req["request_context"],
+    )
 
     # Get last_dispatch from agent config if agent_id provided
     last_dispatch = None
@@ -250,14 +262,21 @@ async def run_heartbeat_once(
         if ld.channel and (ld.user_id or ld.session_id):
 
             async def _run_and_dispatch() -> None:
-                async for event in workspace.stream_query(req):
-                    await channel_manager.send_event(
-                        channel=ld.channel,
-                        user_id=ld.user_id,
-                        session_id=ld.session_id,
-                        event=event,
-                        meta={},
-                    )
+                presenter = ChannelOutboundPresenter(
+                    channel_type=ld.channel,
+                    conversation_id=ld.session_id,
+                )
+                async for runtime_event in workspace.stream_events(
+                    turn_request,
+                ):
+                    for event in presenter.present(runtime_event):
+                        await channel_manager.send_event(
+                            channel=ld.channel,
+                            user_id=ld.user_id,
+                            session_id=ld.session_id,
+                            event=event,
+                            meta={},
+                        )
 
             try:
                 await asyncio.wait_for(
@@ -295,7 +314,7 @@ async def run_heartbeat_once(
         )
 
         async def _run_only() -> None:
-            async for _ in workspace.stream_query(req):
+            async for _ in workspace.stream_events(turn_request):
                 pass
 
         try:
@@ -391,7 +410,7 @@ async def run_heartbeat_once(
 
     # target main or no last_dispatch: run agent only, no dispatch
     async def _run_without_dispatch() -> None:
-        async for _ in workspace.stream_query(req):
+        async for _ in workspace.stream_events(turn_request):
             pass
 
     try:

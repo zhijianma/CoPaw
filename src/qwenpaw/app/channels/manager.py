@@ -132,7 +132,7 @@ class ChannelManager:
         """
         Create channels from env and inject unified process
         (ChannelTurn -> Event stream).
-        process is typically workspace.stream_query.
+        process is the workspace's canonical event stream.
         on_last_dispatch: called when a user send+reply was sent.
         """
         available = get_available_channels()
@@ -204,12 +204,15 @@ class ChannelManager:
             sig = inspect.signature(ch_cls.from_config)
             filtered_kwargs: dict[str, Any]
             if any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in sig.parameters.values()
             ):
                 filtered_kwargs = from_config_kwargs
             else:
                 filtered_kwargs = {
-                    k: v for k, v in from_config_kwargs.items() if k in sig.parameters
+                    k: v
+                    for k, v in from_config_kwargs.items()
+                    if k in sig.parameters
                 }
 
             try:
@@ -646,7 +649,8 @@ class ChannelManager:
             # Load the latest config for this channel
             if self._workspace is None:
                 raise RuntimeError(
-                    "Cannot restart channel: workspace not set" " on ChannelManager",
+                    "Cannot restart channel: workspace not set"
+                    " on ChannelManager",
                 )
 
             if channel_name == "console":
@@ -852,7 +856,8 @@ class ChannelManager:
         )
         ch_name = getattr(ch, "channel", channel)
         logger.info(
-            "channel send_text: channel=%s user_id=%s session_id=%s " "to_handle=%s",
+            "channel send_text: channel=%s user_id=%s session_id=%s "
+            "to_handle=%s",
             ch_name,
             (user_id or "")[:40],
             (session_id or "")[:40],

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""SSE envelope state machine.
+"""Console protocol envelope state machine.
 
 Translates canonical ``RuntimeEvent`` semantics into the frontend's streaming
 envelope protocol. Tracks per-request state (text blocks, reasoning blocks,
@@ -807,7 +807,14 @@ class Envelope:
         """
         from ...schemas import ContentType, RunStatus, TextContent
 
-        cmd_text = cmd_msg.get_text_content() or ""
+        get_text_content = getattr(cmd_msg, "get_text_content", None)
+        if callable(get_text_content):
+            cmd_text = get_text_content() or ""
+        else:
+            cmd_text = "".join(
+                str(getattr(part, "text", "") or "")
+                for part in (getattr(cmd_msg, "content", None) or [])
+            )
 
         if not self._message_started:
             yield self._tag_seq(self._completed_message)

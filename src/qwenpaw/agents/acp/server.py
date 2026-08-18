@@ -65,18 +65,13 @@ from acp.schema import (
     ToolCallUpdate,
     UsageUpdate,
 )
-from qwenpaw.schemas import (
-    AgentRequest,
-    Message,
-    MessageType,
-    RunStatus,
-)
-
 from ...__version__ import __version__
+from ...app.turn_factory import create_text_turn
 from ...constant import WORKING_DIR
 from ...config.config import ModelSlotConfig, load_agent_config
 from ...drivers.constants import DRIVER_SCOPE_CONTEXT_KEY
 from ...exceptions import AppBaseException
+from ...domain.turns.events import RuntimeEvent, RuntimeEventType
 from ...providers.provider_manager import ProviderManager
 from ...utils.io_utils import run_sync_io
 from .meta import (
@@ -131,18 +126,12 @@ def _extract_text(
     return "\n".join(parts)
 
 
-class _EnvelopeTracker:
-    """Track state needed to convert ``stream_query`` envelopes to ACP updates.
-
-    ``stream_query`` emits ``TextContent(delta=True, object="content")`` for
-    both text and thinking blocks — the only distinguisher is ``msg_id``.
-    This tracker remembers which ``msg_id`` values belong to reasoning
-    messages so text deltas and thinking deltas route correctly.
-    """
+class _RuntimeEventTracker:
+    """Convert canonical runtime facts directly into ACP updates."""
 
     def __init__(self) -> None:
-        self._reasoning_msg_ids: set[str] = set()
-        self._streamed_text_msg_ids: set[str] = set()
+        self._tool_calls: dict[str, dict[str, Any]] = {}
+        self._tool_outputs: dict[str, str] = {}
 
     @staticmethod
     def _tool_raw_input(data: dict[str, Any]) -> Any:
@@ -172,82 +161,77 @@ class _EnvelopeTracker:
             return "failed"
         return "completed"
 
-    # pylint: disable=too-many-return-statements, too-many-branches
-    def process(
-        self,
-        event: Any,
-    ) -> list[Any]:
-        """Convert one envelope event into zero or more ACP updates."""
-        obj = getattr(event, "object", None)
-
-        if obj == "content":
-            text = getattr(event, "text", "") or ""
+    # pylint: disable=too-many-return-statements
+    def process(self, event: RuntimeEvent) -> list[Any]:
+        """Convert one canonical event into zero or more ACP updates."""
+        event_type = event.type
+        data = dict(event.data)
+        if event_type is RuntimeEventType.CONTENT_DELTA:
+            text = str(data.get("delta") or "")
             if not text:
                 return []
-            msg_id = getattr(event, "msg_id", None)
-            is_delta = getattr(event, "delta", False)
-            if is_delta and msg_id:
-                self._streamed_text_msg_ids.add(msg_id)
-            elif msg_id in self._streamed_text_msg_ids:
-                return []
-            if msg_id in self._reasoning_msg_ids:
+            if data.get("content_kind") == "reasoning":
                 return [update_agent_thought(text_block(text))]
-            return [update_agent_message(text_block(text))]
-
-        if obj == "message":
-            msg_type = getattr(event, "type", None)
-            if hasattr(msg_type, "value"):
-                msg_type = msg_type.value
-            status = getattr(event, "status", None)
-            msg_id = getattr(event, "id", None)
-
-            if msg_type == MessageType.REASONING.value:
-                if msg_id:
-                    self._reasoning_msg_ids.add(msg_id)
-                return []
-
-            if msg_type == MessageType.PLUGIN_CALL.value:
-                if status == RunStatus.Completed:
-                    for c in getattr(event, "content", []) or []:
-                        data = getattr(c, "data", None)
-                        if isinstance(data, dict):
-                            return [
-                                start_tool_call(
-                                    str(
-                                        data.get("call_id") or uuid4().hex[:8],
-                                    ),
-                                    str(data.get("name") or "tool"),
-                                    status="in_progress",
-                                    raw_input=self._tool_raw_input(data),
-                                ),
-                            ]
-                return []
-
-            if msg_type == MessageType.PLUGIN_CALL_OUTPUT.value:
-                if status == RunStatus.Completed:
-                    for c in getattr(event, "content", []) or []:
-                        data = getattr(c, "data", None)
-                        if isinstance(data, dict):
-                            return [
-                                update_tool_call(
-                                    str(
-                                        data.get("call_id") or uuid4().hex[:8],
-                                    ),
-                                    status=self._tool_result_status(data),
-                                    content=[
-                                        tool_content(
-                                            text_block(
-                                                str(data.get("output") or ""),
-                                            ),
-                                        ),
-                                    ],
-                                    raw_output=data.get("output"),
-                                ),
-                            ]
-                return []
-
+            if data.get("content_kind") == "text":
+                return [update_agent_message(text_block(text))]
             return []
-
+        if event_type is RuntimeEventType.MESSAGE:
+            text = getattr(
+                event.payload,
+                "get_text_content",
+                lambda: "",
+            )()
+            return [update_agent_message(text_block(text))] if text else []
+        if event_type is RuntimeEventType.TOOL_CALL_STARTED:
+            call_id = str(data.get("tool_call_id") or uuid4().hex[:8])
+            self._tool_calls[call_id] = {
+                "name": str(data.get("name") or "tool"),
+                "arguments": "",
+            }
+            return []
+        if event_type is RuntimeEventType.TOOL_CALL_DELTA:
+            call_id = str(data.get("tool_call_id") or "")
+            state = self._tool_calls.setdefault(
+                call_id,
+                {"name": str(data.get("name") or "tool"), "arguments": ""},
+            )
+            state["arguments"] += str(data.get("delta") or "")
+            return []
+        if event_type is RuntimeEventType.TOOL_CALL_COMPLETED:
+            call_id = str(data.get("tool_call_id") or uuid4().hex[:8])
+            state = self._tool_calls.pop(
+                call_id,
+                {"name": str(data.get("name") or "tool"), "arguments": ""},
+            )
+            return [
+                start_tool_call(
+                    call_id,
+                    state["name"],
+                    status="in_progress",
+                    raw_input=self._tool_raw_input(state),
+                ),
+            ]
+        if event_type is RuntimeEventType.TOOL_RESULT_DELTA:
+            call_id = str(data.get("tool_call_id") or "")
+            self._tool_outputs[call_id] = self._tool_outputs.get(
+                call_id,
+                "",
+            ) + str(data.get("delta") or "")
+            return []
+        if event_type is RuntimeEventType.TOOL_RESULT_COMPLETED:
+            call_id = str(data.get("tool_call_id") or uuid4().hex[:8])
+            output = data.get("output")
+            if output is None:
+                output = self._tool_outputs.get(call_id, "")
+            self._tool_outputs.pop(call_id, None)
+            return [
+                update_tool_call(
+                    call_id,
+                    status=self._tool_result_status(data),
+                    content=[tool_content(text_block(str(output or "")))],
+                    raw_output=output,
+                ),
+            ]
         return []
 
 
@@ -426,9 +410,9 @@ class QwenPawACPAgent(Agent):
 
         return WorkspaceBootstrapFactory.build_bootstrap_kwargs(
             app_services,
-            extra_command_specs=extra_command_specs
-            if extra_command_specs
-            else None,
+            extra_command_specs=(
+                extra_command_specs if extra_command_specs else None
+            ),
         )
 
     async def _ensure_workspace(self) -> Any:
@@ -625,29 +609,24 @@ class QwenPawACPAgent(Agent):
 
         request_context = self._build_request_context(session_info)
 
-        request = AgentRequest(
-            input=[
-                Message(
-                    role="user",
-                    content=[
-                        {"type": "text", "text": text},
-                    ],
-                ),
-            ],
+        model_slot_override = session_info.get(_ACP_RUNTIME_MODEL_SLOT_KEY)
+        if model_slot_override is not None:
+            request_context["model_slot_override"] = model_slot_override
+        request = create_text_turn(
+            agent_id=self._resolve_agent_id(),
             session_id=session_id,
             user_id=user_id,
-            agent_id=self._resolve_agent_id(),
-            request_context=request_context or None,
-            model_slot_override=session_info.get(
-                _ACP_RUNTIME_MODEL_SLOT_KEY,
-            ),
+            protocol="acp",
+            channel_type="acp",
+            text=text,
+            context=request_context,
         )
 
-        tracker = _EnvelopeTracker()
+        tracker = _RuntimeEventTracker()
         was_cancelled = False
 
         try:
-            async for event in workspace.stream_query(request):
+            async for event in workspace.stream_events(request):
                 if cancel_event.is_set():
                     was_cancelled = True
                     logger.info(

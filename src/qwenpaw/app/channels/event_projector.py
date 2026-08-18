@@ -64,7 +64,10 @@ class ChannelEventProjector:
         self._message = self._new_message(MessageType.MESSAGE)
         self._text.clear()
 
-    def project(self, event: RuntimeEvent) -> Iterator[ReplyEvent]:
+    def project(  # pylint: disable=too-many-return-statements
+        self,
+        event: RuntimeEvent,
+    ) -> Iterator[ReplyEvent]:
         """Yield zero or more Channel reply events for one runtime fact."""
         event_type = event.type
         data = dict(event.data)
@@ -77,14 +80,16 @@ class ChannelEventProjector:
             yield self._reply(event, ReplyEventType.HEARTBEAT)
             return
         if event_type is RuntimeEventType.MESSAGE:
-            if getattr(event.payload, "object", None) == "message":
+            if isinstance(event.payload, Message):
                 yield self._reply(
                     event,
                     ReplyEventType.MESSAGE,
                     event.payload,
                 )
                 return
-            text = getattr(event.payload, "get_text_content", lambda: "")() or ""
+            text = (
+                getattr(event.payload, "get_text_content", lambda: "")() or ""
+            )
             message = self._new_message(MessageType.MESSAGE)
             message.content.append(TextContent(text=text, index=0))
             message.status = RunStatus.Completed
