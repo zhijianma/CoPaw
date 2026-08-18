@@ -297,58 +297,70 @@ class Workspace:
         self,
         request: Any,
     ) -> AsyncGenerator[Any, None]:
-        """Process a request through the Runtime pipeline.
+        """Present one canonical turn using the Console protocol."""
+        from ...domain.turns.models import TurnRequest
+        from ...protocols.builtins import create_default_presenter
+        from ...protocols.console import ConsoleTurnIngress
 
-        Drop-in replacement for the old ``Runner.stream_query()``.
-        """
-        config = load_agent_config(self.agent_id)
-        backend = config.backend
-        if backend != "qwenpaw":
-            settings = dict(getattr(config, "backend_settings", {}))
-            request_context = dict(
-                getattr(request, "request_context", None) or {},
+        core_request = (
+            request
+            if isinstance(request, TurnRequest)
+            else ConsoleTurnIngress(default_agent_id=self.agent_id).decode(
+                request,
             )
-            backend_controls = request_context.pop(
-                "backend_controls",
-                {},
-            )
-            if isinstance(backend_controls, dict):
-                settings.update(backend_controls)
-            settings["_request_context"] = {
-                **request_context,
-                "agent_id": self.agent_id,
-                "session_id": getattr(request, "session_id", None),
-                "user_id": getattr(request, "user_id", None),
-                "channel": getattr(request, "channel", None) or "console",
-            }
-            async for item in self.harness_runtime.stream(
-                backend=backend,
-                request=request,
-                cwd=self.workspace_dir.resolve(),
-                settings=settings,
-            ):
+        )
+        presenter, context = create_default_presenter(
+            conversation_id=core_request.session_id,
+            turn_id=core_request.turn_id,
+        )
+        async for event in self._stream_core_events(core_request):
+            async for item in presenter.present(event, context):
                 yield item
-            return
-
-        from ...runtime import Runtime
-
-        rt = Runtime(workspace=self, app_services=self._app_services)
-        async for item in rt.run(request):
-            yield item
 
     async def stream_channel_events(
         self,
         request: Any,
     ) -> AsyncGenerator[Any, None]:
-        """Expose canonical events to Channels for the native runtime.
+        """Expose canonical events to Channels without protocol projection."""
+        from ...domain.turns.models import TurnRequest
+        from ...protocols.console import ConsoleTurnIngress
 
-        External harness backends keep their existing presented event stream
-        until they implement the RuntimeEvent engine boundary.
-        """
+        core_request = (
+            request
+            if isinstance(request, TurnRequest)
+            else ConsoleTurnIngress(default_agent_id=self.agent_id).decode(
+                request,
+            )
+        )
+        async for event in self._stream_core_events(core_request):
+            yield event
+
+    async def _stream_core_events(
+        self,
+        request: Any,
+    ) -> AsyncGenerator[Any, None]:
+        """Select an engine while preserving the canonical event contract."""
         config = load_agent_config(self.agent_id)
         if config.backend != "qwenpaw":
-            async for item in self.stream_query(request):
-                yield item
+            settings = dict(getattr(config, "backend_settings", {}))
+            request_context = dict(request.context)
+            backend_controls = request_context.pop("backend_controls", {})
+            if isinstance(backend_controls, dict):
+                settings.update(backend_controls)
+            settings["_request_context"] = {
+                **request_context,
+                "agent_id": self.agent_id,
+                "session_id": request.session_id,
+                "user_id": request.user_id,
+                "channel": request.source.channel_type or "console",
+            }
+            async for event in self.harness_runtime.stream_events(
+                backend=config.backend,
+                request=request,
+                cwd=self.workspace_dir.resolve(),
+                settings=settings,
+            ):
+                yield event
             return
 
         from ...runtime import Runtime
@@ -622,8 +634,7 @@ class Workspace:
             )
         except Exception as exc:
             logger.warning(
-                "weixin->wechat chats.json migration failed for "
-                "agent %s: %s",
+                "weixin->wechat chats.json migration failed for " "agent %s: %s",
                 self.agent_id,
                 exc,
             )
@@ -634,8 +645,7 @@ class Workspace:
             )
         except Exception as exc:
             logger.warning(
-                "weixin->wechat jobs.json migration failed for "
-                "agent %s: %s",
+                "weixin->wechat jobs.json migration failed for " "agent %s: %s",
                 self.agent_id,
                 exc,
             )

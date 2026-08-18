@@ -48,9 +48,7 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 TELEGRAM_SEND_CHUNK_SIZE = 4000
-TELEGRAM_MAX_FILE_SIZE_BYTES = (
-    50 * 1024 * 1024
-)  # 50 MB – Telegram bot upload limit
+TELEGRAM_MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB – Telegram bot upload limit
 
 _DEFAULT_MEDIA_DIR = WORKING_DIR / "media" / "telegram"
 _TYPING_TIMEOUT_S = 180
@@ -192,9 +190,7 @@ async def _build_content_parts_from_message(
         return [], False, False
 
     content_parts: list[Any] = []
-    text = (
-        getattr(message, "text", None) or getattr(message, "caption") or ""
-    ).strip()
+    text = (getattr(message, "text", None) or getattr(message, "caption") or "").strip()
 
     entities = (
         getattr(message, "entities", None)
@@ -521,8 +517,7 @@ class TelegramChannel(BaseChannel):
             self._polling_network_error_count = 0
             attempt = self._polling_conflict_count
             delay = min(
-                _POLLING_CONFLICT_RETRY_BASE_S
-                * (_RECONNECT_FACTOR ** (attempt - 1)),
+                _POLLING_CONFLICT_RETRY_BASE_S * (_RECONNECT_FACTOR ** (attempt - 1)),
                 _POLLING_CONFLICT_RETRY_MAX_S,
             )
             return attempt, delay
@@ -639,8 +634,7 @@ class TelegramChannel(BaseChannel):
             http_proxy_auth=_get_str("http_proxy_auth"),
             bot_prefix=_get_str("bot_prefix"),
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             workspace_dir=workspace_dir,
             show_typing=show_typing,
@@ -957,11 +951,7 @@ class TelegramChannel(BaseChannel):
         use_html: bool = False,
     ) -> bool:
         """Edit an existing message; return True on success."""
-        bot = (
-            getattr(self._application, "bot", None)
-            if self._application
-            else None
-        )
+        bot = getattr(self._application, "bot", None) if self._application else None
         if not bot:
             return False
         # Telegram rejects empty text
@@ -1061,14 +1051,10 @@ class TelegramChannel(BaseChannel):
         if not chat_id:
             return
         prefix = "💭 " if stream_type == "reasoning" else ""
-        display_text = (
-            f"{prefix}{accumulated_text}" if prefix else accumulated_text
-        )
+        display_text = f"{prefix}{accumulated_text}" if prefix else accumulated_text
         # If text exceeds Telegram limit, show only the tail portion
         if len(display_text) > TELEGRAM_MAX_MESSAGE_LENGTH:
-            display_text = (
-                "..." + display_text[-(TELEGRAM_MAX_MESSAGE_LENGTH - 4) :]
-            )
+            display_text = "..." + display_text[-(TELEGRAM_MAX_MESSAGE_LENGTH - 4) :]
         await self._edit_stream_message(
             chat_id,
             msg_id,
@@ -1096,9 +1082,7 @@ class TelegramChannel(BaseChannel):
         if not chat_id:
             return
         prefix = "💭 " if stream_type == "reasoning" else ""
-        final_text = (
-            f"{prefix}{accumulated_text}" if prefix else accumulated_text
-        )
+        final_text = f"{prefix}{accumulated_text}" if prefix else accumulated_text
 
         # If placeholder was never sent (e.g. API error), fall back to
         # normal send so the reply is not silently lost.
@@ -1167,7 +1151,7 @@ class TelegramChannel(BaseChannel):
         indicator only starts for messages that will be processed — not
         for file-only messages buffered while waiting for text input.
         """
-        to_handle = self.get_to_handle_from_request(request)
+        to_handle = self.get_to_handle_from_turn(request)
         self._is_processing[to_handle] = True
         self._start_typing(to_handle)
 
@@ -1198,7 +1182,7 @@ class TelegramChannel(BaseChannel):
         payload,
     ) -> None:
         """Wrap parent to ensure typing cleanup on cancellation."""
-        to_handle = self.get_to_handle_from_request(request)
+        to_handle = self.get_to_handle_from_turn(request)
         try:
             await super()._consume_with_tracker(request, payload)
         except asyncio.CancelledError:
@@ -1303,10 +1287,7 @@ class TelegramChannel(BaseChannel):
         self._reconnect_event.clear()
 
         def _on_poll_error(exc) -> None:
-            if (
-                self._polling_error_task
-                and not self._polling_error_task.done()
-            ):
+            if self._polling_error_task and not self._polling_error_task.done():
                 return
             if self._looks_like_polling_conflict(exc):
                 self._polling_error_task = app.create_task(
@@ -1555,19 +1536,19 @@ class TelegramChannel(BaseChannel):
             return f"telegram:{chat_id}"
         return f"telegram:{sender_id}"
 
-    def get_to_handle_from_request(self, request: Any) -> str:
+    def get_to_handle_from_turn(self, request: Any) -> str:
         """Send target is chat_id from meta or session_id suffix."""
-        meta = getattr(request, "channel_meta", None) or {}
+        meta = getattr(request, "metadata", None) or {}
         chat_id = meta.get("chat_id")
         if chat_id:
             return str(chat_id)
         sid = getattr(request, "session_id", "")
         if sid.startswith("telegram:"):
             return sid.split(":", 1)[-1]
-        return getattr(request, "user_id", "") or ""
+        return getattr(request, "sender_id", "") or ""
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
-        """Build AgentRequest from Telegram native dict."""
+    def build_channel_turn_from_native(self, native_payload: Any) -> Any:
+        """Build ChannelTurn from Telegram native dict."""
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
@@ -1575,15 +1556,15 @@ class TelegramChannel(BaseChannel):
         meta = payload.get("meta") or {}
         session_id = self.resolve_session_id(sender_id, meta)
         user_id = str(meta.get("user_id") or sender_id)
-        request = self.build_agent_request_from_user_content(
+        request = self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=sender_id,
             session_id=session_id,
             content_parts=content_parts,
             channel_meta=meta,
         )
-        request.user_id = user_id
-        request.channel_meta = meta
+        request.sender_id = user_id
+        request.metadata = meta
         return request
 
     def to_handle_from_target(self, *, user_id: str, session_id: str) -> str:

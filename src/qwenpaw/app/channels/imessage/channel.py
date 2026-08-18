@@ -135,9 +135,7 @@ class IMessageChannel(BaseChannel):
             ),
             allow_from=allow_from,
             deny_message=os.getenv("IMESSAGE_DENY_MESSAGE", ""),
-            require_mention=(
-                os.getenv("IMESSAGE_REQUIRE_MENTION", "0") == "1"
-            ),
+            require_mention=(os.getenv("IMESSAGE_REQUIRE_MENTION", "0") == "1"),
         )
 
     @classmethod
@@ -160,8 +158,7 @@ class IMessageChannel(BaseChannel):
             workspace_dir=workspace_dir,
             max_decoded_size=config.max_decoded_size,
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=config.dm_policy,
             group_policy=config.group_policy,
@@ -283,8 +280,8 @@ ORDER BY m.ROWID ASC
                             "content_parts": content_parts,
                             "meta": meta,
                         }
-                        request = self.build_agent_request_from_native(native)
-                        request.channel_meta = meta
+                        request = self.build_channel_turn_from_native(native)
+                        request.metadata = meta
                         logger.info(
                             "recv from=%s rowid=%s text=%r",
                             sender,
@@ -301,15 +298,15 @@ ORDER BY m.ROWID ASC
             conn.close()
             logger.info("watcher thread stopped")
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
-        """Build AgentRequest from imessage native dict (runtime content)."""
+    def build_channel_turn_from_native(self, native_payload: Any) -> Any:
+        """Build ChannelTurn from imessage native dict (runtime content)."""
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
         content_parts = payload.get("content_parts") or []
         meta = payload.get("meta") or {}
         session_id = self.resolve_session_id(sender_id, meta)
-        request = self.build_agent_request_from_user_content(
+        request = self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=sender_id,
             session_id=session_id,
@@ -436,8 +433,7 @@ ORDER BY m.ROWID ASC
             except Exception as exc:
                 # Fallback: send a textual placeholder if media delivery fails
                 logger.warning(
-                    "imessage send_content_parts: "
-                    "send_media failed for %s: %s",
+                    "imessage send_content_parts: " "send_media failed for %s: %s",
                     getattr(media_part, "type", None),
                     exc,
                 )
@@ -458,9 +454,7 @@ ORDER BY m.ROWID ASC
                         "value",
                         getattr(media_part, "type", None),
                     )
-                    fallback_text = (
-                        f"[File could not be sent ({content_type})]"
-                    )
+                    fallback_text = f"[File could not be sent ({content_type})]"
                 await self.send(to_handle, fallback_text, meta)
 
     def _extract_url_and_filename(self, part: OutgoingContentPart):
@@ -684,8 +678,7 @@ ORDER BY m.ROWID ASC
 
         if not url:
             logger.warning(
-                "imessage send_media: no URL found for media "
-                f"type {content_type}",
+                "imessage send_media: no URL found for media " f"type {content_type}",
             )
             return
 
@@ -713,6 +706,5 @@ ORDER BY m.ROWID ASC
             await self.send(to_handle, "", meta, local_path)
         else:
             logger.warning(
-                "imessage send_media: could not resolve valid file "
-                f"path for {url}",
+                "imessage send_media: could not resolve valid file " f"path for {url}",
             )

@@ -78,7 +78,7 @@ from .media import (
 from .utils import download_media
 
 if TYPE_CHECKING:
-    from ....schemas import AgentRequest
+    from ..turn import ChannelTurn
 
 logger = logging.getLogger(__name__)
 
@@ -117,9 +117,7 @@ def _sender_display(nickname: str, raw_sender_id: str) -> str:
     """Build human-readable sender display: nickname#last4."""
     nick = (nickname or "").strip() or "unknown"
     suffix = (
-        raw_sender_id[-4:]
-        if len(raw_sender_id) >= 4
-        else (raw_sender_id or "????")
+        raw_sender_id[-4:] if len(raw_sender_id) >= 4 else (raw_sender_id or "????")
     )
     return f"{nick}#{suffix}"
 
@@ -320,8 +318,7 @@ class YuanbaoChannel(BaseChannel):
             bot_prefix=config.bot_prefix,
             media_dir=getattr(config, "media_dir", "") or "",
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             workspace_dir=workspace_dir,
             dm_policy=getattr(config, "dm_policy", "open"),
@@ -361,10 +358,10 @@ class YuanbaoChannel(BaseChannel):
             return _short_id(sender_id)
         return "unknown"
 
-    def get_to_handle_from_request(self, request: Any) -> str:
+    def get_to_handle_from_turn(self, request: Any) -> str:
         """Return session_id as send target."""
         session_id = getattr(request, "session_id", "") or ""
-        user_id = getattr(request, "user_id", "") or ""
+        user_id = getattr(request, "sender_id", "") or ""
         return session_id or user_id
 
     def get_on_reply_sent_args(
@@ -373,7 +370,7 @@ class YuanbaoChannel(BaseChannel):
         to_handle: str,
     ) -> tuple:
         return (
-            getattr(request, "user_id", "") or "",
+            getattr(request, "sender_id", "") or "",
             getattr(request, "session_id", "") or "",
         )
 
@@ -576,13 +573,9 @@ class YuanbaoChannel(BaseChannel):
                         self._heartbeat_timeout_count,
                         HEARTBEAT_TIMEOUT_THRESHOLD,
                     )
-                    if (
-                        self._heartbeat_timeout_count
-                        >= HEARTBEAT_TIMEOUT_THRESHOLD
-                    ):
+                    if self._heartbeat_timeout_count >= HEARTBEAT_TIMEOUT_THRESHOLD:
                         logger.error(
-                            "yuanbao: heartbeat threshold "
-                            "reached, reconnecting",
+                            "yuanbao: heartbeat threshold " "reached, reconnecting",
                         )
                         await self._force_close_ws()
                         break
@@ -847,26 +840,26 @@ class YuanbaoChannel(BaseChannel):
         await self._force_close_ws()
 
     # ------------------------------------------------------------------
-    # Native → AgentRequest
+    # Native → ChannelTurn
     # ------------------------------------------------------------------
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
-        """Convert Yuanbao native dict → AgentRequest."""
+    def build_channel_turn_from_native(self, native_payload: Any) -> Any:
+        """Convert Yuanbao native dict → ChannelTurn."""
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
         content_parts = payload.get("content_parts") or []
         meta = payload.get("meta") or {}
         session_id = self.resolve_session_id(sender_id, meta)
-        request = self.build_agent_request_from_user_content(
+        request = self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=sender_id,
             session_id=session_id,
             content_parts=content_parts,
             channel_meta=meta,
         )
-        request.user_id = sender_id
-        request.channel_meta = meta
+        request.sender_id = sender_id
+        request.metadata = meta
         return request
 
     # ------------------------------------------------------------------
@@ -1347,9 +1340,9 @@ class YuanbaoChannel(BaseChannel):
                 pass
             await self._send_typing_heartbeat(session_id, HEARTBEAT_FINISH)
 
-    async def _before_consume_process(self, request: "AgentRequest") -> None:
+    async def _before_consume_process(self, request: "ChannelTurn") -> None:
         """Start typing indicator before the agent processes the request."""
-        meta = getattr(request, "channel_meta", None) or {}
+        meta = getattr(request, "metadata", None) or {}
         session_id = meta.get("session_id", "")
         if not session_id:
             return
@@ -1357,12 +1350,12 @@ class YuanbaoChannel(BaseChannel):
 
     async def _on_process_completed(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         send_meta: Dict[str, Any],
     ) -> None:
         """Stop typing indicator after all processing is done."""
-        session_id = (getattr(request, "channel_meta", None) or {}).get(
+        session_id = (getattr(request, "metadata", None) or {}).get(
             "session_id",
         ) or to_handle
         await self._stop_typing(session_id)
@@ -1374,7 +1367,7 @@ class YuanbaoChannel(BaseChannel):
         err_text: str,
     ) -> None:
         """Stop typing indicator on error, then send error message."""
-        meta = getattr(request, "channel_meta", None) or {}
+        meta = getattr(request, "metadata", None) or {}
         session_id = meta.get("session_id") or to_handle
         await self._stop_typing(session_id)
         await super()._on_consume_error(request, to_handle, err_text)
@@ -1607,11 +1600,7 @@ class YuanbaoChannel(BaseChannel):
         if part_type == ContentType.IMAGE:
             return getattr(part, "image_url", "") or ""
         if part_type == ContentType.FILE:
-            return (
-                getattr(part, "file_url", "")
-                or getattr(part, "file_id", "")
-                or ""
-            )
+            return getattr(part, "file_url", "") or getattr(part, "file_id", "") or ""
         if part_type == ContentType.VIDEO:
             return getattr(part, "video_url", "") or ""
         if part_type == ContentType.AUDIO:

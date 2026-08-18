@@ -8,6 +8,7 @@ Tests cover: initialization, factory methods, lifecycle, message handling
 Run:
     pytest tests/unit/channels/test_mqtt.py -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 from __future__ import annotations
 
@@ -15,7 +16,6 @@ import json
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
-
 
 # =============================================================================
 # Fixtures
@@ -850,39 +850,39 @@ class TestMQTTChannelUtilities:
 
         assert result == "mqtt:device-001"
 
-    def test_get_to_handle_from_request_with_meta(self, mqtt_channel):
-        """get_to_handle_from_request should extract from meta."""
+    def test_get_to_handle_from_turn_with_meta(self, mqtt_channel):
+        """get_to_handle_from_turn should extract from meta."""
         mock_request = Mock()
-        mock_request.channel_meta = {"client_id": "meta-device"}
+        mock_request.metadata = {"client_id": "meta-device"}
         mock_request.session_id = "mqtt:session-device"
 
-        result = mqtt_channel.get_to_handle_from_request(mock_request)
+        result = mqtt_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "meta-device"
 
-    def test_get_to_handle_from_request_from_session(self, mqtt_channel):
-        """get_to_handle_from_request should extract from session_id."""
+    def test_get_to_handle_from_turn_from_session(self, mqtt_channel):
+        """get_to_handle_from_turn should extract from session_id."""
         mock_request = Mock()
-        mock_request.channel_meta = {}
+        mock_request.metadata = {}
         mock_request.session_id = "mqtt:session-device"
 
-        result = mqtt_channel.get_to_handle_from_request(mock_request)
+        result = mqtt_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "session-device"
 
-    def test_get_to_handle_from_request_from_user_id(self, mqtt_channel):
-        """get_to_handle_from_request should fallback to user_id."""
+    def test_get_to_handle_from_turn_from_user_id(self, mqtt_channel):
+        """get_to_handle_from_turn should fallback to user_id."""
         mock_request = Mock()
-        mock_request.channel_meta = {}
+        mock_request.metadata = {}
         mock_request.session_id = "other-session"
-        mock_request.user_id = "fallback-user"
+        mock_request.sender_id = "fallback-user"
 
-        result = mqtt_channel.get_to_handle_from_request(mock_request)
+        result = mqtt_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "fallback-user"
 
-    def test_build_agent_request_from_native(self, mqtt_channel):
-        """build_agent_request_from_native should create proper request."""
+    def test_build_channel_turn_from_native(self, mqtt_channel):
+        """build_channel_turn_from_native should create proper request."""
         from qwenpaw.schemas import (
             TextContent,
             ContentType,
@@ -897,11 +897,11 @@ class TestMQTTChannelUtilities:
             "meta": {"client_id": "real-device"},
         }
 
-        request = mqtt_channel.build_agent_request_from_native(payload)
+        request = mqtt_channel.build_channel_turn_from_native(payload)
 
-        assert request.user_id == "real-device"
-        assert request.channel == "mqtt"
-        assert request.channel_meta["client_id"] == "real-device"
+        assert request.sender_id == "real-device"
+        assert request.channel_type == "mqtt"
+        assert request.metadata["client_id"] == "real-device"
 
     def test_to_handle_from_target_with_session(self, mqtt_channel):
         """to_handle_from_target should extract from session_id."""

@@ -85,8 +85,7 @@ class SIPChannel(BaseChannel):
         instance = cls(
             process,
             on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
         )
         instance._config = config
@@ -254,21 +253,21 @@ class SIPChannel(BaseChannel):
             )
 
     # --------------------------------------------------------------
-    # AgentRequest conversion
+    # ChannelTurn conversion
     # --------------------------------------------------------------
 
-    def build_agent_request_from_native(
+    def build_channel_turn_from_native(
         self,
         native_payload: Any,
     ) -> Any:
         from qwenpaw.schemas import (
-            AgentRequest,
             ContentType,
             Message,
             MessageType,
             Role,
             TextContent,
         )
+        from ..turn import ChannelTurn
 
         text = native_payload.get("transcript", "")
         session_id = native_payload.get("session_id", "")
@@ -281,11 +280,11 @@ class SIPChannel(BaseChannel):
                 TextContent(type=ContentType.TEXT, text=text),
             ],
         )
-        return AgentRequest(
+        return ChannelTurn(
             session_id=session_id,
-            user_id=user_id,
-            input=[msg],
-            channel=self.channel,
+            sender_id=user_id,
+            messages=[msg],
+            channel_type=self.channel,
         )
 
     # --------------------------------------------------------------
@@ -519,8 +518,7 @@ class SIPChannel(BaseChannel):
                     consecutive_errors += 1
                     if consecutive_errors >= max_consecutive:
                         logger.warning(
-                            "feed_audio: %d consecutive errors, "
-                            "stopping STT for %s",
+                            "feed_audio: %d consecutive errors, " "stopping STT for %s",
                             consecutive_errors,
                             call_id,
                         )
@@ -593,30 +591,28 @@ class SIPChannel(BaseChannel):
             "session_id": session.session_id,
             "from_uri": session.from_uri,
         }
-        request = self.build_agent_request_from_native(
+        request = self.build_channel_turn_from_native(
             native_payload,
         )
 
         try:
-            # Import here to avoid top-level dependency
             from qwenpaw.schemas import RunStatus
+            from ....domain.channels.models import ReplyTarget
+            from ....domain.channels.ports import ReplyEventType
+            from ..event_projector import ChannelEventProjector
 
-            completed = RunStatus.Completed
-            from ..reply_presentation import present_reply_stream
-
-            process_request = self._request_for_process(request)
-            stream = self._runtime_process(process_request)
-            async for event in present_reply_stream(
-                stream,
-                request=process_request,
-                channel_type=self.channel,
-                conversation_id=session.session_id,
-            ):
-                obj = getattr(event, "object", None)
-                status = getattr(event, "status", None)
-                if obj != "message" or status is None:
-                    continue
-                if status == completed:
+            process_request = self._build_turn_request(request)
+            projector = ChannelEventProjector(
+                ReplyTarget(self.channel, session.session_id),
+            )
+            async for runtime_event in self._runtime_process(process_request):
+                for reply in projector.project(runtime_event):
+                    event = reply.payload
+                    if (
+                        reply.type is not ReplyEventType.MESSAGE
+                        or getattr(event, "status", None) != RunStatus.Completed
+                    ):
+                        continue
                     text = _extract_text(event)
                     if text:
                         logger.info(
@@ -666,9 +662,7 @@ def _extract_text(event: Any) -> str:
     if hasattr(event, "get_text_content"):
         parts = event.get_text_content()
         if parts:
-            text = " ".join(
-                p.text for p in parts if hasattr(p, "text") and p.text
-            )
+            text = " ".join(p.text for p in parts if hasattr(p, "text") and p.text)
             if text:
                 return text
     content = getattr(event, "content", None) or []

@@ -12,8 +12,12 @@ from agentscope.message import Msg
 from agentscope.state import AgentState
 
 from ..runtime._state_utils import StateProxy
-from ..schemas import AgentResponse, Message, MessageType
-from .events import HarnessHistoryItem, HarnessHistoryKind
+from .events import (
+    HarnessEvent,
+    HarnessEventKind,
+    HarnessHistoryItem,
+    HarnessHistoryKind,
+)
 
 
 class HarnessSessionBridge:
@@ -69,13 +73,13 @@ class HarnessSessionBridge:
         self,
         *,
         request: Any,
-        response: AgentResponse,
+        events: list[HarnessEvent],
         backend: str,
     ) -> None:
         """Append one request and its normalized output atomically."""
         session_id = str(getattr(request, "session_id", "") or "default")
-        user_id = str(getattr(request, "user_id", "") or session_id)
-        channel = str(getattr(request, "channel", "") or "")
+        user_id = str(request.user_id or session_id)
+        channel = str(request.source.channel_type or "")
         persisted = await self._session.get_session_state_dict(
             session_id,
             user_id,
@@ -90,7 +94,7 @@ class HarnessSessionBridge:
         if not isinstance(context, list):
             context = []
         context.extend(self._request_messages(request, backend))
-        context.extend(self._response_messages(response, backend))
+        context.extend(self._event_messages(events, backend))
         state["context"] = context
 
         proxy = StateProxy()
@@ -127,7 +131,7 @@ class HarnessSessionBridge:
         backend: str,
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
-        for item in getattr(request, "input", None) or []:
+        for item in request.messages:
             role = cls._enum_value(getattr(item, "role", None)) or "user"
             blocks = cls._content_blocks(getattr(item, "content", None))
             if not blocks:
@@ -150,9 +154,7 @@ class HarnessSessionBridge:
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         for item in history:
-            role = (
-                "user" if item.kind == HarnessHistoryKind.USER else "assistant"
-            )
+            role = "user" if item.kind == HarnessHistoryKind.USER else "assistant"
             if item.kind == HarnessHistoryKind.REASONING:
                 block = {"type": "thinking", "thinking": item.text}
             elif item.kind == HarnessHistoryKind.TOOL_CALL:
@@ -189,88 +191,70 @@ class HarnessSessionBridge:
         return messages
 
     @classmethod
-    def _response_messages(
+    def _event_messages(
         cls,
-        response: AgentResponse,
+        events: list[HarnessEvent],
         backend: str,
     ) -> list[dict[str, Any]]:
-        messages: list[dict[str, Any]] = []
-        for item in response.output:
-            block = cls._output_block(item)
-            if block is None:
-                continue
-            role = cls._enum_value(item.role) or "assistant"
-            if role == "tool":
-                role = "assistant"
-            messages.append(
-                cls._msg_dump(
-                    name=role,
-                    role=role,
-                    content=[block],
-                    backend=backend,
-                    extra={
-                        "response_id": response.id,
-                        "message_id": item.id,
-                        "status": cls._enum_value(item.status),
-                    },
-                ),
-            )
-        error = getattr(response, "error", None)
-        if error and not messages:
-            text = (
-                str(error.get("message") or error)
-                if isinstance(error, dict)
-                else str(error)
-            )
-            messages.append(
-                cls._msg_dump(
-                    name="assistant",
-                    role="assistant",
-                    content=[{"type": "text", "text": text}],
-                    backend=backend,
-                    extra={"status": "failed"},
-                ),
-            )
-        return messages
+        history: list[HarnessHistoryItem] = []
+        content_kind: HarnessHistoryKind | None = None
+        content_text = ""
+        tool_output: dict[str, str] = {}
 
-    @classmethod
-    # pylint: disable=too-many-return-statements
-    def _output_block(cls, message: Message) -> dict[str, Any] | None:
-        content = message.content[0] if message.content else None
-        if content is None:
-            return None
-        message_type = cls._enum_value(message.type)
-        if message_type == MessageType.MESSAGE.value:
-            return {
-                "type": "text",
-                "text": str(getattr(content, "text", "") or ""),
-            }
-        if message_type == MessageType.REASONING.value:
-            return {
-                "type": "thinking",
-                "thinking": str(getattr(content, "text", "") or ""),
-            }
-        data = getattr(content, "data", None)
-        if not isinstance(data, dict):
-            return None
-        if message_type == MessageType.PLUGIN_CALL.value:
-            return {
-                "type": "tool_call",
-                "id": str(data.get("call_id") or message.id),
-                "name": str(data.get("name") or "tool"),
-                "input": str(data.get("arguments") or "{}"),
-            }
-        if message_type == MessageType.PLUGIN_CALL_OUTPUT.value:
-            output = data.get("output")
-            if isinstance(output, (dict, list)):
-                output = json.dumps(output, ensure_ascii=False)
-            return {
-                "type": "tool_result",
-                "id": str(data.get("call_id") or message.id),
-                "name": str(data.get("name") or "tool"),
-                "output": str(output or ""),
-            }
-        return None
+        def flush_content() -> None:
+            nonlocal content_kind, content_text
+            if content_kind is not None and content_text:
+                history.append(
+                    HarnessHistoryItem(
+                        kind=content_kind,
+                        text=content_text,
+                    ),
+                )
+            content_kind = None
+            content_text = ""
+
+        for event in events:
+            if event.kind in {
+                HarnessEventKind.TEXT_DELTA,
+                HarnessEventKind.REASONING_DELTA,
+            }:
+                next_kind = (
+                    HarnessHistoryKind.MESSAGE
+                    if event.kind is HarnessEventKind.TEXT_DELTA
+                    else HarnessHistoryKind.REASONING
+                )
+                if content_kind is not next_kind:
+                    flush_content()
+                    content_kind = next_kind
+                content_text += event.text
+            elif event.kind is HarnessEventKind.TOOL_STARTED:
+                flush_content()
+                history.append(
+                    HarnessHistoryItem(
+                        kind=HarnessHistoryKind.TOOL_CALL,
+                        item_id=event.item_id,
+                        tool_name=event.tool_name,
+                        data=event.data,
+                    ),
+                )
+                tool_output[event.item_id] = ""
+            elif event.kind is HarnessEventKind.TOOL_PROGRESS:
+                tool_output[event.item_id] = (
+                    tool_output.get(event.item_id, "") + event.text
+                )
+            elif event.kind is HarnessEventKind.TOOL_COMPLETED:
+                history.append(
+                    HarnessHistoryItem(
+                        kind=HarnessHistoryKind.TOOL_OUTPUT,
+                        item_id=event.item_id,
+                        tool_name=event.tool_name,
+                        text=event.text or tool_output.get(event.item_id, ""),
+                        data=event.data,
+                    ),
+                )
+                tool_output.pop(event.item_id, None)
+        flush_content()
+        return cls._history_messages(history, backend)
 
     @staticmethod
     def _content_blocks(content: Any) -> list[dict[str, Any]]:
@@ -299,9 +283,7 @@ class HarnessSessionBridge:
             if "://" not in source_text and not source_text.startswith(
                 "data:",
             ):
-                source_text = (
-                    Path(source_text).expanduser().absolute().as_uri()
-                )
+                source_text = Path(source_text).expanduser().absolute().as_uri()
             default_media_types = {
                 "image": "image/png",
                 "audio": "audio/mpeg",

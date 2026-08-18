@@ -13,7 +13,6 @@ from qwenpaw.app.channels.base import BaseChannel
 from qwenpaw.domain.channels.catalog import BUILTIN_CHANNEL_KEYS
 from qwenpaw.runtime.runtime import Runtime
 
-
 _LEGACY_CHANNEL_PROTOCOL_FILES = {
     "base.py",
     "console/channel.py",
@@ -67,12 +66,7 @@ def test_console_sse_implementation_is_not_owned_by_base_channel() -> None:
 
 
 def test_console_envelope_is_not_implemented_in_runtime_package() -> None:
-    source = Path("src/qwenpaw/runtime/envelope.py").read_text(
-        encoding="utf-8",
-    )
-
-    assert "class Envelope" not in source
-    assert "transports.console.envelope" in source
+    assert not Path("src/qwenpaw/runtime/envelope.py").exists()
 
 
 def test_channel_identity_map_is_not_redeclared() -> None:

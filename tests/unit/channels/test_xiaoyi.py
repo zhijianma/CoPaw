@@ -9,6 +9,7 @@ WebSocket operations
 Run:
     pytest tests/unit/channels/test_xiaoyi.py -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 from __future__ import annotations
 
@@ -16,7 +17,6 @@ import json
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
-
 
 # =============================================================================
 # Fixtures
@@ -894,9 +894,7 @@ class TestXiaoYiChannelMedia:
             mock_send.assert_called_once()
             msg = mock_send.call_args[0][1]
             msg_detail = json.loads(msg["msgDetail"])
-            assert (
-                msg_detail["result"]["artifact"]["parts"][0]["kind"] == "file"
-            )
+            assert msg_detail["result"]["artifact"]["parts"][0]["kind"] == "file"
 
     async def test_send_media_handles_unknown_type(
         self,
@@ -998,26 +996,26 @@ class TestXiaoYiChannelSessionResolution:
 
         assert result == "xiaoyi:sender_123"
 
-    def test_get_to_handle_from_request_with_meta(self, xiaoyi_channel):
-        """get_to_handle_from_request should use channel_meta session_id."""
+    def test_get_to_handle_from_turn_with_meta(self, xiaoyi_channel):
+        """get_to_handle_from_turn should use channel_meta session_id."""
         mock_request = MagicMock()
-        mock_request.channel_meta = {"session_id": "meta_session_123"}
-        mock_request.user_id = "user_123"
+        mock_request.metadata = {"session_id": "meta_session_123"}
+        mock_request.sender_id = "user_123"
 
-        result = xiaoyi_channel.get_to_handle_from_request(mock_request)
+        result = xiaoyi_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "meta_session_123"
 
-    def test_get_to_handle_from_request_fallback_to_user_id(
+    def test_get_to_handle_from_turn_fallback_to_user_id(
         self,
         xiaoyi_channel,
     ):
-        """get_to_handle_from_request should fallback to user_id."""
+        """get_to_handle_from_turn should fallback to user_id."""
         mock_request = MagicMock()
-        mock_request.channel_meta = {}
-        mock_request.user_id = "user_123"
+        mock_request.metadata = {}
+        mock_request.sender_id = "user_123"
 
-        result = xiaoyi_channel.get_to_handle_from_request(mock_request)
+        result = xiaoyi_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "user_123"
 
@@ -1248,18 +1246,13 @@ class TestXiaoYiChannelConnectionRegistry:
 
         # Add to registry first
         async with xiaoyi_module._active_connections_lock:
-            xiaoyi_module._active_connections[
-                xiaoyi_channel.agent_id
-            ] = xiaoyi_channel
+            xiaoyi_module._active_connections[xiaoyi_channel.agent_id] = xiaoyi_channel
 
         # Unregister
         await xiaoyi_channel._unregister_connection()
 
         async with xiaoyi_module._active_connections_lock:
-            assert (
-                xiaoyi_channel.agent_id
-                not in xiaoyi_module._active_connections
-            )
+            assert xiaoyi_channel.agent_id not in xiaoyi_module._active_connections
 
 
 # =============================================================================
@@ -1272,8 +1265,8 @@ class TestXiaoYiChannelBuildAgentRequest:
     P1: Build agent request from native payload tests.
     """
 
-    def test_build_agent_request_from_native_basic(self, xiaoyi_channel):
-        """build_agent_request_from_native builds request."""
+    def test_build_channel_turn_from_native_basic(self, xiaoyi_channel):
+        """build_channel_turn_from_native builds request."""
         payload = {
             "channel_id": "xiaoyi",
             "sender_id": "user_123",
@@ -1281,23 +1274,23 @@ class TestXiaoYiChannelBuildAgentRequest:
             "meta": {"session_id": "session_123", "task_id": "task_123"},
         }
 
-        result = xiaoyi_channel.build_agent_request_from_native(payload)
+        result = xiaoyi_channel.build_channel_turn_from_native(payload)
 
-        assert result.user_id == "user_123"
-        assert result.channel == "xiaoyi"
-        assert result.channel_meta == {
+        assert result.sender_id == "user_123"
+        assert result.channel_type == "xiaoyi"
+        assert result.metadata == {
             "session_id": "session_123",
             "task_id": "task_123",
         }
 
-    def test_build_agent_request_from_native_empty_payload(
+    def test_build_channel_turn_from_native_empty_payload(
         self,
         xiaoyi_channel,
     ):
-        """build_agent_request_from_native should handle empty payload."""
+        """build_channel_turn_from_native should handle empty payload."""
         payload = {}
 
-        result = xiaoyi_channel.build_agent_request_from_native(payload)
+        result = xiaoyi_channel.build_channel_turn_from_native(payload)
 
-        assert result.channel == "xiaoyi"  # Default channel
-        assert result.user_id == ""  # Empty sender
+        assert result.channel_type == "xiaoyi"  # Default channel
+        assert result.sender_id == ""  # Empty sender

@@ -1,36 +1,38 @@
 # -*- coding: utf-8 -*-
-"""Tests for the legacy Channel to core request bridge."""
+"""Tests for direct Channel turn routing."""
 
+from qwenpaw.app.channels.turn import ChannelTurn
 from qwenpaw.domain.channels.models import ReplyTarget
-from qwenpaw.runtime.channel_request_bridge import ChannelRequestBridge
-from qwenpaw.schemas import AgentRequest, Message, Role, TextContent
+from qwenpaw.schemas import Message, Role, TextContent
 
 
-def _request() -> AgentRequest:
-    request = AgentRequest(
+def _request() -> ChannelTurn:
+    return ChannelTurn(
         session_id="chat-42",
-        user_id="user-7",
-        channel="telegram",
-        input=[
+        sender_id="user-7",
+        channel_type="telegram",
+        messages=[
             Message(
                 role=Role.USER,
                 content=[TextContent(text="hello")],
             ),
         ],
+        message_id="message-9",
+        metadata={
+            "conversation_id": "chat-42",
+            "thread_id": "thread-3",
+            "tenant": "acme",
+        },
     )
-    request.id = "message-9"
-    request.channel_meta = {
-        "conversation_id": "chat-42",
-        "thread_id": "thread-3",
-        "tenant": "acme",
-    }
-    return request
 
 
 def test_bridge_preserves_logical_session_identity() -> None:
-    bridge = ChannelRequestBridge("sales", "telegram")
-
-    turn = bridge.build(_request())
+    turn = _request().to_request(
+        agent_id="sales",
+        instance_id="telegram",
+        runtime_session_id="chat-42",
+        channel_instance=None,
+    )
 
     assert turn.turn_id == "message-9"
     assert turn.agent_id == "sales"
@@ -46,29 +48,32 @@ def test_bridge_preserves_logical_session_identity() -> None:
 
 
 def test_bridge_preserves_an_explicit_reply_target() -> None:
-    bridge = ChannelRequestBridge("sales", "telegram")
     request = _request()
     target = ReplyTarget(
         channel_type="telegram",
         conversation_id="override",
     )
-    request.channel_meta["reply_target"] = target
-    request.channel_meta["conversation_id"] = "override"
+    request.metadata["reply_target"] = target
+    request.metadata["conversation_id"] = "override"
 
-    turn = bridge.build(request)
+    turn = request.to_request(
+        agent_id="sales",
+        instance_id="telegram",
+        runtime_session_id="chat-42",
+        channel_instance=None,
+    )
 
     assert turn.reply_target is target
     assert turn.context["reply_target"] is target
 
 
 def test_secondary_bridge_qualifies_runtime_session_only() -> None:
-    bridge = ChannelRequestBridge(
-        "sales",
-        "telegram",
-        "telegram-backup",
+    turn = _request().to_request(
+        agent_id="sales",
+        instance_id="telegram-backup",
+        runtime_session_id="telegram-backup:chat-42",
+        channel_instance=None,
     )
-
-    turn = bridge.build(_request())
 
     assert turn.session_id == "telegram-backup:chat-42"
     assert turn.source.channel_type == "telegram"

@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for ChannelManager construction from type-keyed configurations."""
+
 # pylint: disable=protected-access
 
 from __future__ import annotations
@@ -185,7 +186,7 @@ def test_manager_preserves_plugin_settings(
 
 
 @pytest.mark.asyncio
-async def test_restart_preserves_plugin_config_and_channel_bridge() -> None:
+async def test_restart_preserves_plugin_config_and_agent_route() -> None:
     agent = AgentProfileConfig(
         id="sales",
         name="Sales",
@@ -210,9 +211,7 @@ async def test_restart_preserves_plugin_config_and_channel_bridge() -> None:
 
     plugin_config = original.clone.call_args.args[0]
     assert plugin_config.server == "https://plugin.invalid"
-    bridge = replacement.set_request_bridge.call_args.args[0]
-    assert bridge._channel_type == "custom_chat"
-    assert bridge._agent_id == "sales"
+    replacement.bind_route.assert_called_once_with("sales")
     assert await manager.get_channel("custom_chat") is replacement
 
 
@@ -273,6 +272,4 @@ async def test_secondary_send_event_restores_platform_session() -> None:
     )
 
     assert channel.send_event.call_args.kwargs["session_id"] == "conversation"
-    assert channel.send_event.call_args.kwargs["meta"]["session_id"] == (
-        "conversation"
-    )
+    assert channel.send_event.call_args.kwargs["meta"]["session_id"] == ("conversation")

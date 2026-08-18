@@ -15,22 +15,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from typing import Any, AsyncGenerator
 
-from ..domain.channels.models import ReplyTarget
-from ..domain.channels.ports import ReplyEvent
 from ..domain.turns.events import RuntimeEvent
 from ..domain.turns.models import TurnRequest
-from ..protocols.builtins import create_default_presenter
-from ..protocols.ports import PresentationContext, TurnEventPresenter
 from .builder import AgentBuilder
 from .executor import AgentExecutor
 from .hooks import HookAction, HookContext
 from .message_convert import _get_last_user_text, _request_input_to_msgs
 from .phases import Phase
-from .reply_projector import ReplyProjector
-from .request_adapter import to_legacy_agent_request
 from .turn_state_accumulator import TurnStateAccumulator
 
 logger = logging.getLogger(__name__)
@@ -40,8 +33,8 @@ class Runtime:
     """Per-workspace request orchestrator.
 
     One ``Runtime`` instance per ``Workspace``.  ``run()`` is called once
-    per request. ``stream_events()`` is transport-neutral; ``run()`` keeps
-    the legacy Console response protocol during migration.
+    per request. ``stream_events()`` is the only execution output; callers
+    choose their Protocol or Channel projection at the application edge.
     """
 
     def __init__(
@@ -52,41 +45,6 @@ class Runtime:
     ) -> None:
         self.workspace = workspace
         self.app_services = app_services
-
-    async def run(
-        self,
-        request: Any,
-    ) -> AsyncGenerator[Any, None]:
-        """Present runtime events using the existing Console protocol."""
-        request = self._normalize(request)
-        presenter, context = create_default_presenter(
-            conversation_id=str(getattr(request, "session_id", "") or ""),
-            turn_id=str(getattr(request, "id", "") or ""),
-        )
-        async for output in self.present(request, presenter, context):
-            yield output
-
-    async def present(
-        self,
-        request: Any,
-        presenter: TurnEventPresenter,
-        context: PresentationContext,
-    ) -> AsyncGenerator[Any, None]:
-        """Present a turn through an injected semantic protocol port."""
-        async for runtime_event in self.stream_events(request):
-            async for output in presenter.present(runtime_event, context):
-                yield output
-
-    async def stream_replies(
-        self,
-        request: Any,
-        *,
-        target: ReplyTarget,
-    ) -> AsyncGenerator[ReplyEvent, None]:
-        """Project a runtime stream for an adapter-owned reply target."""
-        projector = ReplyProjector(target)
-        async for event in self.stream_events(request):
-            yield projector.project(event)
 
     async def stream_events(  # pylint: disable=too-many-branches
         # pylint: disable=too-many-statements
@@ -100,7 +58,7 @@ class Runtime:
 
         turn_state = TurnStateAccumulator()
         ctx._turn_state = turn_state  # pylint: disable=protected-access
-        turn_id = str(getattr(request, "id", "") or "")
+        turn_id = request.turn_id
         skip_agent = False
 
         try:
@@ -332,8 +290,8 @@ class Runtime:
             proxy = StateProxy()
             proxy.data = agent.state_dict()
             request = ctx.request
-            user_id = getattr(request, "user_id", "") or ctx.session_id
-            channel = getattr(request, "channel", "") or ""
+            user_id = request.user_id or ctx.session_id
+            channel = request.source.channel_type or ""
             await asyncio.shield(
                 session.save_session_state(
                     session_id=ctx.session_id,
@@ -388,9 +346,7 @@ class Runtime:
             if partial:
                 agent_state = getattr(agent, "state", None)
                 ctx_list = (
-                    getattr(agent_state, "context", None)
-                    if agent_state
-                    else None
+                    getattr(agent_state, "context", None) if agent_state else None
                 )
                 existing_texts: set[str] = set()
                 if ctx_list and len(ctx_list) > 0:
@@ -513,31 +469,24 @@ class Runtime:
         return closed
 
     @staticmethod
-    def _normalize(request: Any) -> Any:
-        from ..schemas import AgentRequest
-
+    def _normalize(request: Any) -> TurnRequest:
+        """Enforce the core request contract at the runtime boundary."""
         if isinstance(request, TurnRequest):
-            request = to_legacy_agent_request(request)
-        elif isinstance(request, dict):
-            request = AgentRequest(**request)
-        if not getattr(request, "session_id", None):
-            request.session_id = uuid.uuid4().hex
-        if not getattr(request, "user_id", None):
-            request.user_id = request.session_id
-        return request
+            return request
+        raise TypeError(
+            "Runtime accepts TurnRequest; decode protocol input at ingress",
+        )
 
     def _build_context(self, request: Any) -> HookContext:
         workspace_dir = getattr(self.workspace, "workspace_dir", None)
         # Prefer the workspace's resolved agent id over a bare "default", so an
         # agent selected by header (no body agent_id) loads its own config.
         agent_id = (
-            getattr(request, "agent_id", None)
-            or getattr(self.workspace, "agent_id", None)
-            or "default"
+            request.agent_id or getattr(self.workspace, "agent_id", None) or "default"
         )
         session_id = request.session_id
-        root_session_id = getattr(request, "root_session_id", "") or session_id
-        root_agent_id = getattr(request, "root_agent_id", "") or agent_id
+        root_session_id = str(request.context.get("root_session_id") or session_id)
+        root_agent_id = str(request.context.get("root_agent_id") or agent_id)
 
         return HookContext(
             request=request,
@@ -548,7 +497,7 @@ class Runtime:
             workspace_dir=workspace_dir,
             workspace=self.workspace,
             app_services=self.app_services,
-            input_msgs=_request_input_to_msgs(request.input),
+            input_msgs=_request_input_to_msgs(list(request.messages)),
         )
 
     @staticmethod

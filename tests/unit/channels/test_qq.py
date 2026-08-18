@@ -17,6 +17,7 @@ Run:
     pytest tests/unit/channels/test_qq.py -v
     pytest tests/unit/channels/test_qq.py::TestQQChannelInit -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 # pylint: disable=broad-exception-raised
 from __future__ import annotations
@@ -33,7 +34,6 @@ import pytest
 from qwenpaw.app.channels.renderer import ChannelDisplayConfig
 
 from tests.fixtures.channels.mock_http import MockAiohttpSession
-
 
 # =============================================================================
 # Fixtures
@@ -268,9 +268,7 @@ class TestQQChannelFromConfig:
         from qwenpaw.app.channels.qq.channel import QQChannel
 
         class MockConfig:
-            enabled = (
-                False  # Use False instead of None to match actual behavior
-            )
+            enabled = False  # Use False instead of None to match actual behavior
             app_id = ""
             client_secret = ""
             bot_prefix = ""
@@ -288,9 +286,7 @@ class TestQQChannelFromConfig:
         assert channel.client_secret == ""
         assert channel.bot_prefix == ""
         # markdown_enabled may be None in implementation when config has None
-        assert (
-            channel._markdown_enabled is not False
-        )  # Should not be explicitly False
+        assert channel._markdown_enabled is not False  # Should not be explicitly False
 
 
 # =============================================================================
@@ -490,10 +486,7 @@ class TestShouldPlaintextFallbackFromMarkdown:
             _should_plaintext_fallback_from_markdown,
         )
 
-        assert (
-            _should_plaintext_fallback_from_markdown(ValueError("test"))
-            is False
-        )
+        assert _should_plaintext_fallback_from_markdown(ValueError("test")) is False
 
 
 class TestGetNextMsgSeq:
@@ -745,34 +738,18 @@ class TestResolveAttachmentType:
 
     def test_resolve_by_mime_type(self, qq_channel):
         """Should resolve type by MIME type."""
-        assert (
-            qq_channel._resolve_attachment_type("image/jpeg", "file")
-            == "image"
-        )
-        assert (
-            qq_channel._resolve_attachment_type("video/mp4", "file") == "video"
-        )
-        assert (
-            qq_channel._resolve_attachment_type("audio/mpeg", "file")
-            == "audio"
-        )
+        assert qq_channel._resolve_attachment_type("image/jpeg", "file") == "image"
+        assert qq_channel._resolve_attachment_type("video/mp4", "file") == "video"
+        assert qq_channel._resolve_attachment_type("audio/mpeg", "file") == "audio"
 
     def test_resolve_voice_type(self, qq_channel):
         """Should resolve voice as audio."""
-        assert (
-            qq_channel._resolve_attachment_type("voice", "audio.silk")
-            == "audio"
-        )
+        assert qq_channel._resolve_attachment_type("voice", "audio.silk") == "audio"
 
     def test_resolve_default_to_file(self, qq_channel):
         """Should default to file type."""
-        assert (
-            qq_channel._resolve_attachment_type("", "document.pdf") == "file"
-        )
-        assert (
-            qq_channel._resolve_attachment_type("application/pdf", "doc")
-            == "file"
-        )
+        assert qq_channel._resolve_attachment_type("", "document.pdf") == "file"
+        assert qq_channel._resolve_attachment_type("application/pdf", "doc") == "file"
 
 
 class TestMakeContentPart:
@@ -1757,9 +1734,7 @@ class TestWSConnectOnce:
         ) as mock_get_url:
             qq_channel._ws_connect_once(state, mock_websocket)
 
-            assert (
-                state.should_refresh_token is False
-            )  # Token cache was cleared
+            assert state.should_refresh_token is False  # Token cache was cleared
             mock_get_url.assert_called_once_with("token123")
             mock_ws.close.assert_called_once()
 
@@ -1855,8 +1830,8 @@ class TestHandleMsgEvent:
         qq_channel._handle_msg_event("C2C_MESSAGE_CREATE", d)
         assert len(enqueued) == 1
         req = enqueued[0]
-        assert req.channel_meta["message_type"] == "c2c"
-        assert req.channel_meta["sender_id"] == "sender_1"
+        assert req.metadata["message_type"] == "c2c"
+        assert req.metadata["sender_id"] == "sender_1"
 
     def test_guild_message_has_extra_meta(self, qq_channel):
         """Guild message should have extra metadata."""
@@ -1871,7 +1846,7 @@ class TestHandleMsgEvent:
         }
         qq_channel._handle_msg_event("AT_MESSAGE_CREATE", d)
         assert len(enqueued) == 1
-        meta = enqueued[0].channel_meta
+        meta = enqueued[0].metadata
         assert meta["message_type"] == "guild"
         assert meta["channel_id"] == "ch_100"
         assert meta["guild_id"] == "g_200"
@@ -1888,7 +1863,7 @@ class TestHandleMsgEvent:
         }
         qq_channel._handle_msg_event("GROUP_AT_MESSAGE_CREATE", d)
         assert len(enqueued) == 1
-        meta = enqueued[0].channel_meta
+        meta = enqueued[0].metadata
         assert meta["message_type"] == "group"
         assert meta["group_openid"] == "grp_300"
 
@@ -1938,7 +1913,7 @@ class TestHandleMsgEvent:
         }
         qq_channel._handle_msg_event("C2C_MESSAGE_CREATE", d)
         assert len(enqueued) == 1
-        assert enqueued[0].channel_meta["sender_id"] == "fallback_id"
+        assert enqueued[0].metadata["sender_id"] == "fallback_id"
 
 
 class TestSendImages:
@@ -2069,7 +2044,7 @@ class TestSendMessageAsync:
 
 
 class TestBuildAgentRequestFromNative:
-    """Tests for build_agent_request_from_native method."""
+    """Tests for build_channel_turn_from_native method."""
 
     def test_basic_request(self, qq_channel):
         """Should build basic request from native data."""
@@ -2083,12 +2058,12 @@ class TestBuildAgentRequestFromNative:
             ],
             "meta": {"message_type": "c2c"},
         }
-        req = qq_channel.build_agent_request_from_native(native)
-        assert req.user_id == "user_1"
+        req = qq_channel.build_channel_turn_from_native(native)
+        assert req.sender_id == "user_1"
 
     def test_non_dict_payload(self, qq_channel):
         """Should handle non-dict payload gracefully."""
-        req = qq_channel.build_agent_request_from_native("invalid")
+        req = qq_channel.build_channel_turn_from_native("invalid")
         # should not raise, uses empty defaults
         assert req is not None
 
@@ -2103,5 +2078,5 @@ class TestBuildAgentRequestFromNative:
                 "attachments": [{"url": "http://a.jpg", "filename": "a.jpg"}],
             },
         }
-        qq_channel.build_agent_request_from_native(native)
+        qq_channel.build_channel_turn_from_native(native)
         qq_channel._parse_qq_attachments.assert_called_once()

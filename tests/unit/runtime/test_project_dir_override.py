@@ -12,8 +12,21 @@ import pytest
 
 from qwenpaw.agents.acp.meta import ACP_PROJECT_DIR_META_KEY
 from qwenpaw.config.config import AgentProfileConfig
+from qwenpaw.domain.turns.models import RequestSource, TurnRequest
 from qwenpaw.runtime.builder import AgentBuilder
 from qwenpaw.runtime.prompt_contributors import CodingModeContributor
+
+
+def _request(context: dict | None = None) -> TurnRequest:
+    return TurnRequest(
+        turn_id="turn-1",
+        agent_id="default",
+        session_id="session-1",
+        user_id="user-1",
+        messages=[],
+        source=RequestSource(protocol="console", channel_type="console"),
+        context=context or {},
+    )
 
 
 def test_request_project_override_does_not_enable_coding_tools(tmp_path):
@@ -112,11 +125,7 @@ def test_normal_prompt_includes_workspace_fallback_as_project(tmp_path):
         workspace_dir=tmp_path,
         agent_id="default",
         session_id="session-1",
-        request=SimpleNamespace(
-            user_id="user-1",
-            channel="console",
-            request_context={},
-        ),
+        request=_request(),
         workspace=None,
     )
 
@@ -141,11 +150,7 @@ def test_normal_prompt_uses_session_project_snapshot(tmp_path):
         workspace_dir=workspace_dir,
         agent_id="default",
         session_id="session-1",
-        request=SimpleNamespace(
-            user_id="user-1",
-            channel="console",
-            request_context={"project_dir": str(project_dir)},
-        ),
+        request=_request({"project_dir": str(project_dir)}),
         workspace=None,
     )
 

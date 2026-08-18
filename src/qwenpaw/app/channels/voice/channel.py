@@ -62,8 +62,7 @@ class VoiceChannel(BaseChannel):
         instance = cls(
             process,
             on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
         )
         instance._config = config
@@ -196,19 +195,19 @@ class VoiceChannel(BaseChannel):
         if session and session.status == "active":
             await session.handler.send_text(text)
 
-    def build_agent_request_from_native(
+    def build_channel_turn_from_native(
         self,
         native_payload: Any,
     ) -> Any:
-        """Convert a voice payload dict to AgentRequest."""
+        """Convert a voice payload dict to ChannelTurn."""
         from qwenpaw.schemas import (
-            AgentRequest,
             Message,
             MessageType,
             Role,
             TextContent,
             ContentType,
         )
+        from ..turn import ChannelTurn
 
         text = native_payload.get("transcript", "")
         session_id = native_payload.get("session_id", "")
@@ -219,11 +218,11 @@ class VoiceChannel(BaseChannel):
             role=Role.USER,
             content=[TextContent(type=ContentType.TEXT, text=text)],
         )
-        return AgentRequest(
+        return ChannelTurn(
             session_id=session_id,
-            user_id=user_id,
-            input=[msg],
-            channel=self.channel,
+            sender_id=user_id,
+            messages=[msg],
+            channel_type=self.channel,
         )
 
     @property
@@ -238,17 +237,8 @@ class VoiceChannel(BaseChannel):
 
     async def process_request(self, request: Any) -> AsyncIterator[Any]:
         """Route a Voice request through the canonical core boundary."""
-        from ..reply_presentation import present_reply_stream
-
-        process_request = self._request_for_process(request)
-        session_id = str(getattr(request, "session_id", "") or "voice")
-        stream = self._runtime_process(process_request)
-        async for event in present_reply_stream(
-            stream,
-            request=process_request,
-            channel_type=self.channel,
-            conversation_id=session_id,
-        ):
+        process_request = self._build_turn_request(request)
+        async for event in self._runtime_process(process_request):
             yield event
 
     _MAX_PENDING_TOKENS = 100

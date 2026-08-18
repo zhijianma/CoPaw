@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-instance-attributes,too-many-arguments
 """Mattermost channel: WebSocket event listener + REST API replies."""
+
 from __future__ import annotations
 
 import asyncio
@@ -249,8 +250,7 @@ class MattermostChannel(BaseChannel):
                 c.get("thread_follow_without_mention", False),
             ),
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=c.get("dm_policy") or "open",
             group_policy=c.get("group_policy") or "open",
@@ -495,8 +495,7 @@ class MattermostChannel(BaseChannel):
                     _SEEN_SESSIONS_MAX,
                 )
                 logger.info(
-                    "mattermost: first DM contact on %s — "
-                    "fetching channel history",
+                    "mattermost: first DM contact on %s — " "fetching channel history",
                     session_id,
                 )
                 return await self._fetch_channel_history(mm_channel_id)
@@ -532,9 +531,7 @@ class MattermostChannel(BaseChannel):
         metadata = post.get("metadata") or {}
         file_infos: list[dict] = metadata.get("files") or []
         hint_map: dict[str, str] = {
-            fi.get("id", ""): fi.get("name", "")
-            for fi in file_infos
-            if fi.get("id")
+            fi.get("id", ""): fi.get("name", "") for fi in file_infos if fi.get("id")
         }
         for fid in file_ids:
             local_path = await self._download_file(
@@ -588,9 +585,7 @@ class MattermostChannel(BaseChannel):
         # Channel: each thread is its own session.
         #      A flat @mention seeds a new thread (root_id = post_id).
         if is_dm:
-            target_root_id = (
-                original_root_id  # "" for flat DM, non-empty for thread
-            )
+            target_root_id = original_root_id  # "" for flat DM, non-empty for thread
             session_id = f"mattermost_dm:{mm_channel_id}"
         else:
             target_root_id = original_root_id if original_root_id else post_id
@@ -842,9 +837,7 @@ class MattermostChannel(BaseChannel):
                 lines = [f"[Recent {per_page} DM context messages]"]
                 for pid in order:
                     p = posts.get(pid, {})
-                    role = (
-                        "Bot" if p.get("user_id") == self._bot_id else "User"
-                    )
+                    role = "Bot" if p.get("user_id") == self._bot_id else "User"
                     msg = p.get("message", "").strip()
                     if msg:
                         lines.append(f"{role}: {msg}")
@@ -983,7 +976,7 @@ class MattermostChannel(BaseChannel):
     ) -> None:
         """Send text reply to Mattermost.
 
-        to_handle = mm_channel_id (resolved by get_to_handle_from_request).
+        to_handle = mm_channel_id (resolved by get_to_handle_from_turn).
         root_id from meta guarantees the reply threads correctly.
         """
         if not self.enabled:
@@ -1068,28 +1061,28 @@ class MattermostChannel(BaseChannel):
         effective_root = root_id if root_id else post_id
         return f"mattermost_thread:{effective_root}"
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
-        """Convert Mattermost native dict → AgentRequest."""
+    def build_channel_turn_from_native(self, native_payload: Any) -> Any:
+        """Convert Mattermost native dict → ChannelTurn."""
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
         content_parts = payload.get("content_parts") or []
         meta = payload.get("meta") or {}
         session_id = self.resolve_session_id(sender_id, meta)
-        request = self.build_agent_request_from_user_content(
+        request = self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=sender_id,
             session_id=session_id,
             content_parts=content_parts,
             channel_meta=meta,
         )
-        request.user_id = sender_id
-        request.channel_meta = meta
+        request.sender_id = sender_id
+        request.metadata = meta
         return request
 
-    def get_to_handle_from_request(self, request: Any) -> str:
+    def get_to_handle_from_turn(self, request: Any) -> str:
         """Return mm_channel_id for the send() call."""
-        meta = getattr(request, "channel_meta", None) or {}
+        meta = getattr(request, "metadata", None) or {}
         mm_channel_id = meta.get("mm_channel_id")
         if mm_channel_id:
             return str(mm_channel_id)
@@ -1097,7 +1090,7 @@ class MattermostChannel(BaseChannel):
         sid = getattr(request, "session_id", "")
         if sid.startswith("mattermost_dm:"):
             return sid.split(":", 1)[-1]
-        return getattr(request, "user_id", "") or ""
+        return getattr(request, "sender_id", "") or ""
 
     def to_handle_from_target(self, *, user_id: str, session_id: str) -> str:
         """Cron/proactive dispatch: resolve send target from session_id."""

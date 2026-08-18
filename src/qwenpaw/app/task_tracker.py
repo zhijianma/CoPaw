@@ -5,10 +5,10 @@
 event buffer. Reconnects get buffer replay + new events. Cleanup when task
 completes.
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import weakref
 from dataclasses import dataclass, field
@@ -19,10 +19,17 @@ logger = logging.getLogger(__name__)
 
 _SENTINEL = None
 
-# Emitted to reconnect subscribers right after the buffered events, so
-# the client can render the replayed part instantly (no token-by-token
-# re-animation) and switch to live streaming afterwards.
-REPLAY_END_SSE = f"data: {json.dumps({'type': 'replay_end'})}\n\n"
+
+@dataclass(frozen=True, slots=True)
+class ReplayBoundary:
+    """Marks the boundary between replayed and live task events."""
+
+
+@dataclass(frozen=True, slots=True)
+class TaskStreamError:
+    """Transport-neutral producer failure notification."""
+
+    message: str = "internal server error"
 
 
 @dataclass
@@ -31,7 +38,7 @@ class _RunState:
 
     task: asyncio.Future
     queues: list[asyncio.Queue] = field(default_factory=list)
-    buffer: list[str] = field(default_factory=list)
+    buffer: list[Any] = field(default_factory=list)
     start_time: Optional[datetime] = None
     finish_time: Optional[datetime] = None
     owner: object | None = None
@@ -132,8 +139,7 @@ class TaskTracker:
             return {
                 run_key: state.task
                 for run_key, state in self._runs.items()
-                if not state.task.done()
-                and (owner is None or state.owner is owner)
+                if not state.task.done() and (owner is None or state.owner is owner)
             }
 
     async def wait_tasks_done(
@@ -189,9 +195,9 @@ class TaskTracker:
             if state is None or state.task.done():
                 return None
             q: asyncio.Queue = asyncio.Queue()
-            for sse in state.buffer:
-                q.put_nowait(sse)
-            q.put_nowait(REPLAY_END_SSE)
+            for event in state.buffer:
+                q.put_nowait(event)
+            q.put_nowait(ReplayBoundary())
             state.queues.append(q)
             return q
 
@@ -258,8 +264,8 @@ class TaskTracker:
             state = self._runs.get(run_key)
             if state is not None and not state.task.done():
                 q: asyncio.Queue = asyncio.Queue()
-                for sse in state.buffer:
-                    q.put_nowait(sse)
+                for event in state.buffer:
+                    q.put_nowait(event)
                 state.queues.append(q)
                 return q, False
 
@@ -285,28 +291,25 @@ class TaskTracker:
                             # pylint: disable=protected-access
                             tracker._global_last_run_at = start_time
 
-                    async for sse in stream_fn(payload):
+                    async for event in stream_fn(payload):
                         tracker = tracker_ref()
                         if tracker is None:
                             return
                         async with tracker.lock:
-                            run.buffer.append(sse)
+                            run.buffer.append(event)
                             for q in run.queues:
-                                q.put_nowait(sse)
+                                q.put_nowait(event)
                 except asyncio.CancelledError:
                     logger.debug("run cancelled run_key=%s", run_key)
                 except Exception:
                     logger.exception("run error run_key=%s", run_key)
-                    err_sse = (
-                        "data: "
-                        f"{json.dumps({'error': 'internal server error'})}\n\n"
-                    )
+                    failure = TaskStreamError()
                     tracker = tracker_ref()
                     if tracker is not None:
                         async with tracker.lock:
-                            run.buffer.append(err_sse)
+                            run.buffer.append(failure)
                             for q in run.queues:
-                                q.put_nowait(err_sse)
+                                q.put_nowait(failure)
                 finally:
                     finish_time = datetime.now(timezone.utc)
                     tracker = tracker_ref()
@@ -330,8 +333,8 @@ class TaskTracker:
         self,
         queue: asyncio.Queue,
         run_key: str,
-    ) -> AsyncGenerator[str, None]:
-        """Yield SSE strings from *queue* until the sentinel ``None``.
+    ) -> AsyncGenerator[Any, None]:
+        """Yield task events from *queue* until the sentinel ``None``.
 
         Always detaches *queue* from *run_key* when this stream ends or is
         closed (including client disconnect), so reconnects do not leak queues.

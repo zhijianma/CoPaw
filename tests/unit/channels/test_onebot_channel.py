@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=protected-access
 """Unit tests for OneBot v11 channel."""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,7 +23,6 @@ from qwenpaw.app.channels.onebot.channel import (
     OneBotChannel,
     _normalize_media_ref_sync,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -240,8 +240,7 @@ class TestParseMessageSegments:
 
     def test_normalize_cq_code_message(self):
         segments = OneBotChannel._normalize_onebot_segments(
-            "hello [CQ:image,file=pic.jpg,"
-            "url=https://img.example.com/pic.jpg]",
+            "hello [CQ:image,file=pic.jpg," "url=https://img.example.com/pic.jpg]",
         )
 
         assert segments == [
@@ -319,8 +318,8 @@ class TestHandleMessageEvent:
         assert len(enqueued) == 1
         req = enqueued[0]
         assert req.session_id == "onebot:12345"
-        assert req.channel_meta["message_type"] == "private"
-        assert req.channel_meta["sender_id"] == "12345"
+        assert req.metadata["message_type"] == "private"
+        assert req.metadata["sender_id"] == "12345"
 
     async def test_group_message_enqueues(self):
         ch = _make_channel()
@@ -337,8 +336,8 @@ class TestHandleMessageEvent:
         assert len(enqueued) == 1
         req = enqueued[0]
         assert req.session_id == "onebot:67890:12345"
-        assert req.channel_meta["is_group"] is True
-        assert req.channel_meta["group_id"] == "67890"
+        assert req.metadata["is_group"] is True
+        assert req.metadata["group_id"] == "67890"
 
     async def test_empty_message_ignored(self):
         ch = _make_channel()
@@ -459,11 +458,10 @@ class TestHandleMessageEvent:
 
         ch._call_api.assert_awaited_once_with("get_msg", {"message_id": 321})
         assert len(enqueued) == 1
-        content = enqueued[0].input[0].content
+        content = enqueued[0].messages[0].content
         assert len(content) == 1
         assert content[0].text == (
-            "[Quoted message]\nquoted text\n\n"
-            "[Current message]\nplease answer"
+            "[Quoted message]\nquoted text\n\n" "[Current message]\nplease answer"
         )
 
     async def test_quoted_cq_image_is_marked_as_quoted_content(self):
@@ -473,8 +471,7 @@ class TestHandleMessageEvent:
             return_value={
                 "data": {
                     "message": (
-                        "[CQ:image,file=pic.jpg,"
-                        "url=https://img.example.com/pic.jpg]"
+                        "[CQ:image,file=pic.jpg," "url=https://img.example.com/pic.jpg]"
                     ),
                 },
             },
@@ -493,7 +490,7 @@ class TestHandleMessageEvent:
         )
         await ch._handle_message_event(event)
 
-        content = enqueued[0].input[0].content
+        content = enqueued[0].messages[0].content
         assert content[0].text == "[Quoted message]"
         assert content[1].text == "[Quoted image message]"
         assert content[2].type == ContentType.IMAGE
@@ -509,8 +506,7 @@ class TestHandleMessageEvent:
                 "data": {
                     "message": "[图片]",
                     "raw_message": (
-                        "[CQ:image,file=pic.jpg,"
-                        "url=https://img.example.com/pic.jpg]"
+                        "[CQ:image,file=pic.jpg," "url=https://img.example.com/pic.jpg]"
                     ),
                 },
             },
@@ -529,7 +525,7 @@ class TestHandleMessageEvent:
         )
         await ch._handle_message_event(event)
 
-        content = enqueued[0].input[0].content
+        content = enqueued[0].messages[0].content
         assert content[0].text == "[Quoted message]"
         assert content[1].text == "[Quoted image message]"
         assert content[2].type == ContentType.IMAGE
@@ -548,9 +544,7 @@ class TestHandleMessageEvent:
                             "type": "record",
                             "data": {
                                 "file": "voice.amr",
-                                "url": (
-                                    "https://qq.example/" "download?file=voice"
-                                ),
+                                "url": ("https://qq.example/" "download?file=voice"),
                             },
                         },
                     ],
@@ -571,7 +565,7 @@ class TestHandleMessageEvent:
         )
         await ch._handle_message_event(event)
 
-        content = enqueued[0].input[0].content
+        content = enqueued[0].messages[0].content
         assert content[1].text == "[Quoted voice message]"
         assert content[2].type == ContentType.AUDIO
         assert content[2].data == ("https://qq.example/download?file=voice")
@@ -623,10 +617,10 @@ class TestHandleMessageEvent:
         )
         assert len(enqueued) == 1
         assert (
-            enqueued[0].input[0].content[2].file_url
+            enqueued[0].messages[0].content[2].file_url
             == "https://files.example.com/doc.pdf"
         )
-        assert enqueued[0].input[0].content[1].text == (
+        assert enqueued[0].messages[0].content[1].text == (
             "[Quoted file message: doc.pdf]"
         )
 
@@ -682,7 +676,7 @@ class TestHandleMessageEvent:
             "get_group_file_url",
             {"group_id": 67890, "file_id": "current-file-id"},
         )
-        content = enqueued[0].input[0].content
+        content = enqueued[0].messages[0].content
         assert content[2].file_url == "https://files.example/quoted.pdf"
         assert content[4].file_url == "https://files.example/current.pdf"
 
@@ -733,7 +727,7 @@ class TestResolveSessionId:
 
 
 # ===================================================================
-# get_to_handle_from_request
+# get_to_handle_from_turn
 # ===================================================================
 
 
@@ -741,14 +735,14 @@ class TestGetToHandle:
     def test_group_message(self):
         ch = _make_channel()
         req = MagicMock()
-        req.channel_meta = {"is_group": True, "group_id": "67890"}
-        assert ch.get_to_handle_from_request(req) == "group:67890"
+        req.metadata = {"is_group": True, "group_id": "67890"}
+        assert ch.get_to_handle_from_turn(req) == "group:67890"
 
     def test_private_message(self):
         ch = _make_channel()
         req = MagicMock()
-        req.channel_meta = {"is_group": False, "sender_id": "12345"}
-        assert ch.get_to_handle_from_request(req) == "12345"
+        req.metadata = {"is_group": False, "sender_id": "12345"}
+        assert ch.get_to_handle_from_turn(req) == "12345"
 
 
 # ===================================================================
@@ -1203,7 +1197,7 @@ class TestHandleEvent:
 
 
 # ===================================================================
-# build_agent_request_from_native
+# build_channel_turn_from_native
 # ===================================================================
 
 
@@ -1218,12 +1212,12 @@ class TestBuildAgentRequest:
             ],
             "meta": {"is_group": False},
         }
-        req = ch.build_agent_request_from_native(native)
+        req = ch.build_channel_turn_from_native(native)
         assert req.session_id == "onebot:12345"
-        assert req.user_id == "12345"
-        assert req.channel == "onebot"
-        assert len(req.input) == 1
-        assert req.input[0].content[0].text == "hi"
+        assert req.sender_id == "12345"
+        assert req.channel_type == "onebot"
+        assert len(req.messages) == 1
+        assert req.messages[0].content[0].text == "hi"
 
 
 # ===================================================================
@@ -1302,9 +1296,7 @@ class TestWatchdog:
         await asyncio.sleep(0.3)
 
         assert ch._site is not None
-        assert (
-            ch._site is not old_site
-        ), "watchdog should have created a new site"
+        assert ch._site is not old_site, "watchdog should have created a new site"
 
         await ch.stop()
 
@@ -1460,9 +1452,7 @@ class TestConnectionAuth:
 
     @staticmethod
     def _request(path: str = "/ws", authorization: str | None = None):
-        headers = (
-            {} if authorization is None else {"Authorization": authorization}
-        )
+        headers = {} if authorization is None else {"Authorization": authorization}
         return make_mocked_request("GET", path, headers=headers)
 
     @staticmethod

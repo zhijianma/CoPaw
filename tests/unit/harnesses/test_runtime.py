@@ -20,15 +20,20 @@ from qwenpaw.harnesses.events import (
     HarnessProvider,
 )
 from qwenpaw.harnesses.runtime import HarnessRuntime
+from qwenpaw.domain.turns.events import RuntimeEventType
+from qwenpaw.protocols.console import ConsoleTurnIngress
 from qwenpaw.schemas import (
     AgentRequest,
     FileContent,
     ImageContent,
     Message,
-    MessageType,
     Role,
     TextContent,
 )
+
+
+def _core_request(request: AgentRequest):
+    return ConsoleTurnIngress().decode(request)
 
 
 class FakeAdapter(HarnessAdapter):
@@ -178,7 +183,7 @@ async def test_runtime_recreates_adapter_when_binary_changes(
 
 
 @pytest.mark.asyncio
-async def test_runtime_emits_qwenpaw_envelopes(tmp_path: Path) -> None:
+async def test_runtime_emits_canonical_events(tmp_path: Path) -> None:
     runtime = HarnessRuntime(tmp_path)
     adapter = FakeAdapter()
     runtime._adapters["codex"] = adapter
@@ -194,23 +199,21 @@ async def test_runtime_emits_qwenpaw_envelopes(tmp_path: Path) -> None:
 
     output = [
         item
-        async for item in runtime.stream(
+        async for item in runtime.stream_events(
             backend="codex",
-            request=request,
+            request=_core_request(request),
             cwd=tmp_path.resolve(),
         )
     ]
 
-    assert [item.object for item in output] == [
-        "response",
-        "response",
-        "message",
-        "content",
-        "message",
-        "response",
+    assert [item.type for item in output] == [
+        RuntimeEventType.TURN_STARTED,
+        RuntimeEventType.CONTENT_STARTED,
+        RuntimeEventType.CONTENT_DELTA,
+        RuntimeEventType.CONTENT_COMPLETED,
+        RuntimeEventType.TURN_COMPLETED,
     ]
-    assert output[3].text == "Fixed"
-    assert output[-1].status == "completed"
+    assert output[2].data["delta"] == "Fixed"
     assert adapter.prompt == "Fix it"
     assert adapter.attachments == []
 
@@ -243,14 +246,14 @@ async def test_runtime_forwards_dropped_image_and_file(
 
     output = [
         item
-        async for item in runtime.stream(
+        async for item in runtime.stream_events(
             backend="codex",
-            request=request,
+            request=_core_request(request),
             cwd=tmp_path.resolve(),
         )
     ]
 
-    assert output[-1].status == "completed"
+    assert output[-1].type is RuntimeEventType.TURN_COMPLETED
     assert adapter.prompt == "Inspect these"
     assert [item.kind for item in adapter.attachments] == [
         HarnessAttachmentKind.IMAGE,
@@ -281,14 +284,14 @@ async def test_runtime_allows_attachment_only_turn(tmp_path: Path) -> None:
 
     output = [
         item
-        async for item in runtime.stream(
+        async for item in runtime.stream_events(
             backend="codex",
-            request=request,
+            request=_core_request(request),
             cwd=tmp_path.resolve(),
         )
     ]
 
-    assert output[-1].status == "completed"
+    assert output[-1].type is RuntimeEventType.TURN_COMPLETED
     assert adapter.prompt == ""
     assert adapter.attachments[0].path == image_path
 
@@ -311,30 +314,28 @@ async def test_runtime_emits_reasoning_and_native_tool_envelopes(
 
     output = [
         item
-        async for item in runtime.stream(
+        async for item in runtime.stream_events(
             backend="codex",
-            request=request,
+            request=_core_request(request),
             cwd=tmp_path.resolve(),
         )
     ]
-    final_response = output[-1]
-    output_types = [message.type for message in final_response.output]
-
-    assert output_types == [
-        MessageType.REASONING,
-        MessageType.PLUGIN_CALL,
-        MessageType.PLUGIN_CALL_OUTPUT,
-        MessageType.MESSAGE,
-    ]
-    tool_call = final_response.output[1].content[0].data
-    tool_output = final_response.output[2].content[0].data
-    assert tool_call["name"] == "shell"
-    assert tool_call["arguments"] == '{"command": "pytest -q"}'
-    assert tool_output["output"] == "1 passed"
-    assert tool_output["exit_code"] == 0
-    assert any(
-        getattr(item, "type", None) == MessageType.REASONING for item in output
+    output_types = [event.type for event in output]
+    assert RuntimeEventType.CONTENT_DELTA in output_types
+    assert RuntimeEventType.TOOL_CALL_STARTED in output_types
+    assert RuntimeEventType.TOOL_CALL_COMPLETED in output_types
+    assert RuntimeEventType.TOOL_RESULT_COMPLETED in output_types
+    tool_call = next(
+        event for event in output if event.type is RuntimeEventType.TOOL_CALL_STARTED
     )
+    tool_output = next(
+        event
+        for event in output
+        if event.type is RuntimeEventType.TOOL_RESULT_COMPLETED
+    )
+    assert tool_call.data["name"] == "shell"
+    assert tool_output.data["output"] == "1 passed"
+    assert tool_output.data["exit_code"] == 0
 
 
 @pytest.mark.asyncio
@@ -356,16 +357,16 @@ async def test_runtime_routes_declared_provider_command(
 
     output = [
         item
-        async for item in runtime.stream(
+        async for item in runtime.stream_events(
             backend="codex",
-            request=request,
+            request=_core_request(request),
             cwd=tmp_path.resolve(),
         )
     ]
 
     assert adapter.command == "compact"
-    assert output[-1].status == "completed"
-    assert output[-1].output[-1].content[0].text == "Compacted"
+    assert output[-1].type is RuntimeEventType.TURN_COMPLETED
+    assert any(event.data.get("delta") == "Compacted" for event in output)
 
 
 @pytest.mark.asyncio
@@ -387,12 +388,12 @@ async def test_runtime_handles_host_clear_for_every_backend(
 
     output = [
         item
-        async for item in runtime.stream(
+        async for item in runtime.stream_events(
             backend="codex",
-            request=request,
+            request=_core_request(request),
             cwd=tmp_path.resolve(),
         )
     ]
 
     assert adapter.reset_session_id == "chat-1"
-    assert output[-1].output[-1].metadata["clear_history"] is True
+    assert output[-1].type is RuntimeEventType.TURN_COMPLETED

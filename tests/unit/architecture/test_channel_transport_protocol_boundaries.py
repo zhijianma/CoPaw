@@ -16,6 +16,9 @@ def test_runtime_core_has_no_console_protocol_dependency() -> None:
     assert "ConsoleEventPresenter" not in source
     assert "transports.console" not in source
     assert "protocols.console" not in source
+    assert "protocols.builtins" not in source
+    assert "ReplyProjector" not in source
+    assert "ReplyEvent" not in source
 
 
 def test_turn_domain_has_no_agentscope_dependency() -> None:
@@ -29,9 +32,7 @@ def test_turn_domain_has_no_agentscope_dependency() -> None:
     assert "agentscope" not in source.lower()
 
 
-def test_protocol_ports_and_console_presenter_have_no_engine_dependency() -> (
-    None
-):
+def test_protocol_ports_and_console_presenter_have_no_engine_dependency() -> None:
     source = "\n".join(
         [
             _source("src/qwenpaw/protocols/ports.py"),
@@ -54,3 +55,55 @@ def test_request_source_accepts_protocol_extensions() -> None:
 
     assert source.protocol == "future-protocol"
     assert source.endpoint_id == "edge-1"
+
+
+def test_channel_layer_has_no_console_request_or_response_schema() -> None:
+    channel_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in Path("src/qwenpaw/app/channels").rglob("*.py")
+    )
+
+    assert "AgentRequest" not in channel_sources
+    assert "AgentResponse" not in channel_sources
+
+
+def test_channel_turn_forbids_implicit_adapter_state() -> None:
+    source = _source("src/qwenpaw/app/channels/turn.py")
+    channel_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in Path("src/qwenpaw/app/channels").rglob("*.py")
+    )
+
+    assert "@dataclass(slots=True)" in source
+    assert "setattr(request," not in channel_sources
+    assert 'getattr(request, "_' not in channel_sources
+
+
+def test_legacy_runtime_bridges_are_deleted() -> None:
+    assert not Path("src/qwenpaw/runtime/channel_request_bridge.py").exists()
+    assert not Path("src/qwenpaw/runtime/legacy_reply_adapter.py").exists()
+    assert not Path("src/qwenpaw/runtime/request_adapter.py").exists()
+    assert not Path("src/qwenpaw/app/channels/reply_presentation.py").exists()
+    assert not Path("src/qwenpaw/runtime/reply_projector.py").exists()
+
+
+def test_harness_engine_emits_canonical_events_only() -> None:
+    sources = "\n".join(
+        _source(path)
+        for path in (
+            "src/qwenpaw/harnesses/runtime.py",
+            "src/qwenpaw/harnesses/session.py",
+            "src/qwenpaw/engines/harness.py",
+        )
+    )
+
+    assert "AgentResponse" not in sources
+    assert not Path("src/qwenpaw/harnesses/streaming.py").exists()
+
+
+def test_task_tracking_is_not_an_sse_transport() -> None:
+    source = _source("src/qwenpaw/app/task_tracker.py")
+
+    assert "data: " not in source
+    assert "REPLAY_END_SSE" not in source
+    assert "TaskEventEncoder" not in _source("src/qwenpaw/app/channels/base.py")

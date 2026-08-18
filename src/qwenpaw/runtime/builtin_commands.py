@@ -195,7 +195,7 @@ def _make_control_adapter(
         channel = None
         channel_mgr = getattr(workspace, "channel_manager", None)
         if channel_mgr is not None:
-            channel_id = getattr(request, "channel", None) or "console"
+            channel_id = request.source.channel_type or "console"
             try:
                 channel = await channel_mgr.get_channel(
                     channel_id,
@@ -203,9 +203,7 @@ def _make_control_adapter(
             except Exception:
                 pass
 
-        full_query = (
-            f"/{command_name} {args}".strip() if args else f"/{command_name}"
-        )
+        full_query = f"/{command_name} {args}".strip() if args else f"/{command_name}"
         parsed_args = parse_args(
             full_query,
             f"/{command_name}",
@@ -303,7 +301,7 @@ async def _load_agent_state(ctx: Any) -> "tuple[Any, dict]":
 
     request = getattr(ctx, "request", None)
     user_id = (getattr(request, "user_id", "") if request else "") or ""
-    channel = (getattr(request, "channel", "") if request else "") or ""
+    channel = (request.source.channel_type if request else "") or ""
 
     proxy = StateProxy()
     await session.load_session_state(
@@ -356,7 +354,7 @@ async def _save_agent_state(
 
     request = getattr(ctx, "request", None)
     user_id = (getattr(request, "user_id", "") if request else "") or ""
-    channel = (getattr(request, "channel", "") if request else "") or ""
+    channel = (request.source.channel_type if request else "") or ""
 
     proxy = StateProxy()
     proxy.data = {"state": state.model_dump(mode="json")}
@@ -608,7 +606,7 @@ async def _skill_fallback_handler(
     )
 
     request = getattr(ctx, "request", None)
-    channel = (getattr(request, "channel", "") if request else "") or "console"
+    channel = (request.source.channel_type if request else "") or "console"
 
     try:
         effective_skills = resolve_effective_skills(
@@ -620,11 +618,7 @@ async def _skill_fallback_handler(
 
     skills_dir = get_workspace_skills_dir(Path(workspace_dir))
     skill_dir = next(
-        (
-            skills_dir / sn
-            for sn in effective_skills
-            if sn.lower() == skill_name
-        ),
+        (skills_dir / sn for sn in effective_skills if sn.lower() == skill_name),
         None,
     )
     if skill_dir is None or not skill_dir.exists():

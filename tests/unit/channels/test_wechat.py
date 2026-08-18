@@ -22,6 +22,7 @@ Run:
     pytest tests/unit/channels/test_wechat.py -v
     pytest tests/unit/channels/test_wechat.py::TestWeChatChannelInit -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 # pylint: disable=broad-exception-raised,using-constant-test
 from __future__ import annotations
@@ -38,7 +39,6 @@ import pytest
 from qwenpaw.app.channels.renderer import ChannelDisplayConfig
 
 from tests.fixtures.channels.mock_http import MockAiohttpSession
-
 
 # =============================================================================
 # Fixtures
@@ -284,9 +284,7 @@ class TestWeChatChannelFromEnv:
 
         channel = WeChatChannel.from_env(mock_process_handler)
 
-        assert (
-            channel._bot_token_file == Path("/env/token/file.txt").expanduser()
-        )
+        assert channel._bot_token_file == Path("/env/token/file.txt").expanduser()
         assert channel._media_dir == Path("/env/media").expanduser()
         assert channel.dm_policy == "allowlist"
         assert channel.group_policy == "allowlist"
@@ -467,20 +465,20 @@ class TestWeChatResolveSession:
 
         assert result == "wechat:user123"
 
-    def test_get_to_handle_from_request(self, wechat_channel):
-        """get_to_handle_from_request should extract handle from request."""
+    def test_get_to_handle_from_turn(self, wechat_channel):
+        """get_to_handle_from_turn should extract handle from request."""
         mock_request = MagicMock()
         mock_request.session_id = "wechat:session_abc"
-        mock_request.user_id = "user123"
+        mock_request.sender_id = "user123"
 
-        result = wechat_channel.get_to_handle_from_request(mock_request)
+        result = wechat_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "wechat:session_abc"
 
     def test_get_on_reply_sent_args(self, wechat_channel):
         """get_on_reply_sent_args should return correct tuple."""
         mock_request = MagicMock()
-        mock_request.user_id = "user123"
+        mock_request.sender_id = "user123"
         mock_request.session_id = "wechat:session_abc"
 
         result = wechat_channel.get_on_reply_sent_args(
@@ -690,9 +688,9 @@ class TestWeChatMessageDedup:
 
 
 class TestWeChatBuildAgentRequest:
-    """Tests for build_agent_request_from_native method."""
+    """Tests for build_channel_turn_from_native method."""
 
-    def test_build_agent_request_from_native(self, wechat_channel):
+    def test_build_channel_turn_from_native(self, wechat_channel):
         """Should create AgentRequest from native payload."""
         from qwenpaw.app.channels.base import TextContent, ContentType
 
@@ -707,13 +705,13 @@ class TestWeChatBuildAgentRequest:
             "meta": {"wechat_group_id": "group123"},
         }
 
-        request = wechat_channel.build_agent_request_from_native(payload)
+        request = wechat_channel.build_channel_turn_from_native(payload)
 
-        assert request.user_id == "user123"
-        assert request.channel == "wechat"
+        assert request.sender_id == "user123"
+        assert request.channel_type == "wechat"
         assert request.session_id == "wechat:session_abc"
-        assert hasattr(request, "channel_meta")
-        assert request.channel_meta.get("wechat_group_id") == "group123"
+        assert hasattr(request, "metadata")
+        assert request.metadata.get("wechat_group_id") == "group123"
 
     def test_build_agent_request_auto_session(self, wechat_channel):
         """Should auto-generate session_id when not provided."""
@@ -728,7 +726,7 @@ class TestWeChatBuildAgentRequest:
             "meta": {},
         }
 
-        request = wechat_channel.build_agent_request_from_native(payload)
+        request = wechat_channel.build_channel_turn_from_native(payload)
 
         assert request.session_id == "wechat:user123"
 
@@ -1252,9 +1250,7 @@ class TestWeChatOnMessage:
 
         call_args = wechat_channel._enqueue.call_args[0][0]
         content_parts = call_args["content_parts"]
-        assert any(
-            "Voice transcription" in str(part) for part in content_parts
-        )
+        assert any("Voice transcription" in str(part) for part in content_parts)
 
     async def test_on_message_image(
         self,
@@ -1567,7 +1563,7 @@ class TestWeChatEdgeCases:
             "meta": {},
         }
 
-        request = wechat_channel.build_agent_request_from_native(payload)
+        request = wechat_channel.build_channel_turn_from_native(payload)
 
-        assert request.user_id == "user123"
-        assert len(request.input) == 1
+        assert request.sender_id == "user123"
+        assert len(request.messages) == 1

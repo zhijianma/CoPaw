@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 _SESSION_MAP_MAX = 4096
 
 if TYPE_CHECKING:
-    from ....schemas import AgentRequest
+    from ..turn import ChannelTurn
 
 # Type alias for message/disconnect callbacks
 _OnMessage = Callable[[Dict[str, Any], str], Coroutine[Any, Any, None]]
@@ -80,9 +80,7 @@ _IP_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
 
 def _is_ip_address(host: str) -> bool:
     """Return True if *host* looks like an IPv4 address."""
-    return bool(_IP_RE.match(host)) and all(
-        0 <= int(p) <= 255 for p in host.split(".")
-    )
+    return bool(_IP_RE.match(host)) and all(0 <= int(p) <= 255 for p in host.split("."))
 
 
 def _get_ssl_for_url(url: str) -> Any:
@@ -483,8 +481,7 @@ class XiaoYiChannel(BaseChannel):
             ws_url=getattr(config, "ws_url", "") or "",
             task_timeout_ms=config.task_timeout_ms,
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             bot_prefix=config.bot_prefix,
             media_dir=getattr(config, "media_dir", ""),
@@ -638,9 +635,7 @@ class XiaoYiChannel(BaseChannel):
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        any_connected = any(
-            r is True for r in results if not isinstance(r, Exception)
-        )
+        any_connected = any(r is True for r in results if not isinstance(r, Exception))
         if any_connected:
             self._connected = True
             self._reconnect_attempts = 0
@@ -672,8 +667,7 @@ class XiaoYiChannel(BaseChannel):
         if existing is not None and existing is not self:
             # pylint: disable=protected-access
             logger.info(
-                "XiaoYi: Stopping old connection for "
-                f"agent_id={self.agent_id}",
+                "XiaoYi: Stopping old connection for " f"agent_id={self.agent_id}",
             )
             try:
                 existing._stopping = True
@@ -704,8 +698,7 @@ class XiaoYiChannel(BaseChannel):
             if _active_connections.get(self.agent_id) is self:
                 _active_connections.pop(self.agent_id, None)
                 logger.debug(
-                    "XiaoYi: Unregistered connection for "
-                    f"agent_id={self.agent_id}",
+                    "XiaoYi: Unregistered connection for " f"agent_id={self.agent_id}",
                 )
 
     @staticmethod
@@ -1038,8 +1031,7 @@ class XiaoYiChannel(BaseChannel):
         self._reconnect_attempts += 1
 
         logger.info(
-            "XiaoYi: Reconnecting in "
-            f"{delay}s (attempt {self._reconnect_attempts})",
+            "XiaoYi: Reconnecting in " f"{delay}s (attempt {self._reconnect_attempts})",
         )
 
         async def reconnect():
@@ -1144,9 +1136,7 @@ class XiaoYiChannel(BaseChannel):
                     chunks.append(line[i : i + TEXT_CHUNK_LIMIT])
             else:
                 # Check if adding this line would exceed limit
-                test_chunk = (
-                    current_chunk + "\n" + line if current_chunk else line
-                )
+                test_chunk = current_chunk + "\n" + line if current_chunk else line
                 if len(test_chunk) > TEXT_CHUNK_LIMIT:
                     if current_chunk:
                         chunks.append(current_chunk)
@@ -1433,10 +1423,7 @@ class XiaoYiChannel(BaseChannel):
                 if isinstance(data, dict):
                     # Check for thinking content in blocks
                     blocks = data.get("blocks", [])
-                    if (
-                        isinstance(blocks, list)
-                        and self._display_config.show_thinking
-                    ):
+                    if isinstance(blocks, list) and self._display_config.show_thinking:
                         for block in blocks:
                             if (
                                 isinstance(block, dict)
@@ -1450,8 +1437,7 @@ class XiaoYiChannel(BaseChannel):
                                     parts.append(
                                         {
                                             "kind": "reasoningText",
-                                            "reasoningText": thinking_text
-                                            + "\n",
+                                            "reasoningText": thinking_text + "\n",
                                         },
                                     )
 
@@ -1536,8 +1522,7 @@ class XiaoYiChannel(BaseChannel):
 
         # Check if any part exceeds chunk limit
         max_part_len = max(
-            len(p.get("text", "") or p.get("reasoningText", ""))
-            for p in artifact_parts
+            len(p.get("text", "") or p.get("reasoningText", "")) for p in artifact_parts
         )
 
         if max_part_len > TEXT_CHUNK_LIMIT:
@@ -1591,7 +1576,7 @@ class XiaoYiChannel(BaseChannel):
 
     async def on_event_message_completed(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1623,18 +1608,18 @@ class XiaoYiChannel(BaseChannel):
             return f"xiaoyi:{channel_meta['session_id']}"
         return f"xiaoyi:{sender_id}"
 
-    def get_to_handle_from_request(self, request: "AgentRequest") -> str:
+    def get_to_handle_from_turn(self, request: "ChannelTurn") -> str:
         """Get send target from request."""
-        meta = getattr(request, "channel_meta", None) or {}
+        meta = getattr(request, "metadata", None) or {}
         if meta.get("session_id"):
             return meta["session_id"]
-        return getattr(request, "user_id", "") or ""
+        return getattr(request, "sender_id", "") or ""
 
-    def build_agent_request_from_native(
+    def build_channel_turn_from_native(
         self,
         native_payload: Any,
-    ) -> "AgentRequest":
-        """Build AgentRequest from native payload."""
+    ) -> "ChannelTurn":
+        """Build ChannelTurn from native payload."""
         payload = native_payload if isinstance(native_payload, dict) else {}
 
         channel_id = payload.get("channel_id") or self.channel
@@ -1644,15 +1629,15 @@ class XiaoYiChannel(BaseChannel):
 
         session_id = self.resolve_session_id(sender_id, meta)
 
-        request = self.build_agent_request_from_user_content(
+        request = self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=sender_id,
             session_id=session_id,
             content_parts=content_parts,
             channel_meta=meta,
         )
-        request.user_id = sender_id
-        request.channel_meta = meta
+        request.sender_id = sender_id
+        request.metadata = meta
         return request
 
     def to_handle_from_target(self, *, user_id: str, session_id: str) -> str:
@@ -1663,7 +1648,7 @@ class XiaoYiChannel(BaseChannel):
 
     async def _on_process_completed(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         send_meta: Dict[str, Any],
     ) -> None:

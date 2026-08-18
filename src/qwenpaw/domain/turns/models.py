@@ -10,34 +10,19 @@ from typing import Any, Mapping, Sequence
 RequestSourceKind = str
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class RequestSource:
     """Describe where a turn entered the application core."""
 
     protocol: str
-    endpoint_id: str | None
+    endpoint_id: str | None = None
     channel_type: str | None = None
 
-    def __init__(
-        self,
-        protocol: str | None = None,
-        endpoint_id: str | None = None,
-        channel_type: str | None = None,
-        *,
-        kind: str | None = None,
-    ) -> None:
-        """Accept open protocol keys and the legacy ``kind`` spelling."""
-        value = str(protocol or kind or "").strip()
+    def __post_init__(self) -> None:
+        value = str(self.protocol or "").strip()
         if not value:
             raise ValueError("protocol must not be empty")
         object.__setattr__(self, "protocol", value)
-        object.__setattr__(self, "endpoint_id", endpoint_id)
-        object.__setattr__(self, "channel_type", channel_type)
-
-    @property
-    def kind(self) -> str:
-        """Legacy alias retained for callers during the boundary migration."""
-        return self.protocol
 
 
 @dataclass(frozen=True, slots=True)

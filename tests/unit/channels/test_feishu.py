@@ -820,7 +820,7 @@ class TestFeishuChannelSyncUtilities:
     def test_get_on_reply_sent_args(self, feishu_channel):
         """Should return user_id and session_id."""
         mock_request = MagicMock()
-        mock_request.user_id = "user_123"
+        mock_request.sender_id = "user_123"
         mock_request.session_id = "session_456"
 
         result = feishu_channel.get_on_reply_sent_args(
@@ -898,9 +898,9 @@ class TestFeishuChannelEnabledCheck:
 
 
 class TestFeishuChannelBuildAgentRequest:
-    """Tests for build_agent_request_from_native method."""
+    """Tests for build_channel_turn_from_native method."""
 
-    def test_build_agent_request_from_native_basic(self, feishu_channel):
+    def test_build_channel_turn_from_native_basic(self, feishu_channel):
         """Should build AgentRequest from native payload."""
         payload = {
             "channel_id": "feishu",
@@ -911,10 +911,10 @@ class TestFeishuChannelBuildAgentRequest:
             "meta": {"feishu_chat_id": "oc_test"},
         }
 
-        result = feishu_channel.build_agent_request_from_native(payload)
+        result = feishu_channel.build_channel_turn_from_native(payload)
 
-        assert hasattr(result, "channel_meta")
-        assert result.channel_meta.get("feishu_chat_id") == "oc_test"
+        assert hasattr(result, "metadata")
+        assert result.metadata.get("feishu_chat_id") == "oc_test"
 
     def test_build_agent_request_uses_payload_session_id(self, feishu_channel):
         """Should use session_id from payload when available."""
@@ -926,7 +926,7 @@ class TestFeishuChannelBuildAgentRequest:
             "meta": {},
         }
 
-        result = feishu_channel.build_agent_request_from_native(payload)
+        result = feishu_channel.build_channel_turn_from_native(payload)
 
         assert result.session_id == "explicit_session"
 
@@ -944,9 +944,9 @@ class TestFeishuChannelBuildAgentRequest:
             "meta": {"feishu_sender_id": "ou_real_sender"},
         }
 
-        result = feishu_channel.build_agent_request_from_native(payload)
+        result = feishu_channel.build_channel_turn_from_native(payload)
 
-        assert result.user_id == "ou_real_sender"
+        assert result.sender_id == "ou_real_sender"
 
 
 # =============================================================================
@@ -1341,7 +1341,7 @@ class TestFeishuChannelGetOnReplySentArgs:
     def test_returns_user_id_and_session_id(self, feishu_channel):
         """Should return tuple of (user_id, session_id)."""
         mock_request = MagicMock()
-        mock_request.user_id = "u123"
+        mock_request.sender_id = "u123"
         mock_request.session_id = "s456"
 
         result = feishu_channel.get_on_reply_sent_args(mock_request, "handle")
@@ -1351,7 +1351,7 @@ class TestFeishuChannelGetOnReplySentArgs:
     def test_handles_empty_values(self, feishu_channel):
         """Should handle empty values gracefully."""
         mock_request = MagicMock()
-        mock_request.user_id = ""
+        mock_request.sender_id = ""
         mock_request.session_id = ""
 
         result = feishu_channel.get_on_reply_sent_args(mock_request, "handle")
@@ -1365,15 +1365,15 @@ class TestFeishuChannelGetOnReplySentArgs:
 
 
 class TestFeishuChannelGetToHandleFromRequest:
-    """Tests for get_to_handle_from_request method."""
+    """Tests for get_to_handle_from_turn method."""
 
     def test_returns_session_based_handle(self, feishu_channel):
         """Should return feishu:sw: prefix with session_id."""
         mock_request = MagicMock()
         mock_request.session_id = "abc123"
-        mock_request.user_id = "user456"
+        mock_request.sender_id = "user456"
 
-        result = feishu_channel.get_to_handle_from_request(mock_request)
+        result = feishu_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "feishu:sw:abc123"
 
@@ -1381,9 +1381,9 @@ class TestFeishuChannelGetToHandleFromRequest:
         """Should fallback to feishu:open_id: when no session_id."""
         mock_request = MagicMock()
         mock_request.session_id = ""
-        mock_request.user_id = "user789"
+        mock_request.sender_id = "user789"
 
-        result = feishu_channel.get_to_handle_from_request(mock_request)
+        result = feishu_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "feishu:open_id:user789"
 
@@ -1391,9 +1391,9 @@ class TestFeishuChannelGetToHandleFromRequest:
         """Should return empty string when both are empty."""
         mock_request = MagicMock()
         mock_request.session_id = ""
-        mock_request.user_id = ""
+        mock_request.sender_id = ""
 
-        result = feishu_channel.get_to_handle_from_request(mock_request)
+        result = feishu_channel.get_to_handle_from_turn(mock_request)
 
         assert result == ""
 
@@ -2399,9 +2399,7 @@ class TestFeishuChannelSendMessage:
 
         mock_request_builder = MagicMock()
         mock_request = MagicMock()
-        mock_request_builder.receive_id_type.return_value = (
-            mock_request_builder
-        )
+        mock_request_builder.receive_id_type.return_value = mock_request_builder
         mock_request_builder.request_body.return_value = mock_request_builder
         mock_request_builder.build.return_value = mock_request
 
@@ -2435,9 +2433,7 @@ class TestFeishuChannelSendMessage:
         )
         feishu_channel._client = mock_client
 
-        content = (
-            '{"zh_cn": {"content": [[{"tag": "text", "text": "Hello"}]]}}'
-        )
+        content = '{"zh_cn": {"content": [[{"tag": "text", "text": "Hello"}]]}}'
         result = await feishu_channel._send_message(
             "open_id",
             "user_open_id",
@@ -3180,7 +3176,7 @@ class TestFeishuChannelThreadReply:
 
         request = MagicMock()
         request.session_id = "test_session"
-        request.channel_meta = {
+        request.metadata = {
             "feishu_receive_id": "oc_test",
             "feishu_receive_id_type": "chat_id",
             "feishu_thread_id": "omt_thread_root",

@@ -2,7 +2,7 @@
 # pylint: disable=too-many-branches,too-many-statements,unused-argument
 # pylint: disable=too-many-public-methods,unnecessary-pass
 """
-Base Channel: bound to AgentRequest/AgentResponse, unified by process.
+Base Channel: normalize inbound turns and deliver canonical runtime events.
 """
 
 from __future__ import annotations
@@ -40,12 +40,12 @@ from qwenpaw.schemas import (
 from .renderer import ChannelDisplayConfig, MessageRenderer, RenderStyle
 from .schema import ChannelType
 from .access_control import get_access_control_store
-from ..task_event_encoder import TaskEventEncoder
 from ...config.utils import load_config
 from ...domain.channels.models import ReplyTarget
 from ...domain.channels.ports import ReplyEventType
-from .reply_presentation import ReplyPresentationAdapter
 from .reply_delivery import ChannelReplyDelivery
+from .event_projector import ChannelEventProjector
+from .turn import ChannelTurn
 
 # Optional callback to enqueue payload (set by manager)
 EnqueueCallback = Optional[Callable[[Any], None]]
@@ -63,16 +63,10 @@ _TOOL_OUTPUT_MESSAGE_TYPES = {
 }
 
 if TYPE_CHECKING:
-    from qwenpaw.runtime.channel_request_bridge import ChannelRequestBridge
-    from qwenpaw.schemas import (
-        AgentRequest,
-        AgentResponse,
-        Event,
-    )
+    from ...domain.turns.events import RuntimeEvent
 
-# process: accepts AgentRequest, streams Event
-# (including message events with status completed)
-ProcessHandler = Callable[[Any], AsyncIterator["Event"]]
+# process: accepts TurnRequest and streams canonical RuntimeEvent objects.
+ProcessHandler = Callable[[Any], AsyncIterator["RuntimeEvent"]]
 
 # Outgoing part = runtime content types (no Dict[str, Any])
 OutgoingContentPart = Union[
@@ -159,7 +153,7 @@ class BaseChannel(ABC):
         self._language = "zh"
         self._enqueue: EnqueueCallback = None
         self._workspace = None
-        self._request_bridge: ChannelRequestBridge | None = None
+        self._agent_id = "default"
         cfg = load_config()
         internal_tools = frozenset(
             name
@@ -272,9 +266,9 @@ class BaseChannel(ABC):
 
     def merge_requests(self, requests: List[Any]) -> Any:
         """
-        Merge multiple AgentRequest payloads (same session) into one.
+        Merge multiple ChannelTurn payloads (same session) into one.
         Used when manager drains same-session queue: concatenate
-        input[0].content from all, keep first request's meta/session.
+        messages[0].content from all, keep first turn's metadata/session.
         Returns one request; None if requests empty.
         """
         if not requests:
@@ -284,22 +278,18 @@ class BaseChannel(ABC):
             return first
         all_contents: List[Any] = []
         for req in requests:
-            inp = getattr(req, "input", None) or []
+            inp = getattr(req, "messages", None) or []
             if inp and hasattr(inp[0], "content"):
                 all_contents.extend(getattr(inp[0], "content") or [])
         if not all_contents:
             return first
-        msg = first.input[0]
+        msg = first.messages[0]
         if hasattr(msg, "model_copy"):
             new_msg = msg.model_copy(update={"content": all_contents})
         else:
             new_msg = msg
             setattr(new_msg, "content", all_contents)
-        if hasattr(first, "model_copy"):
-            return first.model_copy(
-                update={"input": [new_msg]},
-            )
-        first.input[0] = new_msg
+        first.messages = [new_msg]
         return first
 
     def _on_debounce_buffer_append(
@@ -322,23 +312,16 @@ class BaseChannel(ABC):
             return False
         for c in contents:
             t = getattr(c, "type", None)
-            if (
-                t == ContentType.TEXT
-                and (getattr(c, "text", None) or "").strip()
-            ):
+            if t == ContentType.TEXT and (getattr(c, "text", None) or "").strip():
                 return True
-            if (
-                t == ContentType.REFUSAL
-                and (getattr(c, "refusal", None) or "").strip()
-            ):
+            if t == ContentType.REFUSAL and (getattr(c, "refusal", None) or "").strip():
                 return True
         return False
 
     def _content_has_audio(self, contents: List[Any]) -> bool:
         """True if contents has at least one AUDIO block."""
         return any(
-            getattr(c, "type", None) == ContentType.AUDIO
-            for c in (contents or [])
+            getattr(c, "type", None) == ContentType.AUDIO for c in (contents or [])
         )
 
     def _apply_no_text_debounce(
@@ -390,8 +373,7 @@ class BaseChannel(ABC):
             "id": "Anda telah diblokir dari agen ini.",
         },
         "pending": {
-            "zh": "您目前没有访问此智能体的权限，需要审批。\n"
-            "ID: {sender_id}",
+            "zh": "您目前没有访问此智能体的权限，需要审批。\n" "ID: {sender_id}",
             "en": "You do not have access to this agent. "
             "Approval required.\nID: {sender_id}",
             "ja": "このエージェントへのアクセス権がありません。"
@@ -427,17 +409,16 @@ class BaseChannel(ABC):
 
         # Prefer acl_sender_id (real sender, unaffected by shared session)
         if isinstance(payload, dict):
-            sender_id = (
-                payload.get("acl_sender_id") or payload.get("sender_id") or ""
-            )
+            sender_id = payload.get("acl_sender_id") or payload.get("sender_id") or ""
             meta = dict(payload.get("meta") or {})
         else:
-            sender_id = (
-                getattr(payload, "acl_sender_id", "")
-                or getattr(payload, "user_id", "")
-                or ""
+            state = dict(getattr(payload, "state", None) or {})
+            sender_id = state.get("acl_sender_id") or getattr(
+                payload,
+                "sender_id",
+                "",
             )
-            meta = dict(getattr(payload, "channel_meta", None) or {})
+            meta = dict(getattr(payload, "metadata", None) or {})
 
         if not sender_id:
             return False
@@ -474,7 +455,7 @@ class BaseChannel(ABC):
             if isinstance(payload, dict):
                 to_handle = sender_id
             else:
-                to_handle = self.get_to_handle_from_request(payload)
+                to_handle = self.get_to_handle_from_turn(payload)
             await self.send_content_parts(
                 to_handle,
                 [TextContent(type=ContentType.TEXT, text=deny_msg)],
@@ -538,7 +519,7 @@ class BaseChannel(ABC):
         """Extract chat name from payload for chat creation.
 
         Args:
-            payload: Message payload (dict or AgentRequest)
+            payload: Message payload (dict or ChannelTurn)
 
         Returns:
             Chat name (truncated to 50 chars)
@@ -557,8 +538,8 @@ class BaseChannel(ABC):
                     if text:
                         return text[:50]
                 return "New Chat"
-            if hasattr(payload, "input") and payload.input:
-                msg = payload.input[0]
+            if hasattr(payload, "messages") and payload.messages:
+                msg = payload.messages[0]
                 if hasattr(msg, "content") and msg.content:
                     content = msg.content[0]
                     if hasattr(content, "text"):
@@ -573,7 +554,7 @@ class BaseChannel(ABC):
 
     async def _consume_with_tracker(
         self,
-        request: "AgentRequest",
+        request: ChannelTurn,
         payload: Any,
     ) -> None:
         """Consume message with TaskTracker registration for cancellation.
@@ -583,13 +564,13 @@ class BaseChannel(ABC):
         messages per (channel, session, priority).
 
         Args:
-            request: AgentRequest
+            request: ChannelTurn
             payload: Original payload
         """
         platform_session_id = getattr(request, "session_id", "") or ""
         session_id = self.runtime_session_id(platform_session_id)
-        user_id = getattr(request, "user_id", "") or ""
-        channel_id = getattr(request, "channel", self.channel)
+        user_id = getattr(request, "sender_id", "") or ""
+        channel_id = getattr(request, "channel_type", self.channel)
         identity = getattr(self, "_channel_identity", None)
         chat_meta = (
             {"channel_instance_id": identity.instance_id}
@@ -606,8 +587,7 @@ class BaseChannel(ABC):
         )
 
         logger.info(
-            f"_consume_with_tracker: chat_id={chat.id} "
-            f"session={session_id[:30]}",
+            f"_consume_with_tracker: chat_id={chat.id} " f"session={session_id[:30]}",
         )
 
         # Refresh updated_at so the session list surfaces this chat as the
@@ -638,8 +618,7 @@ class BaseChannel(ABC):
                     pass
             except asyncio.CancelledError:
                 logger.info(
-                    f"Task cancelled: chat_id={chat.id} "
-                    f"session={session_id[:30]}",
+                    f"Task cancelled: chat_id={chat.id} " f"session={session_id[:30]}",
                 )
                 raise
         else:
@@ -662,14 +641,12 @@ class BaseChannel(ABC):
         msg_type = getattr(event, "type", None)
         if msg_type is None:
             return "message"
-        type_str = (
-            msg_type.value if hasattr(msg_type, "value") else str(msg_type)
-        )
+        type_str = msg_type.value if hasattr(msg_type, "value") else str(msg_type)
         return type_str
 
     async def _dispatch_streaming_event(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -717,7 +694,7 @@ class BaseChannel(ABC):
 
     async def _on_stream_msg_start(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -730,10 +707,7 @@ class BaseChannel(ABC):
         msg_id = getattr(event, "id", None)
         if msg_id:
             msg_id_to_stream_type[msg_id] = stream_type
-        if (
-            stream_type == "reasoning"
-            and not self._display_config.show_thinking
-        ):
+        if stream_type == "reasoning" and not self._display_config.show_thinking:
             return True
         streaming_buffers[stream_type] = ""
         await self.on_streaming_start(
@@ -748,7 +722,7 @@ class BaseChannel(ABC):
 
     async def _on_stream_content_delta(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -768,10 +742,7 @@ class BaseChannel(ABC):
             or stream_type not in streaming_buffers
         ):
             return False
-        if (
-            stream_type == "reasoning"
-            and not self._display_config.show_thinking
-        ):
+        if stream_type == "reasoning" and not self._display_config.show_thinking:
             return True
 
         # Detect content index change → split into a new streaming box
@@ -844,10 +815,7 @@ class BaseChannel(ABC):
 
         # Guard 2: minimum interval not elapsed
         if self._STREAM_DELTA_MIN_INTERVAL_S > 0:
-            if (
-                now - flush_meta.get("last_ts", 0.0)
-                < self._STREAM_DELTA_MIN_INTERVAL_S
-            ):
+            if now - flush_meta.get("last_ts", 0.0) < self._STREAM_DELTA_MIN_INTERVAL_S:
                 return True
 
         # Fire-and-forget flush
@@ -869,7 +837,7 @@ class BaseChannel(ABC):
 
     async def _on_stream_msg_end(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -883,10 +851,7 @@ class BaseChannel(ABC):
         if stream_type not in self._STREAMABLE_TYPES:
             return False
         if stream_type in streaming_buffers:
-            if (
-                stream_type == "reasoning"
-                and not self._display_config.show_thinking
-            ):
+            if stream_type == "reasoning" and not self._display_config.show_thinking:
                 streaming_buffers.pop(stream_type, None)
                 return True
 
@@ -945,21 +910,20 @@ class BaseChannel(ABC):
     async def _stream_with_tracker(
         self,
         payload: Any,
-    ) -> AsyncGenerator[str, None]:
-        """Stream events via TaskTracker, yielding SSE strings.
+    ) -> AsyncGenerator[Any, None]:
+        """Run one Channel turn while publishing canonical task events.
 
         When ``streaming_enabled``, streaming hooks are invoked for
         reasoning / message events alongside the normal path.
         """
-        request = self._payload_to_request(payload)
-        request.channel_instance = self
+        request = self._payload_to_turn(payload)
 
         if isinstance(payload, dict):
             send_meta = dict(payload.get("meta") or {})
             if payload.get("session_webhook"):
                 send_meta["session_webhook"] = payload["session_webhook"]
         else:
-            send_meta = getattr(request, "channel_meta", None) or {}
+            send_meta = getattr(request, "metadata", None) or {}
 
         bot_prefix = getattr(self, "bot_prefix", None) or getattr(
             self,
@@ -969,7 +933,7 @@ class BaseChannel(ABC):
         if bot_prefix and "bot_prefix" not in send_meta:
             send_meta = {**send_meta, "bot_prefix": bot_prefix}
 
-        to_handle = self.get_to_handle_from_request(request)
+        to_handle = self.get_to_handle_from_turn(request)
         session_id = getattr(request, "session_id", "") or ""
         self._clear_session_turn_usage(session_id)
 
@@ -979,7 +943,7 @@ class BaseChannel(ABC):
         process_iterator = None
         msg_id_to_stream_type: Dict[str, str] = {}
         streaming_buffers: Dict[str, str] = {}
-        process_request = self._request_for_process(request)
+        process_request = self._build_turn_request(request)
         adapter, delivery = self._create_reply_delivery(
             request,
             process_request,
@@ -989,28 +953,24 @@ class BaseChannel(ABC):
         try:
             process_iterator = self._runtime_process(process_request)
             async for runtime_event in process_iterator:
-                async for event, reply in adapter.project(runtime_event):
-                    data = TaskEventEncoder.encode(event)
-
-                    yield f"data: {data}\n\n"
+                yield runtime_event
+                for reply in adapter.project(runtime_event):
+                    event = reply.payload
 
                     # --- streaming path ---
                     handled_by_streaming = False
                     if self.streaming_enabled:
-                        handled_by_streaming = (
-                            await self._dispatch_streaming_event(
-                                request,
-                                to_handle,
-                                event,
-                                send_meta,
-                                msg_id_to_stream_type,
-                                streaming_buffers,
-                            )
+                        handled_by_streaming = await self._dispatch_streaming_event(
+                            request,
+                            to_handle,
+                            event,
+                            send_meta,
+                            msg_id_to_stream_type,
+                            streaming_buffers,
                         )
 
                     if not (
-                        handled_by_streaming
-                        and reply.type == ReplyEventType.MESSAGE
+                        handled_by_streaming and reply.type == ReplyEventType.MESSAGE
                     ):
                         await delivery.deliver(reply)
 
@@ -1029,12 +989,11 @@ class BaseChannel(ABC):
                     to_handle,
                     send_meta,
                 )
-                for sse in await self._commit_turn_usage(
+                await self._commit_turn_usage(
                     request,
                     session_id,
-                    emit_sse=True,
-                ):
-                    yield sse
+                    emit_sse=False,
+                )
 
             if self._on_reply_sent:
                 args = self.get_on_reply_sent_args(request, to_handle)
@@ -1100,25 +1059,21 @@ class BaseChannel(ABC):
         """
         return f"{self.channel}:{sender_id}"
 
-    def build_agent_request_from_user_content(
+    def build_channel_turn_from_user_content(
         self,
         channel_id: str,
         sender_id: str,
         session_id: str,
         content_parts: List[Any],
         channel_meta: Optional[Dict[str, Any]] = None,
-    ) -> "AgentRequest":
+    ) -> ChannelTurn:
         """
-        Build AgentRequest from runtime content parts (Message content list).
+        Build ChannelTurn from runtime content parts (Message content list).
         Uses :mod:`qwenpaw.schemas` Message / Content types directly — no
         intermediate envelope. Subclasses call this after parsing the
         native payload into ``content_parts``.
         """
-        from qwenpaw.schemas import (
-            AgentRequest,
-            Message,
-            Role,
-        )
+        from qwenpaw.schemas import Message, Role
 
         if not content_parts:
             content_parts = [
@@ -1129,70 +1084,74 @@ class BaseChannel(ABC):
             role=Role.USER,
             content=content_parts,
         )
-        return AgentRequest(
+        return ChannelTurn(
             session_id=session_id,
-            user_id=sender_id,
-            input=[msg],
-            channel=channel_id,
+            sender_id=sender_id,
+            messages=[msg],
+            channel_type=channel_id,
+            metadata=dict(channel_meta or {}),
         )
 
-    def build_agent_request_from_native(
+    def build_channel_turn_from_native(
         self,
         native_payload: Any,
-    ) -> "AgentRequest":
+    ) -> ChannelTurn:
         """
-        Convert channel-native message payload to AgentRequest.
+        Convert channel-native message payload to ChannelTurn.
         Subclasses must implement: parse native -> content_parts (runtime
-        Content types), session_id, then build_agent_request_from_user_content.
+        Content types), session_id, then build_channel_turn_from_user_content.
         Attach channel_meta to result for send path:
-        request.channel_meta = meta.
+        request.metadata = meta.
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement "
-            "build_agent_request_from_native(native_payload)",
+            "build_channel_turn_from_native(native_payload)",
         )
 
-    def _payload_to_request(self, payload: Any) -> "AgentRequest":
+    def _payload_to_turn(self, payload: Any) -> "ChannelTurn":
         """
-        Convert queue payload to AgentRequest. Default: if payload looks like
-        AgentRequest (has session_id, input), return it; else
-        build_agent_request_from_native(payload). Override if needed.
+        Convert queue payload to ChannelTurn. Default: if payload looks like
+        ChannelTurn (has session_id, input), return it; else
+        build_channel_turn_from_native(payload). Override if needed.
         """
         if payload is None:
             raise ValueError("payload is None")
-        if hasattr(payload, "session_id") and hasattr(payload, "input"):
+        if isinstance(payload, ChannelTurn):
             return payload
-        return self.build_agent_request_from_native(payload)
+        return self.build_channel_turn_from_native(payload)
 
-    def set_request_bridge(self, bridge: "ChannelRequestBridge") -> None:
-        """Attach the application-owned route into the agent core."""
-        self._request_bridge = bridge
+    def bind_route(self, agent_id: str) -> None:
+        """Bind the Agent that owns this Channel instance."""
+        self._agent_id = agent_id
 
-    def _request_for_process(self, request: "AgentRequest") -> Any:
-        """Return the canonical core request when routing is configured."""
-        if self._request_bridge is None:
-            return request
-        return self._request_bridge.build(request)
+    def _build_turn_request(self, request: ChannelTurn) -> Any:
+        """Route normalized Channel input into the runtime core."""
+        identity = getattr(self, "_channel_identity", None)
+        instance_id = getattr(identity, "instance_id", self.channel)
+        return request.to_request(
+            agent_id=self._agent_id,
+            instance_id=instance_id,
+            runtime_session_id=self.runtime_session_id(request.session_id),
+            channel_instance=self,
+        )
 
-    def get_to_handle_from_request(self, request: "AgentRequest") -> str:
+    def get_to_handle_from_turn(self, request: "ChannelTurn") -> str:
         """
-        Resolve send target (to_handle) from AgentRequest. Default: user_id.
+        Resolve send target (to_handle) from ChannelTurn. Default: user_id.
         Override for channels that send by session_id (e.g. Feishu).
         """
-        return getattr(request, "user_id", "") or ""
+        return getattr(request, "sender_id", "") or ""
 
     def get_on_reply_sent_args(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
     ) -> tuple:
         """
         Args for _on_reply_sent(channel, *args). Default: (to_handle,
         session_id). Override e.g. to pass (user_id, session_id).
         """
-        session_id = (
-            getattr(request, "session_id", "") or f"{self.channel}:{to_handle}"
-        )
+        session_id = getattr(request, "session_id", "") or f"{self.channel}:{to_handle}"
         return (to_handle, session_id)
 
     async def refresh_webhook_or_token(self) -> None:
@@ -1243,7 +1202,7 @@ class BaseChannel(ABC):
         """Extract query text from payload for command detection.
 
         Args:
-            payload: Native dict or AgentRequest
+            payload: Native dict or ChannelTurn
 
         Returns:
             Query text string (empty if not found)
@@ -1256,8 +1215,8 @@ class BaseChannel(ABC):
                 if hasattr(part, "type") and part.type == "text":
                     return getattr(part, "text", "") or ""
             return ""
-        if hasattr(payload, "input"):
-            inp = payload.input or []
+        if hasattr(payload, "messages"):
+            inp = payload.messages or []
             if inp and hasattr(inp[0], "content"):
                 content = inp[0].content or []
                 for part in content:
@@ -1272,8 +1231,8 @@ class BaseChannel(ABC):
         """Apply no-text debounce on payload; return False if buffered."""
         if isinstance(payload, dict):
             content_parts = payload.get("content_parts") or []
-        elif hasattr(payload, "input") and payload.input:
-            content_parts = getattr(payload.input[0], "content", None) or []
+        elif hasattr(payload, "messages") and payload.messages:
+            content_parts = getattr(payload.messages[0], "content", None) or []
         else:
             return True
 
@@ -1291,12 +1250,14 @@ class BaseChannel(ABC):
         # Write merged parts back so downstream paths see full content.
         if isinstance(payload, dict):
             payload["content_parts"] = merged
-        elif hasattr(payload, "input") and payload.input:
-            first = payload.input[0]
+        elif hasattr(payload, "messages") and payload.messages:
+            first = payload.messages[0]
             if hasattr(first, "model_copy"):
-                payload.input[0] = first.model_copy(
-                    update={"content": merged},
-                )
+                payload.messages = [
+                    first.model_copy(
+                        update={"content": merged},
+                    )
+                ]
             elif hasattr(first, "content"):
                 first.content = merged
         return True
@@ -1334,32 +1295,30 @@ class BaseChannel(ABC):
                 f"base _consume_one_request: is_control={is_control}",
             )
             if not is_control:
-                request = self._payload_to_request(payload)
+                request = self._payload_to_turn(payload)
                 await self._consume_with_tracker(request, payload)
                 return
 
-        request = self._payload_to_request(payload)
+        request = self._payload_to_turn(payload)
         # Build meta from payload so session_webhook is never lost when
-        # request has no channel_meta (e.g. AgentRequest schema has no field).
+        # request has no channel_meta (e.g. ChannelTurn schema has no field).
         if isinstance(payload, dict):
             meta_from_payload = dict(payload.get("meta") or {})
             if payload.get("session_webhook"):
-                meta_from_payload["session_webhook"] = payload[
-                    "session_webhook"
-                ]
+                meta_from_payload["session_webhook"] = payload["session_webhook"]
             # Always attach so channel _before_consume_process can use it
             # (e.g. Feishu save receive_id for cron send).
-            setattr(request, "channel_meta", meta_from_payload)
-        to_handle = self.get_to_handle_from_request(request)
+            request.metadata = meta_from_payload
+        to_handle = self.get_to_handle_from_turn(request)
         await self._before_consume_process(request)
         # Prefer meta built from payload so session_webhook is present when
-        # request.channel_meta is missing (AgentRequest may not have the attr).
+        # request.metadata is missing (ChannelTurn may not have the attr).
         if isinstance(payload, dict):
             send_meta = dict(payload.get("meta") or {})
             if payload.get("session_webhook"):
                 send_meta["session_webhook"] = payload["session_webhook"]
         else:
-            send_meta = getattr(request, "channel_meta", None) or {}
+            send_meta = getattr(request, "metadata", None) or {}
         bot_prefix = getattr(self, "bot_prefix", None) or getattr(
             self,
             "_bot_prefix",
@@ -1375,7 +1334,7 @@ class BaseChannel(ABC):
 
     async def _run_process_loop(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         send_meta: Dict[str, Any],
     ) -> None:
@@ -1385,7 +1344,7 @@ class BaseChannel(ABC):
         """
         session_id = getattr(request, "session_id", "") or ""
         self._clear_session_turn_usage(session_id)
-        process_request = self._request_for_process(request)
+        process_request = self._build_turn_request(request)
         adapter, delivery = self._create_reply_delivery(
             request,
             process_request,
@@ -1394,7 +1353,7 @@ class BaseChannel(ABC):
         )
         try:
             async for event in self._runtime_process(process_request):
-                async for _, reply in adapter.project(event):
+                for reply in adapter.project(event):
                     await delivery.deliver(reply)
             err_msg = self._get_response_error_message(
                 delivery.last_response,
@@ -1443,12 +1402,12 @@ class BaseChannel(ABC):
 
     def _create_reply_delivery(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         process_request: Any,
         to_handle: str,
         send_meta: Dict[str, Any],
-    ) -> tuple[ReplyPresentationAdapter, ChannelReplyDelivery]:
-        """Create the per-turn compatibility projector and delivery port."""
+    ) -> tuple[ChannelEventProjector, ChannelReplyDelivery]:
+        """Create the Channel presenter and platform delivery port."""
         session_id = getattr(request, "session_id", "") or ""
         target = getattr(process_request, "reply_target", None)
         if not isinstance(target, ReplyTarget):
@@ -1460,11 +1419,7 @@ class BaseChannel(ABC):
         turn_id = str(
             getattr(process_request, "turn_id", "") or session_id,
         )
-        adapter = ReplyPresentationAdapter(
-            turn_id=turn_id,
-            target=target,
-            conversation_id=session_id,
-        )
+        adapter = ChannelEventProjector(target)
         delivery = ChannelReplyDelivery(
             channel=self,
             request=request,
@@ -1474,12 +1429,12 @@ class BaseChannel(ABC):
         return adapter, delivery
 
     def _get_response_error_message(self, last_response: Any) -> Optional[str]:
-        """
-        Extract error message from runtime response event.
-        Handles AgentResponse.error or Event wrapper (e.g. .data / .response).
-        """
+        """Extract an error message from a canonical runtime failure."""
         if not last_response:
             return None
+        error_text = getattr(last_response, "error_text", None)
+        if error_text:
+            return str(error_text)
         resp = last_response
         if getattr(last_response, "data", None) is not None:
             resp = last_response.data
@@ -1494,7 +1449,7 @@ class BaseChannel(ABC):
             return err.get("message") or str(err)
         return str(err)
 
-    async def _before_consume_process(self, request: "AgentRequest") -> None:
+    async def _before_consume_process(self, request: "ChannelTurn") -> None:
         """
         Hook called once per consume_one before running _process. Override
         to e.g. save receive_id for send path (Feishu).
@@ -1502,7 +1457,7 @@ class BaseChannel(ABC):
 
     async def on_event_content(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1551,7 +1506,7 @@ class BaseChannel(ABC):
 
     async def _safe_streaming_delta(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1578,7 +1533,7 @@ class BaseChannel(ABC):
 
     async def on_streaming_start(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1593,7 +1548,7 @@ class BaseChannel(ABC):
 
     async def on_streaming_delta(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1610,7 +1565,7 @@ class BaseChannel(ABC):
 
     async def on_streaming_end(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1625,7 +1580,7 @@ class BaseChannel(ABC):
 
     async def on_event_message_completed(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1638,14 +1593,14 @@ class BaseChannel(ABC):
 
     async def on_event_response(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         event: Any,
     ) -> None:
         """Hook: response event received. Default: no-op."""
 
     async def _on_process_completed(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         send_meta: Dict[str, Any],
     ) -> None:
@@ -1689,7 +1644,7 @@ class BaseChannel(ABC):
 
     async def _commit_turn_usage(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         session_id: str,
         *,
         emit_sse: bool = True,
@@ -1707,17 +1662,15 @@ class BaseChannel(ABC):
 
             workspace = self._workspace
             session = (
-                getattr(workspace, "session", None)
-                if workspace is not None
-                else None
+                getattr(workspace, "session", None) if workspace is not None else None
             )
             agent_id = (
                 getattr(workspace, "agent_id", "default")
                 if workspace is not None
                 else "default"
             )
-            user_id = getattr(request, "user_id", "") or ""
-            channel = getattr(request, "channel", "") or self.channel
+            user_id = getattr(request, "sender_id", "") or ""
+            channel = getattr(request, "channel_type", "") or self.channel
             turn, ctx, agent_state = await turn_usage.resolve_turn_usage(
                 session_id=session_id,
                 agent_id=agent_id,
@@ -1784,23 +1737,8 @@ class BaseChannel(ABC):
         await self.send_content_parts(
             to_handle,
             [TextContent(type=ContentType.TEXT, text=err_text)],
-            getattr(request, "channel_meta", None) or {},
+            getattr(request, "metadata", None) or {},
         )
-
-    async def send_response(
-        self,
-        to_handle: str,
-        response: "AgentResponse",
-        meta: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """
-        Convert AgentResponse to this channel's reply and send.
-        Default: take last message text from output and call
-        send(to_handle, text, meta).
-        Subclasses may override to support image, video attachments.
-        """
-        text = self._response_to_text(response)
-        await self.send(to_handle, text or "", meta)
 
     def _message_to_content_parts(
         self,
@@ -1886,9 +1824,7 @@ class BaseChannel(ABC):
             chunks.append(preview)
         if not chunks:
             return None
-        return f"⌛️ **{tool_name}**:\n" + "\n".join(
-            f"`{text}`" for text in chunks
-        )
+        return f"⌛️ **{tool_name}**:\n" + "\n".join(f"`{text}`" for text in chunks)
 
     async def send_content_parts(
         self,
@@ -1955,39 +1891,6 @@ class BaseChannel(ABC):
         Subclasses override to send real attachments.
         """
         pass
-
-    def _response_to_text(self, response: "AgentResponse") -> str:
-        """Extract reply text from the last ``message``-type output item.
-
-        Searches backwards so trailing reasoning / tool-output items are
-        skipped.
-        """
-        if not response.output:
-            return ""
-
-        last_msg = None
-        for msg in reversed(response.output):
-            if msg.type == MessageType.MESSAGE and msg.content:
-                last_msg = msg
-                break
-
-        if not last_msg:
-            return ""
-        parts = []
-        for c in last_msg.content:
-            if getattr(c, "type", None) == ContentType.TEXT and getattr(
-                c,
-                "text",
-                None,
-            ):
-                parts.append(c.text)
-            elif getattr(c, "type", None) == ContentType.REFUSAL and getattr(
-                c,
-                "refusal",
-                None,
-            ):
-                parts.append(c.refusal)
-        return "".join(parts)
 
     def clone(self, config) -> "BaseChannel":
         """Clone a new channel instance with updated config, cloning
@@ -2095,7 +1998,7 @@ class BaseChannel(ABC):
         so card-capable channels render interactive cards, while others fall
         back to plain text.
         """
-        from qwenpaw.schemas import AgentRequest, Event
+        from qwenpaw.schemas import Event, Message, Role
 
         to_handle = self.to_handle_from_target(
             user_id=user_id,
@@ -2127,7 +2030,19 @@ class BaseChannel(ABC):
                 TextContent(type=ContentType.TEXT, text=result_summary),
             ],
         )
-        request = AgentRequest(session_id=session_id, user_id=user_id)
+        request = ChannelTurn(
+            session_id=session_id,
+            sender_id=user_id,
+            messages=[
+                Message(
+                    type=MessageType.MESSAGE,
+                    role=Role.USER,
+                    content=[],
+                ),
+            ],
+            channel_type=self.channel,
+            metadata=send_meta,
+        )
 
         await self.on_event_message_completed(
             request,

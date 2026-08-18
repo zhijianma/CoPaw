@@ -28,12 +28,12 @@ from typing import Any, Dict, List, Optional
 from aibot import WSClient, WSClientOptions, generate_req_id
 
 from qwenpaw.schemas import (
-    AgentRequest,
     FileContent,
     ImageContent,
     TextContent,
     VideoContent,
 )
+from ..turn import ChannelTurn
 
 from ....constant import DEFAULT_MEDIA_DIR
 from ....exceptions import ChannelError
@@ -271,8 +271,7 @@ class WecomChannel(BaseChannel):
             ),
             workspace_dir=workspace_dir,
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=getattr(config, "dm_policy", "open") or "open",
             group_policy=getattr(config, "group_policy", "open") or "open",
@@ -334,9 +333,9 @@ class WecomChannel(BaseChannel):
         """Return send handle; session_id takes priority."""
         return session_id or f"wecom:{user_id}"
 
-    def get_to_handle_from_request(self, request: Any) -> str:
+    def get_to_handle_from_turn(self, request: Any) -> str:
         session_id = getattr(request, "session_id", "") or ""
-        user_id = getattr(request, "user_id", "") or ""
+        user_id = getattr(request, "sender_id", "") or ""
         return session_id or f"wecom:{user_id}"
 
     def get_on_reply_sent_args(
@@ -345,15 +344,15 @@ class WecomChannel(BaseChannel):
         to_handle: str,
     ) -> tuple:
         return (
-            getattr(request, "user_id", "") or "",
+            getattr(request, "sender_id", "") or "",
             getattr(request, "session_id", "") or "",
         )
 
-    def build_agent_request_from_native(
+    def build_channel_turn_from_native(
         self,
         native_payload: Any,
-    ) -> "AgentRequest":
-        """Build AgentRequest from a wecom native dict."""
+    ) -> "ChannelTurn":
+        """Build ChannelTurn from a wecom native dict."""
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
@@ -364,14 +363,14 @@ class WecomChannel(BaseChannel):
             meta,
         )
         user_id = payload["user_id"] if "user_id" in payload else sender_id
-        request = self.build_agent_request_from_user_content(
+        request = self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=user_id,
             session_id=session_id,
             content_parts=content_parts,
             channel_meta=meta,
         )
-        setattr(request, "channel_meta", meta)
+        request.metadata = dict(meta)
         return request
 
     def merge_native_items(self, items: List[Any]) -> Any:
@@ -623,9 +622,7 @@ class WecomChannel(BaseChannel):
                     q_type = q_item.get("msgtype") or ""
                     if q_type == "text":
                         quoted_text = (
-                            (q_item.get("text") or {})
-                            .get("content", "")
-                            .strip()
+                            (q_item.get("text") or {}).get("content", "").strip()
                         )
                         if quoted_text:
                             text_parts.insert(
@@ -642,11 +639,7 @@ class WecomChannel(BaseChannel):
                         q_data = q_item.get(q_type) or {}
                         q_url = q_data.get("url") or ""
                         q_aes_key = q_data.get("aeskey") or ""
-                        hint = (
-                            hint_default
-                            or q_data.get("filename")
-                            or "file.bin"
-                        )
+                        hint = hint_default or q_data.get("filename") or "file.bin"
                         if q_url:
                             q_path = await self._download_media(
                                 q_url,
@@ -697,9 +690,7 @@ class WecomChannel(BaseChannel):
                 "sender_id": sender_id,
                 "acl_sender_id": sender_id,
                 "user_id": (
-                    "group"
-                    if (is_group and self.share_session_in_group)
-                    else sender_id
+                    "group" if (is_group and self.share_session_in_group) else sender_id
                 ),
                 "session_id": session_id,
                 "content_parts": content_parts,
@@ -946,16 +937,10 @@ class WecomChannel(BaseChannel):
             media_type = "image"
         elif pt == ContentType.AUDIO:
             # AudioContent stores path/URL in .data (not .file_url)
-            raw_path = (
-                getattr(part, "data", "")
-                or getattr(part, "file_url", "")
-                or ""
-            )
+            raw_path = getattr(part, "data", "") or getattr(part, "file_url", "") or ""
             # WeCom voice only supports AMR; send other formats as file.
             _local = file_url_to_local_path(raw_path) or raw_path
-            media_type = (
-                "voice" if Path(_local).suffix.lower() == ".amr" else "file"
-            )
+            media_type = "voice" if Path(_local).suffix.lower() == ".amr" else "file"
         elif pt == ContentType.VIDEO:
             raw_path = getattr(part, "video_url", "") or ""
             media_type = "video"
@@ -1078,11 +1063,11 @@ class WecomChannel(BaseChannel):
     # Pre-process hook (runs after access control gate)
     # ------------------------------------------------------------------
 
-    async def _before_consume_process(self, request: "AgentRequest") -> None:
+    async def _before_consume_process(self, request: "ChannelTurn") -> None:
         """Send 'Thinking…' placeholder stream (runs after ACL gate)."""
-        meta = getattr(request, "channel_meta", None) or {}
+        meta = getattr(request, "metadata", None) or {}
         frame = meta.get("wecom_frame")
-        has_text = bool(getattr(request, "input", None))
+        has_text = bool(getattr(request, "messages", None))
 
         if not (has_text and self._client and frame):
             return
@@ -1099,22 +1084,22 @@ class WecomChannel(BaseChannel):
             logger.debug("wecom failed to send processing indicator")
             return
 
-        setattr(request, "_wecom_processing_stream_id", processing_stream_id)
+        request.state["processing_stream_id"] = processing_stream_id
         self._keepalive_tasks[processing_stream_id] = asyncio.create_task(
             self._keepalive_processing(frame, processing_stream_id),
         )
 
     @staticmethod
     def _inject_processing_sid(
-        request: "AgentRequest",
+        request: "ChannelTurn",
         send_meta: Dict[str, Any],
     ) -> None:
         """Bridge processing_stream_id from request to send_meta."""
         if "wecom_processing_stream_id" not in send_meta:
-            sid = getattr(request, "_wecom_processing_stream_id", "")
+            sid = str(request.state.get("processing_stream_id") or "")
             if sid:
                 send_meta["wecom_processing_stream_id"] = sid
-                setattr(request, "_wecom_processing_stream_id", "")
+                request.state.pop("processing_stream_id", None)
 
     # ------------------------------------------------------------------
     # Streaming hooks (real-time delta push via reply_stream)
@@ -1166,7 +1151,7 @@ class WecomChannel(BaseChannel):
 
     async def on_streaming_start(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1194,7 +1179,7 @@ class WecomChannel(BaseChannel):
 
     async def on_streaming_delta(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1229,7 +1214,7 @@ class WecomChannel(BaseChannel):
 
     async def on_streaming_end(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1268,7 +1253,7 @@ class WecomChannel(BaseChannel):
 
     async def _consume_with_tracker(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         payload: Any,
     ) -> None:
         """Override to track per-session busy state (TaskTracker path)."""
@@ -1285,7 +1270,7 @@ class WecomChannel(BaseChannel):
 
     async def on_event_message_completed(
         self,
-        request: "AgentRequest",
+        request: "ChannelTurn",
         to_handle: str,
         event: Any,
         send_meta: Dict[str, Any],
@@ -1318,9 +1303,7 @@ class WecomChannel(BaseChannel):
         m = meta or {}
         frame = m.get("wecom_frame")
         chatid = (
-            m.get("wecom_chatid")
-            or self._parse_chatid_from_handle(to_handle)
-            or ""
+            m.get("wecom_chatid") or self._parse_chatid_from_handle(to_handle) or ""
         )
 
         prefix = m.get("bot_prefix", "") or self.bot_prefix or ""
@@ -1417,9 +1400,7 @@ class WecomChannel(BaseChannel):
             return
         m = meta or {}
         chatid = (
-            m.get("wecom_chatid")
-            or self._parse_chatid_from_handle(to_handle)
-            or ""
+            m.get("wecom_chatid") or self._parse_chatid_from_handle(to_handle) or ""
         )
         frame = m.get("wecom_frame")
         prefix = m.get("bot_prefix", "") or self.bot_prefix or ""
@@ -1534,9 +1515,7 @@ class WecomChannel(BaseChannel):
         issues = []
         if self._client is None:
             issues.append("WeCom WebSocket client not initialized")
-        ws_thread_alive = (
-            self._ws_thread is not None and self._ws_thread.is_alive()
-        )
+        ws_thread_alive = self._ws_thread is not None and self._ws_thread.is_alive()
         if not ws_thread_alive:
             issues.append("WebSocket thread is not running")
         if issues:
@@ -1667,11 +1646,7 @@ class WecomChannel(BaseChannel):
         # disconnect() uses asyncio.ensure_future() internally which
         # binds to the current loop; schedule it on _ws_loop so the
         # ws is operated on its own loop (issue #2757).
-        if (
-            self._client
-            and self._ws_loop is not None
-            and self._ws_loop.is_running()
-        ):
+        if self._client and self._ws_loop is not None and self._ws_loop.is_running():
             try:
                 self._ws_loop.call_soon_threadsafe(self._client.disconnect)
             except Exception:

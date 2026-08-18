@@ -10,6 +10,7 @@ and lifecycle management.
 Run:
     pytest tests/unit/channels/test_discord.py -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 from __future__ import annotations
 
@@ -23,7 +24,6 @@ from qwenpaw.schemas import (
     ImageContent,
 )
 from qwenpaw.exceptions import ChannelError
-
 
 # =============================================================================
 # Fixtures
@@ -538,39 +538,39 @@ class TestDiscordChannelRouteFromHandle:
 
 class TestDiscordChannelGetToHandleFromRequest:
     """
-    P0: Tests for get_to_handle_from_request method.
+    P0: Tests for get_to_handle_from_turn method.
     """
 
-    def test_get_to_handle_from_request_with_session_id(self, discord_channel):
+    def test_get_to_handle_from_turn_with_session_id(self, discord_channel):
         """Should return session_id when available."""
         mock_request = MagicMock()
         mock_request.session_id = "discord:ch:123"
-        mock_request.user_id = "user456"
+        mock_request.sender_id = "user456"
 
-        to_handle = discord_channel.get_to_handle_from_request(mock_request)
+        to_handle = discord_channel.get_to_handle_from_turn(mock_request)
 
         assert to_handle == "discord:ch:123"
 
-    def test_get_to_handle_from_request_fallback_to_user_id(
+    def test_get_to_handle_from_turn_fallback_to_user_id(
         self,
         discord_channel,
     ):
         """Should fallback to user_id when session_id is empty."""
         mock_request = MagicMock()
         mock_request.session_id = ""
-        mock_request.user_id = "user789"
+        mock_request.sender_id = "user789"
 
-        to_handle = discord_channel.get_to_handle_from_request(mock_request)
+        to_handle = discord_channel.get_to_handle_from_turn(mock_request)
 
         assert to_handle == "user789"
 
-    def test_get_to_handle_from_request_empty(self, discord_channel):
+    def test_get_to_handle_from_turn_empty(self, discord_channel):
         """Should return empty string when both are empty."""
         mock_request = MagicMock()
         mock_request.session_id = ""
-        mock_request.user_id = ""
+        mock_request.sender_id = ""
 
-        to_handle = discord_channel.get_to_handle_from_request(mock_request)
+        to_handle = discord_channel.get_to_handle_from_turn(mock_request)
 
         assert to_handle == ""
 
@@ -597,10 +597,10 @@ class TestDiscordChannelToHandleFromTarget:
 
 class TestDiscordChannelBuildAgentRequestFromNative:
     """
-    P0: Tests for build_agent_request_from_native method.
+    P0: Tests for build_channel_turn_from_native method.
     """
 
-    def test_build_agent_request_from_native_basic(self, discord_channel):
+    def test_build_channel_turn_from_native_basic(self, discord_channel):
         """Should build AgentRequest from native payload."""
         native_payload = {
             "channel_id": "discord",
@@ -611,28 +611,28 @@ class TestDiscordChannelBuildAgentRequestFromNative:
             "meta": {"user_id": "user123", "is_dm": True},
         }
 
-        request = discord_channel.build_agent_request_from_native(
+        request = discord_channel.build_channel_turn_from_native(
             native_payload,
         )
 
-        assert request.user_id == "user123"
-        assert request.channel == "discord"
-        assert request.channel_meta == {"user_id": "user123", "is_dm": True}
-        assert len(request.input) == 1
-        assert request.input[0].content[0].text == "Hello"
+        assert request.sender_id == "user123"
+        assert request.channel_type == "discord"
+        assert request.metadata == {"user_id": "user123", "is_dm": True}
+        assert len(request.messages) == 1
+        assert request.messages[0].content[0].text == "Hello"
 
-    def test_build_agent_request_from_native_empty_payload(
+    def test_build_channel_turn_from_native_empty_payload(
         self,
         discord_channel,
     ):
         """Should handle empty/invalid payload."""
-        request = discord_channel.build_agent_request_from_native(None)
+        request = discord_channel.build_channel_turn_from_native(None)
 
         # Should still create a request with defaults
         assert request is not None
-        assert request.channel == "discord"
+        assert request.channel_type == "discord"
 
-    def test_build_agent_request_from_native_with_image(self, discord_channel):
+    def test_build_channel_turn_from_native_with_image(self, discord_channel):
         """Should handle image content in payload."""
         native_payload = {
             "sender_id": "user456",
@@ -646,12 +646,12 @@ class TestDiscordChannelBuildAgentRequestFromNative:
             "meta": {"user_id": "user456"},
         }
 
-        request = discord_channel.build_agent_request_from_native(
+        request = discord_channel.build_channel_turn_from_native(
             native_payload,
         )
 
-        assert len(request.input[0].content) == 2
-        assert request.input[0].content[1].type == ContentType.IMAGE
+        assert len(request.messages[0].content) == 2
+        assert request.messages[0].content[1].type == ContentType.IMAGE
 
 
 # =============================================================================
@@ -817,10 +817,10 @@ class TestDiscordChannelIntegration:
         # Create a mock request
         mock_request = MagicMock()
         mock_request.session_id = session_handle
-        mock_request.user_id = "user789"
+        mock_request.sender_id = "user789"
 
         # Get to_handle from request
-        to_handle = discord_channel.get_to_handle_from_request(mock_request)
+        to_handle = discord_channel.get_to_handle_from_turn(mock_request)
         assert to_handle == session_handle
 
         # Resolve session ID
@@ -910,13 +910,13 @@ print("```nested```")
             "meta": {},
         }
 
-        request = discord_channel.build_agent_request_from_native(
+        request = discord_channel.build_channel_turn_from_native(
             native_payload,
         )
 
         # Should create request with space as default content
         assert request is not None
-        assert len(request.input) == 1
+        assert len(request.messages) == 1
 
     @pytest.mark.asyncio
     async def test_send_content_parts_empty_list(self, discord_channel):

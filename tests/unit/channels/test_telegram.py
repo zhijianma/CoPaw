@@ -21,6 +21,7 @@ Run:
     pytest tests/unit/channels/test_telegram.py -v
     pytest tests/unit/channels/test_telegram.py::TestTelegramChannelInit -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 # pylint: disable=broad-exception-raised,using-constant-test
 from __future__ import annotations
@@ -42,7 +43,6 @@ from qwenpaw.schemas import (
     FileContent,
     ContentType,
 )
-
 
 # =============================================================================
 # Fixtures
@@ -1093,35 +1093,35 @@ class TestTelegramSessionResolution:
         assert result == "telegram:user123"
 
     def test_to_handle_from_request_with_chat_id(self, telegram_channel):
-        """get_to_handle_from_request should use chat_id from meta."""
+        """get_to_handle_from_turn should use chat_id from meta."""
         mock_request = MagicMock()
-        mock_request.channel_meta = {"chat_id": "456"}
+        mock_request.metadata = {"chat_id": "456"}
         mock_request.session_id = "telegram:789"
 
-        result = telegram_channel.get_to_handle_from_request(mock_request)
+        result = telegram_channel.get_to_handle_from_turn(mock_request)
         assert result == "456"
 
     def test_to_handle_from_request_with_session_id(self, telegram_channel):
-        """get_to_handle_from_request should parse session_id."""
+        """get_to_handle_from_turn should parse session_id."""
         mock_request = MagicMock()
-        mock_request.channel_meta = {}
+        mock_request.metadata = {}
         mock_request.session_id = "telegram:789"
-        mock_request.user_id = "user123"
+        mock_request.sender_id = "user123"
 
-        result = telegram_channel.get_to_handle_from_request(mock_request)
+        result = telegram_channel.get_to_handle_from_turn(mock_request)
         assert result == "789"
 
     def test_to_handle_from_request_fallback_to_user_id(
         self,
         telegram_channel,
     ):
-        """get_to_handle_from_request should fallback to user_id."""
+        """get_to_handle_from_turn should fallback to user_id."""
         mock_request = MagicMock()
-        mock_request.channel_meta = {}
+        mock_request.metadata = {}
         mock_request.session_id = "other:789"
-        mock_request.user_id = "user123"
+        mock_request.sender_id = "user123"
 
-        result = telegram_channel.get_to_handle_from_request(mock_request)
+        result = telegram_channel.get_to_handle_from_turn(mock_request)
         assert result == "user123"
 
     def test_to_handle_from_target_with_session_id(self, telegram_channel):
@@ -1147,7 +1147,7 @@ class TestTelegramSessionResolution:
 
 
 class TestTelegramBuildAgentRequest:
-    """Tests for build_agent_request_from_native method."""
+    """Tests for build_channel_turn_from_native method."""
 
     def test_build_agent_request_with_full_payload(self, telegram_channel):
         """Should create AgentRequest from complete native payload."""
@@ -1160,12 +1160,12 @@ class TestTelegramBuildAgentRequest:
             "meta": {"chat_id": "456", "user_id": "789"},
         }
 
-        request = telegram_channel.build_agent_request_from_native(payload)
+        request = telegram_channel.build_channel_turn_from_native(payload)
 
-        assert request.user_id == "789"  # From meta
-        assert request.channel == "telegram"
-        assert len(request.input) == 1
-        assert request.channel_meta == {"chat_id": "456", "user_id": "789"}
+        assert request.sender_id == "789"  # From meta
+        assert request.channel_type == "telegram"
+        assert len(request.messages) == 1
+        assert request.metadata == {"chat_id": "456", "user_id": "789"}
 
     def test_build_agent_request_defaults(self, telegram_channel):
         """Should use defaults for missing fields."""
@@ -1174,10 +1174,10 @@ class TestTelegramBuildAgentRequest:
             "content_parts": [],
         }
 
-        request = telegram_channel.build_agent_request_from_native(payload)
+        request = telegram_channel.build_channel_turn_from_native(payload)
 
-        assert request.user_id == "user123"  # From sender_id
-        assert request.channel == "telegram"  # Default channel
+        assert request.sender_id == "user123"  # From sender_id
+        assert request.channel_type == "telegram"  # Default channel
 
 
 # =============================================================================
@@ -1318,9 +1318,7 @@ class TestTelegramResolveFileUrl:
             bot_token="my_bot_token",
         )
 
-        expected = (
-            "https://api.telegram.org/file/botmy_bot_token/photos/file_123.jpg"
-        )
+        expected = "https://api.telegram.org/file/botmy_bot_token/photos/file_123.jpg"
         assert result == expected
 
     async def test_resolve_api_url_with_custom_base_url(self):
@@ -1342,8 +1340,7 @@ class TestTelegramResolveFileUrl:
         )
 
         expected = (
-            "https://tg-api.example.com/file/"
-            "botmy_bot_token/photos/file_123.jpg"
+            "https://tg-api.example.com/file/" "botmy_bot_token/photos/file_123.jpg"
         )
         assert result == expected
 
@@ -1756,19 +1753,14 @@ class TestTelegramProxyUrl:
             mock_builder_class.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
             mock_builder.get_updates_read_timeout.return_value = mock_builder
-            mock_builder.get_updates_connect_timeout.return_value = (
-                mock_builder
-            )
+            mock_builder.get_updates_connect_timeout.return_value = mock_builder
             mock_builder.build.return_value = MagicMock()
 
             # Should complete without error
             telegram_channel._build_application()
 
             # No proxy methods should be called
-            assert (
-                not hasattr(mock_builder, "proxy")
-                or not mock_builder.proxy.called
-            )
+            assert not hasattr(mock_builder, "proxy") or not mock_builder.proxy.called
             assert not mock_builder.base_url.called
             assert not mock_builder.base_file_url.called
 
@@ -1784,9 +1776,7 @@ class TestTelegramProxyUrl:
             mock_builder.base_url.return_value = mock_builder
             mock_builder.base_file_url.return_value = mock_builder
             mock_builder.get_updates_read_timeout.return_value = mock_builder
-            mock_builder.get_updates_connect_timeout.return_value = (
-                mock_builder
-            )
+            mock_builder.get_updates_connect_timeout.return_value = mock_builder
             mock_builder.build.return_value = MagicMock()
 
             telegram_channel._build_application()
@@ -1808,9 +1798,7 @@ class TestTelegramProxyUrl:
             mock_builder_class.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
             mock_builder.get_updates_read_timeout.return_value = mock_builder
-            mock_builder.get_updates_connect_timeout.return_value = (
-                mock_builder
-            )
+            mock_builder.get_updates_connect_timeout.return_value = mock_builder
             mock_builder.proxy.return_value = mock_builder
             mock_builder.get_updates_proxy.return_value = mock_builder
             mock_builder.build.return_value = MagicMock()
@@ -1831,9 +1819,7 @@ class TestTelegramProxyUrl:
             mock_builder_class.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
             mock_builder.get_updates_read_timeout.return_value = mock_builder
-            mock_builder.get_updates_connect_timeout.return_value = (
-                mock_builder
-            )
+            mock_builder.get_updates_connect_timeout.return_value = mock_builder
             mock_builder.proxy.return_value = mock_builder
             mock_builder.get_updates_proxy.return_value = mock_builder
             mock_builder.build.return_value = MagicMock()

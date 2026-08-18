@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """QwenPaw streaming envelope schema.
 
-Defines the ``Message`` / ``Content`` / ``AgentRequest`` / ``AgentResponse``
-types that ``stream_query`` produces and all channels consume.  These are
-qwenpaw's own envelope protocol — independent of agentscope's internal
-event types.
+Defines the Console API envelope and shared presentation content models.
+Channels consume canonical Runtime events and only reuse Message/Content as
+their platform-neutral rendering vocabulary.
 """
+
 from __future__ import annotations
 
 from enum import Enum
@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 
 # ---------------------------------------------------------------------------
 # Enums.

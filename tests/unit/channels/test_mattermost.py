@@ -24,6 +24,7 @@ Run:
     pytest tests/unit/channels/test_mattermost.py -v
     pytest tests/unit/channels/test_mattermost.py::TestMattermostChannelInit -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 # pylint: disable=broad-exception-raised,using-constant-test
 from __future__ import annotations
@@ -38,7 +39,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from qwenpaw.app.channels.renderer import ChannelDisplayConfig
-
 
 # =============================================================================
 # Mock HTTP Classes for httpx
@@ -619,40 +619,40 @@ class TestMattermostResolveSession:
 
         assert result == "mattermost_thread:post_123"
 
-    def test_get_to_handle_from_request_with_meta(self, mattermost_channel):
-        """get_to_handle_from_request should extract handle from meta."""
+    def test_get_to_handle_from_turn_with_meta(self, mattermost_channel):
+        """get_to_handle_from_turn should extract handle from meta."""
         mock_request = MagicMock()
-        mock_request.channel_meta = {"mm_channel_id": "channel_abc"}
+        mock_request.metadata = {"mm_channel_id": "channel_abc"}
         mock_request.session_id = ""
 
-        result = mattermost_channel.get_to_handle_from_request(mock_request)
+        result = mattermost_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "channel_abc"
 
-    def test_get_to_handle_from_request_fallback_session(
+    def test_get_to_handle_from_turn_fallback_session(
         self,
         mattermost_channel,
     ):
-        """get_to_handle_from_request should fallback to session_id."""
+        """get_to_handle_from_turn should fallback to session_id."""
         mock_request = MagicMock()
-        mock_request.channel_meta = {}
+        mock_request.metadata = {}
         mock_request.session_id = "mattermost_dm:dm_channel_123"
 
-        result = mattermost_channel.get_to_handle_from_request(mock_request)
+        result = mattermost_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "dm_channel_123"
 
-    def test_get_to_handle_from_request_fallback_user(
+    def test_get_to_handle_from_turn_fallback_user(
         self,
         mattermost_channel,
     ):
-        """get_to_handle_from_request should fallback to user_id."""
+        """get_to_handle_from_turn should fallback to user_id."""
         mock_request = MagicMock()
-        mock_request.channel_meta = {}
+        mock_request.metadata = {}
         mock_request.session_id = ""
-        mock_request.user_id = "user123"
+        mock_request.sender_id = "user123"
 
-        result = mattermost_channel.get_to_handle_from_request(mock_request)
+        result = mattermost_channel.get_to_handle_from_turn(mock_request)
 
         assert result == "user123"
 
@@ -681,9 +681,9 @@ class TestMattermostResolveSession:
 
 
 class TestMattermostBuildAgentRequest:
-    """Tests for build_agent_request_from_native method."""
+    """Tests for build_channel_turn_from_native method."""
 
-    def test_build_agent_request_from_native(self, mattermost_channel):
+    def test_build_channel_turn_from_native(self, mattermost_channel):
         """Should create AgentRequest from native payload."""
         from qwenpaw.app.channels.base import TextContent, ContentType
 
@@ -701,12 +701,12 @@ class TestMattermostBuildAgentRequest:
             },
         }
 
-        request = mattermost_channel.build_agent_request_from_native(payload)
+        request = mattermost_channel.build_channel_turn_from_native(payload)
 
-        assert request.user_id == "user123"
-        assert request.channel == "mattermost"
+        assert request.sender_id == "user123"
+        assert request.channel_type == "mattermost"
         assert request.session_id == "mattermost_thread:root_123"
-        assert hasattr(request, "channel_meta")
+        assert hasattr(request, "metadata")
 
     def test_build_agent_request_auto_session(self, mattermost_channel):
         """Should auto-generate session_id when not provided."""
@@ -724,7 +724,7 @@ class TestMattermostBuildAgentRequest:
             },
         }
 
-        request = mattermost_channel.build_agent_request_from_native(payload)
+        request = mattermost_channel.build_channel_turn_from_native(payload)
 
         assert request.session_id == "mattermost_dm:channel_abc"
 

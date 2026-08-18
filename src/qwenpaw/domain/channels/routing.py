@@ -13,7 +13,7 @@ def build_turn_request(
     *,
     turn_id: str,
     session_id: str | None = None,
-    source_kind: RequestSourceKind = "channel",
+    source_protocol: RequestSourceKind = "channel",
 ) -> TurnRequest:
     """Build a core request for the Channel configuration's owning Agent."""
     resolved_session_id = session_id or inbound.conversation_id
@@ -24,7 +24,7 @@ def build_turn_request(
         user_id=inbound.sender_id,
         messages=inbound.content,
         source=RequestSource(
-            kind=source_kind,
+            protocol=source_protocol,
             channel_type=inbound.channel_type,
         ),
         reply_target=inbound.reply_target,

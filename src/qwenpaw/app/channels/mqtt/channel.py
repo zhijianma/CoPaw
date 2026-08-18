@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """MQTT Channel for IoT devices and robots"""
+
 from __future__ import annotations
 
 import json
@@ -197,8 +198,7 @@ class MQTTChannel(BaseChannel):
             tls_certfile=getattr(config, "tls_certfile", None),
             tls_keyfile=getattr(config, "tls_keyfile", None),
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             access_control_dm=bool(
                 getattr(config, "access_control_dm", False),
@@ -269,8 +269,7 @@ class MQTTChannel(BaseChannel):
             if not client_id:
                 client_id = "unknown-client"
                 logger.warning(
-                    f"MQTT: No client_id found in topic or payload: "
-                    f"{msg.topic}",
+                    f"MQTT: No client_id found in topic or payload: " f"{msg.topic}",
                 )
 
             logger.info(f"MQTT [{client_id}] >> {content}")
@@ -475,17 +474,17 @@ class MQTTChannel(BaseChannel):
     ) -> str:
         return f"mqtt:{sender_id}"
 
-    def get_to_handle_from_request(self, request: Any) -> str:
-        meta = getattr(request, "channel_meta", None) or {}
+    def get_to_handle_from_turn(self, request: Any) -> str:
+        meta = getattr(request, "metadata", None) or {}
         client_id = meta.get("client_id")
         if client_id:
             return str(client_id)
         sid = getattr(request, "session_id", "")
         if sid.startswith("mqtt:"):
             return sid.split(":", 1)[-1]
-        return getattr(request, "user_id", "") or ""
+        return getattr(request, "sender_id", "") or ""
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
+    def build_channel_turn_from_native(self, native_payload: Any) -> Any:
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
@@ -493,15 +492,15 @@ class MQTTChannel(BaseChannel):
         meta = payload.get("meta") or {}
         session_id = self.resolve_session_id(sender_id, meta)
         user_id = str(meta.get("client_id") or sender_id)
-        request = self.build_agent_request_from_user_content(
+        request = self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=sender_id,
             session_id=session_id,
             content_parts=content_parts,
             channel_meta=meta,
         )
-        request.user_id = user_id
-        request.channel_meta = meta
+        request.sender_id = user_id
+        request.metadata = meta
         return request
 
     def to_handle_from_target(self, *, user_id: str, session_id: str) -> str:

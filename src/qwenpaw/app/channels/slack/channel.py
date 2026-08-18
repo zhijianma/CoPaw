@@ -486,9 +486,7 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
                 SLACK_RECONNECT_MAX_S,
             )
             if delay > 0:
-                jitter = (
-                    delay * SLACK_RECONNECT_JITTER * (2 * random.random() - 1)
-                )
+                jitter = delay * SLACK_RECONNECT_JITTER * (2 * random.random() - 1)
                 delay = max(0, delay + jitter)
 
             logger.warning(
@@ -510,8 +508,7 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
             except Exception as exc:
                 if _is_non_recoverable_slack_error(exc):
                     logger.error(
-                        "[%s] non-recoverable auth error — "
-                        "stopping channel: %s",
+                        "[%s] non-recoverable auth error — " "stopping channel: %s",
                         self.channel,
                         exc,
                     )
@@ -595,10 +592,7 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
         accumulated_text: str = "",
     ) -> None:
         """Send a placeholder message for streaming."""
-        if (
-            stream_type == "reasoning"
-            and not self._display_config.show_thinking
-        ):
+        if stream_type == "reasoning" and not self._display_config.show_thinking:
             return
 
         channel_id = send_meta.get("slack_channel_id") or ""
@@ -638,10 +632,7 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
         accumulated_text: str = "",
     ) -> None:
         """Update the streaming placeholder with accumulated text."""
-        if (
-            stream_type == "reasoning"
-            and not self._display_config.show_thinking
-        ):
+        if stream_type == "reasoning" and not self._display_config.show_thinking:
             return
 
         state = self._get_stream_state(send_meta)
@@ -685,19 +676,14 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
         msg_ts = state["message_ts"].pop(stream_type, None)
         channel_id = state["channel_id"]
 
-        if (
-            stream_type == "reasoning"
-            and not self._display_config.show_thinking
-        ):
+        if stream_type == "reasoning" and not self._display_config.show_thinking:
             return
 
         if not accumulated_text.strip():
             return
 
         prefix = "\U0001f4ad " if stream_type == "reasoning" else ""
-        final_text = (
-            f"{prefix}{accumulated_text}" if prefix else accumulated_text
-        )
+        final_text = f"{prefix}{accumulated_text}" if prefix else accumulated_text
         mrkdwn = markdown_to_slack_mrkdwn(final_text)
 
         # If placeholder was never sent, fall back to normal send
@@ -802,10 +788,10 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
             self._sender = SlackSender(channel=self)
         await self._sender.send_content_parts(to_handle, parts, meta or {})
 
-    # ── Native payload → AgentRequest ──
+    # ── Native payload → ChannelTurn ──
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
-        """Convert Slack native dict to AgentRequest."""
+    def build_channel_turn_from_native(self, native_payload: Any) -> Any:
+        """Convert Slack native dict to ChannelTurn."""
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
@@ -816,15 +802,15 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
             user_id,
             meta,
         )
-        request = self.build_agent_request_from_user_content(
+        request = self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=sender_id,
             session_id=session_id,
             content_parts=content_parts,
             channel_meta=meta,
         )
-        request.user_id = user_id
-        request.channel_meta = meta
+        request.sender_id = user_id
+        request.metadata = meta
         return request
 
     def get_cached_thread_context(
@@ -835,9 +821,7 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
         """Return cached thread context if still valid, else None."""
         key = f"{channel_id}:{thread_ts}"
         cached = self._thread_context_cache.get(key)
-        if cached and (
-            time.monotonic() - cached[1] < self._thread_context_cache_ttl
-        ):
+        if cached and (time.monotonic() - cached[1] < self._thread_context_cache_ttl):
             return cached[0]
         return None
 
@@ -863,7 +847,7 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
         """Resolve session id from Slack meta (channel + thread).
 
         Returns the same ``slack:...`` format used by the handler's native
-        dicts so that :attr:`AgentRequest.session_id` can also serve as the
+        dicts so that :attr:`ChannelTurn.session_id` can also serve as the
         send handle.
         """
         meta = channel_meta or {}
@@ -886,16 +870,16 @@ class SlackChannel(BaseChannel):  # pylint: disable=too-many-public-methods
         """Return session_id as the proactive-send routing handle."""
         return session_id or user_id
 
-    def get_to_handle_from_request(self, request: Any) -> str:
-        """Extract Slack routing handle from AgentRequest.
+    def get_to_handle_from_turn(self, request: Any) -> str:
+        """Extract Slack routing handle from ChannelTurn.
 
-        Prefer :attr:`AgentRequest.session_id` (``slack:...`` format) so that
+        Prefer :attr:`ChannelTurn.session_id` (``slack:...`` format) so that
         cron, ACL, and normal reply paths all use the same routing key.
         Falls back to reconstructing from ``channel_meta``.
         """
         session_id = getattr(request, "session_id", "") or ""
         if session_id:
             return session_id
-        meta = getattr(request, "channel_meta", None) or {}
-        user_id = getattr(request, "user_id", "") or ""
+        meta = getattr(request, "metadata", None) or {}
+        user_id = getattr(request, "sender_id", "") or ""
         return self.resolve_session_id(user_id, meta)

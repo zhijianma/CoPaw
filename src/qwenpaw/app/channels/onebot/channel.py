@@ -59,8 +59,7 @@ _DEFAULT_WS_HOST = "127.0.0.1"
 _AUTH_SCHEMES = frozenset({"bearer", "token"})
 _CODE_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<mark>`{3,}|~{3,})")
 _MARKDOWN_LINK_RE = re.compile(
-    r"\[(?P<label>[^\]\n]+)\]"
-    r"\((?P<url>https?://(?:[^\s()]|\([^\s()]*\))+)\)",
+    r"\[(?P<label>[^\]\n]+)\]" r"\((?P<url>https?://(?:[^\s()]|\([^\s()]*\))+)\)",
 )
 _WRAPPED_URL_RE = re.compile(
     r"(?P<mark>\*\*|__)(?P<url>https?://\S+?)(?P=mark)",
@@ -418,8 +417,7 @@ class OneBotChannel(BaseChannel):
             access_token=config.access_token or "",
             bot_prefix=config.bot_prefix or "",
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=config.dm_policy,
             group_policy=config.group_policy,
@@ -582,8 +580,7 @@ class OneBotChannel(BaseChannel):
                 break
             if not await self._is_server_healthy():
                 logger.warning(
-                    "onebot: watchdog detected server not healthy, "
-                    "restarting...",
+                    "onebot: watchdog detected server not healthy, " "restarting...",
                 )
                 try:
                     await self._stop_ws_server()
@@ -850,9 +847,9 @@ class OneBotChannel(BaseChannel):
             "meta": meta,
         }
 
-        request = self.build_agent_request_from_native(native)
-        request.channel_meta = meta
-        request.acl_sender_id = user_id
+        request = self.build_channel_turn_from_native(native)
+        request.metadata = meta
+        request.state["acl_sender_id"] = user_id
 
         logger.info(
             "onebot recv %s from=%s%s text=%r",
@@ -1000,9 +997,11 @@ class OneBotChannel(BaseChannel):
                     str(key)[:40]: (
                         item[:80]
                         if isinstance(item, str)
-                        else item
-                        if isinstance(item, (bool, int, float, type(None)))
-                        else f"<{type(item).__name__}>"
+                        else (
+                            item
+                            if isinstance(item, (bool, int, float, type(None)))
+                            else f"<{type(item).__name__}>"
+                        )
                     )
                     for key, item in list(data.items())[:6]
                 }
@@ -1132,9 +1131,7 @@ class OneBotChannel(BaseChannel):
 
         data = result.get("data") if isinstance(result, dict) else None
         message = data.get("message") if isinstance(data, dict) else None
-        raw_message = (
-            data.get("raw_message") if isinstance(data, dict) else None
-        )
+        raw_message = data.get("raw_message") if isinstance(data, dict) else None
         segments = self._normalize_onebot_segments(message)
         raw_segments = self._normalize_onebot_segments(raw_message)
         if (
@@ -1193,9 +1190,7 @@ class OneBotChannel(BaseChannel):
             file_segment_index += 1
             source_data = source_segment.get("data", {})
             file_id = (
-                source_data.get("file_id", "")
-                if isinstance(source_data, dict)
-                else ""
+                source_data.get("file_id", "") if isinstance(source_data, dict) else ""
             )
             file_url = getattr(part, "file_url", "") or ""
             # Already a valid URL — keep as-is
@@ -1245,17 +1240,17 @@ class OneBotChannel(BaseChannel):
         return resolved
 
     # ------------------------------------------------------------------
-    # Build AgentRequest
+    # Build ChannelTurn
     # ------------------------------------------------------------------
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
+    def build_channel_turn_from_native(self, native_payload: Any) -> Any:
         payload = native_payload if isinstance(native_payload, dict) else {}
         channel_id = payload.get("channel_id") or self.channel
         sender_id = payload.get("sender_id") or ""
         content_parts = payload.get("content_parts") or []
         meta = payload.get("meta") or {}
         session_id = self.resolve_session_id(sender_id, meta)
-        return self.build_agent_request_from_user_content(
+        return self.build_channel_turn_from_user_content(
             channel_id=channel_id,
             sender_id=sender_id,
             session_id=session_id,
@@ -1281,12 +1276,12 @@ class OneBotChannel(BaseChannel):
             return f"onebot:{group_id}:{sender_id}"
         return f"onebot:{sender_id}"
 
-    def get_to_handle_from_request(self, request: Any) -> str:
-        meta = getattr(request, "channel_meta", {}) or {}
+    def get_to_handle_from_turn(self, request: Any) -> str:
+        meta = getattr(request, "metadata", {}) or {}
         if meta.get("is_group"):
             return f"group:{meta.get('group_id', '')}"
         return str(
-            meta.get("sender_id") or getattr(request, "user_id", "") or "",
+            meta.get("sender_id") or getattr(request, "sender_id", "") or "",
         )
 
     # ------------------------------------------------------------------
@@ -1431,8 +1426,7 @@ class OneBotChannel(BaseChannel):
             target_id = int(target)
         except (TypeError, ValueError):
             logger.warning(
-                "onebot: invalid target %r (to_handle=%r), "
-                "dropping message",
+                "onebot: invalid target %r (to_handle=%r), " "dropping message",
                 target,
                 to_handle,
             )

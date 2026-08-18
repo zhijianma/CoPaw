@@ -22,8 +22,10 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from qwenpaw.schemas import (
+    AgentRequest,
     MessageType,
     Message,
+    Role,
     RunStatus,
 )
 
@@ -46,7 +48,6 @@ from ...config.config import ConsoleTransportConfig
 from ...constant import DEFAULT_MEDIA_DIR
 from ...exceptions import ModelQuotaExceededException
 from .sse import ConsoleSseEncoder
-
 
 logger = logging.getLogger(__name__)
 
@@ -183,8 +184,7 @@ class ConsoleTransport(BaseChannel):
             enabled=config.enabled,
             bot_prefix=config.bot_prefix or "",
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(config),
+            display_config=display_config or ChannelDisplayConfig.from_config(config),
             workspace_dir=workspace_dir,
             media_dir=config.media_dir or "",
         )
@@ -238,8 +238,7 @@ class ConsoleTransport(BaseChannel):
                 if url:
                     return FileContent(
                         type=ContentType.FILE,
-                        filename=getattr(part, "filename", None)
-                        or Path(url).name,
+                        filename=getattr(part, "filename", None) or Path(url).name,
                         file_url=url,
                     )
             elif content_type == ContentType.TEXT:
@@ -265,12 +264,19 @@ class ConsoleTransport(BaseChannel):
         content_parts = payload.get("content_parts") or []
         meta = payload.get("meta") or {}
         session_id = self.resolve_session_id(sender_id, meta)
-        request = self.build_agent_request_from_user_content(
-            channel_id=channel_id,
-            sender_id=sender_id,
+        if not content_parts:
+            content_parts = [TextContent(text=" ")]
+        request = AgentRequest(
             session_id=session_id,
-            content_parts=content_parts,
-            channel_meta=meta,
+            user_id=sender_id,
+            input=[
+                Message(
+                    type=MessageType.MESSAGE,
+                    role=Role.USER,
+                    content=content_parts,
+                ),
+            ],
+            channel=channel_id,
         )
         message_metadata = payload.get("message_metadata")
         if isinstance(message_metadata, dict) and request.input:
@@ -429,9 +435,7 @@ class ConsoleTransport(BaseChannel):
             event_count = 0
             sse_encoder = ConsoleSseEncoder()
 
-            async for event in self._process(
-                self._request_for_process(request),
-            ):
+            async for event in self._process(request):
                 event_count += 1
                 obj = getattr(event, "object", None)
                 status = getattr(event, "status", None)
@@ -445,10 +449,7 @@ class ConsoleTransport(BaseChannel):
                     ev_type,
                 )
 
-                if (
-                    event.object == "response"
-                    and event.status == RunStatus.Completed
-                ):
+                if event.object == "response" and event.status == RunStatus.Completed:
                     event_output = event.output
                     event.output = []
                     if event_output is not None:
@@ -457,9 +458,7 @@ class ConsoleTransport(BaseChannel):
 
                 if obj == "message" and status == RunStatus.Completed:
                     msg_id = str(
-                        getattr(event, "msg_id", "")
-                        or getattr(event, "id", "")
-                        or "",
+                        getattr(event, "msg_id", "") or getattr(event, "id", "") or "",
                     )
                     for pending_data in sse_encoder.flush(msg_id=msg_id):
                         yield f"data: {pending_data}\n\n"
@@ -601,11 +600,7 @@ class ConsoleTransport(BaseChannel):
             elif t == ContentType.AUDIO and getattr(p, "data", None):
                 self._safe_print(f"{_YELLOW}🔊 [Audio]{_RESET}")
             elif t == ContentType.FILE:
-                url = (
-                    getattr(p, "file_url", None)
-                    or getattr(p, "file_id", None)
-                    or ""
-                )
+                url = getattr(p, "file_url", None) or getattr(p, "file_id", None) or ""
                 self._safe_print(f"{_YELLOW}📎 [File: {url}]{_RESET}")
         self._safe_print("")
 
@@ -686,11 +681,7 @@ class ConsoleTransport(BaseChannel):
             f"{prefix}{text}\n",
         )
         sid = (meta or {}).get("session_id")
-        if (
-            sid
-            and text.strip()
-            and not (meta or {}).get("suppress_console_push")
-        ):
+        if sid and text.strip() and not (meta or {}).get("suppress_console_push"):
             await push_store_append(sid, text.strip())
 
     async def send_content_parts(

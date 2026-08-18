@@ -22,6 +22,7 @@ Run:
     pytest tests/unit/channels/test_wecom.py -v
     pytest tests/unit/channels/test_wecom.py::TestWecomChannelInit -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 # pylint: disable=broad-exception-raised
 from __future__ import annotations
@@ -37,7 +38,6 @@ import pytest
 from qwenpaw.app.channels.renderer import ChannelDisplayConfig
 
 from qwenpaw.exceptions import ChannelError
-
 
 # =============================================================================
 # Fixtures
@@ -592,28 +592,28 @@ class TestWecomChannelSessionResolution:
         )
         assert handle == "wecom:user_123"
 
-    def test_get_to_handle_from_request_with_session(self, wecom_channel):
-        """get_to_handle_from_request should use session_id when available."""
+    def test_get_to_handle_from_turn_with_session(self, wecom_channel):
+        """get_to_handle_from_turn should use session_id when available."""
         request = MagicMock()
         request.session_id = "wecom:user_123"
-        request.user_id = "user_456"
+        request.sender_id = "user_456"
 
-        handle = wecom_channel.get_to_handle_from_request(request)
+        handle = wecom_channel.get_to_handle_from_turn(request)
         assert handle == "wecom:user_123"
 
-    def test_get_to_handle_from_request_without_session(self, wecom_channel):
-        """get_to_handle_from_request should fallback to user_id."""
+    def test_get_to_handle_from_turn_without_session(self, wecom_channel):
+        """get_to_handle_from_turn should fallback to user_id."""
         request = MagicMock()
         request.session_id = ""
-        request.user_id = "user_456"
+        request.sender_id = "user_456"
 
-        handle = wecom_channel.get_to_handle_from_request(request)
+        handle = wecom_channel.get_to_handle_from_turn(request)
         assert handle == "wecom:user_456"
 
     def test_get_on_reply_sent_args(self, wecom_channel):
         """get_on_reply_sent_args should return (user_id, session_id)."""
         request = MagicMock()
-        request.user_id = "user_123"
+        request.sender_id = "user_123"
         request.session_id = "wecom:session_456"
 
         args = wecom_channel.get_on_reply_sent_args(
@@ -673,10 +673,7 @@ class TestWecomChannelDeduplication:
             wecom_channel._is_duplicate(f"msg_{i}")
 
         # Check that limit is respected
-        assert (
-            len(wecom_channel._processed_message_ids)
-            <= _WECOM_PROCESSED_IDS_MAX
-        )
+        assert len(wecom_channel._processed_message_ids) <= _WECOM_PROCESSED_IDS_MAX
 
 
 # =============================================================================
@@ -689,8 +686,8 @@ class TestWecomChannelBuildAgentRequest:
     P0: Tests for building AgentRequest from native payload.
     """
 
-    def test_build_agent_request_from_native_basic(self, wecom_channel):
-        """build_agent_request_from_native creates proper AgentRequest."""
+    def test_build_channel_turn_from_native_basic(self, wecom_channel):
+        """build_channel_turn_from_native creates proper AgentRequest."""
         from qwenpaw.schemas import TextContent
 
         payload = {
@@ -700,25 +697,25 @@ class TestWecomChannelBuildAgentRequest:
             "meta": {"wecom_chatid": "chat_456", "wecom_chat_type": "single"},
         }
 
-        request = wecom_channel.build_agent_request_from_native(payload)
+        request = wecom_channel.build_channel_turn_from_native(payload)
 
-        assert request.channel == "wecom"
-        assert request.user_id == "user_123"
-        assert hasattr(request, "channel_meta")
-        assert request.channel_meta["wecom_chatid"] == "chat_456"
+        assert request.channel_type == "wecom"
+        assert request.sender_id == "user_123"
+        assert hasattr(request, "metadata")
+        assert request.metadata["wecom_chatid"] == "chat_456"
 
-    def test_build_agent_request_from_native_defaults(self, wecom_channel):
-        """build_agent_request_from_native uses defaults for missing fields."""
-        request = wecom_channel.build_agent_request_from_native({})
+    def test_build_channel_turn_from_native_defaults(self, wecom_channel):
+        """build_channel_turn_from_native uses defaults for missing fields."""
+        request = wecom_channel.build_channel_turn_from_native({})
 
-        assert request.channel == "wecom"
+        assert request.channel_type == "wecom"
         assert hasattr(request, "session_id")
 
-    def test_build_agent_request_from_native_non_dict(self, wecom_channel):
-        """build_agent_request_from_native should handle non-dict input."""
-        request = wecom_channel.build_agent_request_from_native("invalid")
+    def test_build_channel_turn_from_native_non_dict(self, wecom_channel):
+        """build_channel_turn_from_native should handle non-dict input."""
+        request = wecom_channel.build_channel_turn_from_native("invalid")
 
-        assert request.channel == "wecom"
+        assert request.channel_type == "wecom"
 
 
 # =============================================================================
@@ -1390,8 +1387,7 @@ class TestWecomChannelEdgeCases:
         assert len(enqueued_items) == 1
         # Check content_parts contains the unknown type marker
         assert any(
-            "unknown_type" in str(part)
-            for part in enqueued_items[0]["content_parts"]
+            "unknown_type" in str(part) for part in enqueued_items[0]["content_parts"]
         )
 
     @pytest.mark.asyncio
@@ -1423,8 +1419,7 @@ class TestWecomChannelEdgeCases:
         assert len(enqueued_items) == 1
         # Should have placeholder text
         assert any(
-            "no url" in str(part).lower()
-            for part in enqueued_items[0]["content_parts"]
+            "no url" in str(part).lower() for part in enqueued_items[0]["content_parts"]
         )
 
     @pytest.mark.asyncio

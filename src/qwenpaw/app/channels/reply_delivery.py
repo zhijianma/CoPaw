@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from ...domain.channels.ports import ReplyEvent, ReplyEventType
+from ...domain.turns.events import RuntimeFailure
 from ...schemas import RunStatus
 
 
@@ -25,6 +26,7 @@ class ChannelReplyDelivery:
         self._to_handle = to_handle
         self._send_meta = send_meta
         self.last_response: Any = None
+        self.last_failure: RuntimeFailure | None = None
 
     async def deliver(self, event: ReplyEvent) -> None:
         """Deliver one reply event using only adapter-owned behavior."""
@@ -51,6 +53,8 @@ class ChannelReplyDelivery:
             ReplyEventType.FAILED,
         }:
             self.last_response = payload
+            if isinstance(payload, RuntimeFailure):
+                self.last_failure = payload
             await self._channel.on_event_response(
                 self._request,
                 payload,

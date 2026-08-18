@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Message conversion between AgentRequest and agentscope Msg."""
+"""Message conversion from core turn messages to AgentScope Msg."""
+
 from __future__ import annotations
 
 import logging
@@ -55,8 +56,7 @@ def _get_last_user_text(msgs: List[Any]) -> str | None:
 def _request_input_to_msgs(
     input_list: List[Any],
 ) -> List[Any]:
-    """Convert ``AgentRequest.input`` (list of 1.x Message) to a list of
-    agentscope 2.0 ``Msg`` objects.
+    """Convert core request messages into AgentScope 2.0 ``Msg`` objects.
 
     Handles text, image, audio, video, and file content blocks.
     """

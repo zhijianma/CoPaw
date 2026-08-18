@@ -457,21 +457,15 @@ class TestIMessageChannelUtilityMethods:
         from qwenpaw.schemas import ContentType
 
         assert (
-            imessage_channel._get_file_extension(ContentType.IMAGE, "photo")
-            == ".jpg"
+            imessage_channel._get_file_extension(ContentType.IMAGE, "photo") == ".jpg"
         )
         assert (
-            imessage_channel._get_file_extension(ContentType.AUDIO, "sound")
-            == ".mp3"
+            imessage_channel._get_file_extension(ContentType.AUDIO, "sound") == ".mp3"
         )
         assert (
-            imessage_channel._get_file_extension(ContentType.VIDEO, "movie")
-            == ".mp4"
+            imessage_channel._get_file_extension(ContentType.VIDEO, "movie") == ".mp4"
         )
-        assert (
-            imessage_channel._get_file_extension(ContentType.FILE, "doc")
-            == ".bin"
-        )
+        assert imessage_channel._get_file_extension(ContentType.FILE, "doc") == ".bin"
 
 
 class TestIMessageChannelAsyncLifecycle:
@@ -923,12 +917,12 @@ class TestIMessageChannelMedia:
 class TestIMessageChannelRequestBuilder:
     """Test IMessageChannel request building methods."""
 
-    def test_build_agent_request_from_native(
+    def test_build_channel_turn_from_native(
         self,
         mock_process_handler: AsyncMock,
         temp_media_dir: str,
     ):
-        """build_agent_request_from_native should build request from native."""
+        """build_channel_turn_from_native should build request from native."""
         from qwenpaw.app.channels.imessage.channel import IMessageChannel
         from qwenpaw.schemas import (
             TextContent,
@@ -955,18 +949,18 @@ class TestIMessageChannelRequestBuilder:
             "meta": {"chat_rowid": "123"},
         }
 
-        request = channel.build_agent_request_from_native(native_payload)
+        request = channel.build_channel_turn_from_native(native_payload)
 
         assert request is not None
         assert request.session_id is not None
-        assert request.input is not None
+        assert request.messages is not None
 
-    def test_build_agent_request_from_native_with_empty_payload(
+    def test_build_channel_turn_from_native_with_empty_payload(
         self,
         mock_process_handler: AsyncMock,
         temp_media_dir: str,
     ):
-        """build_agent_request_from_native should handle empty payload."""
+        """build_channel_turn_from_native should handle empty payload."""
         from qwenpaw.app.channels.imessage.channel import IMessageChannel
 
         channel = IMessageChannel(
@@ -979,7 +973,7 @@ class TestIMessageChannelRequestBuilder:
             max_decoded_size=10 * 1024 * 1024,
         )
 
-        request = channel.build_agent_request_from_native({})
+        request = channel.build_channel_turn_from_native({})
         assert request is not None
 
 

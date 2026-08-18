@@ -6,6 +6,7 @@ All tests pass after adjusting mocks and fixing test expectations.
 Note: Some business logic bugs identified in the process are documented
 in the analysis (e.g., markdown conversion, rich text extraction).
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 # pylint: disable=broad-exception-raised,using-constant-test
 from __future__ import annotations
@@ -345,10 +346,7 @@ class TestDetectFileType:
     def test_unknown_extension(self):
         from qwenpaw.app.channels.slack.utils import detect_file_type
 
-        assert (
-            detect_file_type("file.unknownext123")
-            == "application/octet-stream"
-        )
+        assert detect_file_type("file.unknownext123") == "application/octet-stream"
 
 
 class TestIsSlackHost:
@@ -520,9 +518,7 @@ class TestProxyResolution:
     def test_host_matches_no_proxy_dot_prefix(self):
         from qwenpaw.app.channels.slack.utils import _host_matches_no_proxy
 
-        assert (
-            _host_matches_no_proxy("files.slack.com", [".slack.com"]) is True
-        )
+        assert _host_matches_no_proxy("files.slack.com", [".slack.com"]) is True
 
     def test_host_matches_no_proxy_parent_domain(self):
         from qwenpaw.app.channels.slack.utils import _host_matches_no_proxy
@@ -831,14 +827,10 @@ class TestSlackEventHandlerDedup:
 
     @pytest.mark.asyncio
     async def test_dedup_expires(self, slack_event_handler):
-        _target = (
-            "qwenpaw.app.channels.slack.handler.SLACK_DEDUP_WINDOW_SECONDS"
-        )
+        _target = "qwenpaw.app.channels.slack.handler.SLACK_DEDUP_WINDOW_SECONDS"
         with patch(_target, 0):
             # Insert a key with a very old timestamp
-            slack_event_handler._dedup_map["expired_key"] = (
-                time.monotonic() - 100
-            )
+            slack_event_handler._dedup_map["expired_key"] = time.monotonic() - 100
             # Call _is_duplicate: should remove expired key and return False
             result = await slack_event_handler._is_duplicate("expired_key")
             assert result is False
@@ -1606,11 +1598,11 @@ class TestSlackChannelBuildAgentRequest:
             "content_parts": [TextContent(type=ContentType.TEXT, text="Hi")],
             "meta": {"slack_channel_id": "C123", "slack_thread_ts": "123.456"},
         }
-        request = slack_channel.build_agent_request_from_native(payload)
-        assert request.user_id == "U123"
-        assert request.channel == "slack"
+        request = slack_channel.build_channel_turn_from_native(payload)
+        assert request.sender_id == "U123"
+        assert request.channel_type == "slack"
         assert request.session_id == "slack:thread:C123:123.456"
-        assert len(request.input) == 1
+        assert len(request.messages) == 1
 
     def test_resolve_session_id(self, slack_channel):
         meta = {"slack_channel_id": "C123", "slack_thread_ts": "123.456"}
@@ -1622,30 +1614,32 @@ class TestSlackChannelBuildAgentRequest:
         )
         assert sid2 == "slack:ch:C123"
 
-    def test_get_to_handle_from_request(self, slack_channel):
+    def test_get_to_handle_from_turn(self, slack_channel):
         from types import SimpleNamespace
 
         request = SimpleNamespace(
             session_id="slack:thread:C123:123.456",
-            channel_meta={
+            metadata={
                 "slack_channel_id": "C123",
                 "slack_thread_ts": "123.456",
             },
-            user_id="U123",
+            sender_id="U123",
         )
-        handle = slack_channel.get_to_handle_from_request(request)
+        handle = slack_channel.get_to_handle_from_turn(request)
         assert handle == "slack:thread:C123:123.456"
         request2 = SimpleNamespace(
-            channel_meta={"slack_channel_id": "D123"},
-            user_id="U123",
+            session_id="",
+            metadata={"slack_channel_id": "D123"},
+            sender_id="U123",
         )
-        handle2 = slack_channel.get_to_handle_from_request(request2)
+        handle2 = slack_channel.get_to_handle_from_turn(request2)
         assert handle2 == "slack:dm:U123"
         request3 = SimpleNamespace(
-            channel_meta={"slack_channel_id": "C123"},
-            user_id="U123",
+            session_id="",
+            metadata={"slack_channel_id": "C123"},
+            sender_id="U123",
         )
-        handle3 = slack_channel.get_to_handle_from_request(request3)
+        handle3 = slack_channel.get_to_handle_from_turn(request3)
         assert handle3 == "slack:ch:C123"
 
     def test_to_handle_from_target(self, slack_channel):
@@ -2427,8 +2421,7 @@ class TestSlackEventHandlerSlashCommand:
         assert native["content_parts"][0].text == "/help something"
         assert native["meta"]["slack_is_slash_command"] is True
         assert (
-            native["meta"]["slack_response_url"]
-            == "https://hooks.slack.com/response"
+            native["meta"]["slack_response_url"] == "https://hooks.slack.com/response"
         )
 
     @pytest.mark.asyncio

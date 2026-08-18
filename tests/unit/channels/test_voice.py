@@ -8,6 +8,7 @@ Tests cover: initialization, factory methods, lifecycle, core features
 Run:
     pytest tests/unit/channels/test_voice.py -v
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 from __future__ import annotations
 
@@ -16,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from qwenpaw.app.channels.renderer import ChannelDisplayConfig
-
 
 # =============================================================================
 # Fixtures
@@ -336,9 +336,7 @@ class TestVoiceChannelLifecycle:
         mock_twilio_manager.configure_voice_webhook.assert_called_once()
         call_args = mock_twilio_manager.configure_voice_webhook.call_args
         assert call_args[0][0] == "phone_123"  # phone_number_sid
-        assert (
-            "https://test-tunnel.example.com/voice/incoming" in call_args[0][1]
-        )
+        assert "https://test-tunnel.example.com/voice/incoming" in call_args[0][1]
 
     async def test_start_tunnel_failure(
         self,
@@ -480,7 +478,7 @@ class TestVoiceChannelSend:
 
 class TestVoiceChannelBuildAgentRequest:
     """
-    P1: Tests for build_agent_request_from_native.
+    P1: Tests for build_channel_turn_from_native.
     """
 
     def test_build_agent_request_creates_request(self, voice_channel):
@@ -491,13 +489,13 @@ class TestVoiceChannelBuildAgentRequest:
             "from_number": "+1234567890",
         }
 
-        request = voice_channel.build_agent_request_from_native(payload)
+        request = voice_channel.build_channel_turn_from_native(payload)
 
         assert request.session_id == "session_123"
-        assert request.user_id == "+1234567890"
-        assert request.channel == "voice"
-        assert len(request.input) == 1
-        assert request.input[0].content[0].text == "Hello, this is a test"
+        assert request.sender_id == "+1234567890"
+        assert request.channel_type == "voice"
+        assert len(request.messages) == 1
+        assert request.messages[0].content[0].text == "Hello, this is a test"
 
     def test_build_agent_request_with_empty_transcript(self, voice_channel):
         """Should handle empty transcript."""
@@ -507,9 +505,9 @@ class TestVoiceChannelBuildAgentRequest:
             "from_number": "+1234567890",
         }
 
-        request = voice_channel.build_agent_request_from_native(payload)
+        request = voice_channel.build_channel_turn_from_native(payload)
 
-        assert request.input[0].content[0].text == ""
+        assert request.messages[0].content[0].text == ""
 
 
 # =============================================================================

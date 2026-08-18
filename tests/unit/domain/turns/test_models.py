@@ -20,7 +20,7 @@ def test_turn_request_normalizes_mutable_inputs() -> None:
         session_id="session-1",
         user_id="user-1",
         messages=messages,
-        source=RequestSource(kind="console"),
+        source=RequestSource(protocol="console"),
         context=context,
     )
 
@@ -40,7 +40,7 @@ def test_turn_request_is_frozen() -> None:
         session_id="session-1",
         user_id="user-1",
         messages=(),
-        source=RequestSource(kind="system"),
+        source=RequestSource(protocol="system"),
     )
 
     with pytest.raises(FrozenInstanceError):
@@ -65,7 +65,7 @@ def test_turn_request_rejects_missing_identity(
         "session_id": "session-1",
         "user_id": "user-1",
         "messages": (),
-        "source": RequestSource(kind="console"),
+        "source": RequestSource(protocol="console"),
     }
     values[field] = value
 
@@ -76,8 +76,16 @@ def test_turn_request_rejects_missing_identity(
 def test_request_source_accepts_registered_protocol_keys() -> None:
     source = RequestSource(protocol="a2a", endpoint_id="remote-1")
 
-    assert source.kind == "a2a"
+    assert source.protocol == "a2a"
     assert source.endpoint_id == "remote-1"
+
+
+def test_request_source_has_no_legacy_kind_alias() -> None:
+    source = RequestSource(protocol="console")
+
+    assert not hasattr(source, "kind")
+    with pytest.raises(TypeError):
+        RequestSource(kind="console")  # type: ignore[call-arg]
 
 
 def test_request_source_rejects_empty_protocol() -> None:

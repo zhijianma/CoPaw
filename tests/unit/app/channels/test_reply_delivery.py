@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tests for legacy event projection and Channel delivery strategy."""
+"""Tests for canonical Channel event projection and delivery."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -7,11 +7,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from qwenpaw.app.channels.reply_delivery import ChannelReplyDelivery
-from qwenpaw.app.channels.reply_presentation import ReplyPresentationAdapter
+from qwenpaw.app.channels.event_projector import ChannelEventProjector
 from qwenpaw.app.channels.base import BaseChannel
 from qwenpaw.domain.channels.models import ReplyTarget
 from qwenpaw.domain.channels.ports import ReplyEventType
-from qwenpaw.runtime.legacy_reply_adapter import LegacyReplyAdapter
 from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 from qwenpaw.schemas import RunStatus
 
@@ -23,28 +22,7 @@ def _target() -> ReplyTarget:
     )
 
 
-def test_legacy_reply_adapter_classifies_events() -> None:
-    adapter = LegacyReplyAdapter("turn-1", _target())
-
-    content = adapter.project(SimpleNamespace(object="content"))
-    message = adapter.project(
-        SimpleNamespace(
-            object="message",
-            status=RunStatus.Completed,
-        ),
-    )
-    response = adapter.project(
-        SimpleNamespace(object="response", error=None),
-    )
-
-    assert content.type == ReplyEventType.CONTENT
-    assert message.type == ReplyEventType.MESSAGE
-    assert response.type == ReplyEventType.COMPLETED
-
-
-def test_workspace_injects_runtime_port_without_replacing_plugin_process() -> (
-    None
-):
+def test_workspace_injects_runtime_port_without_replacing_plugin_process() -> None:
     legacy_process = object()
 
     async def runtime_process(_request):
@@ -62,12 +40,8 @@ def test_workspace_injects_runtime_port_without_replacing_plugin_process() -> (
 
 
 @pytest.mark.asyncio
-async def test_reply_adapter_converts_canonical_runtime_event() -> None:
-    adapter = ReplyPresentationAdapter(
-        turn_id="turn-1",
-        target=_target(),
-        conversation_id="session-1",
-    )
+async def test_channel_projector_converts_canonical_runtime_event() -> None:
+    adapter = ChannelEventProjector(_target())
     event = RuntimeEvent.canonical(
         RuntimeEventType.CONTENT_DELTA,
         turn_id="turn-1",
@@ -79,13 +53,13 @@ async def test_reply_adapter_converts_canonical_runtime_event() -> None:
         },
     )
 
-    presented = [item async for item in adapter.project(event)]
+    presented = list(adapter.project(event))
 
-    assert [reply.type for _, reply in presented] == [
+    assert [reply.type for reply in presented] == [
         ReplyEventType.MESSAGE,
         ReplyEventType.CONTENT,
     ]
-    assert presented[1][0].text == "hello"
+    assert presented[1].payload.text == "hello"
 
 
 @pytest.mark.asyncio
@@ -103,17 +77,17 @@ async def test_channel_delivery_dispatches_without_runtime_knowledge() -> None:
         to_handle="chat-1",
         send_meta={"thread_id": "thread-2"},
     )
-    adapter = LegacyReplyAdapter("turn-1", _target())
-    event = SimpleNamespace(
-        object="message",
-        status=RunStatus.Completed,
+    event = RuntimeEvent.message(
+        SimpleNamespace(get_text_content=lambda: "hello"),
+        turn_id="turn-1",
     )
+    projected = list(ChannelEventProjector(_target()).project(event))[0]
 
-    await delivery.deliver(adapter.project(event))
+    await delivery.deliver(projected)
 
     channel.on_event_message_completed.assert_awaited_once_with(
         request,
         "chat-1",
-        event,
+        projected.payload,
         {"thread_id": "thread-2"},
     )

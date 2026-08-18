@@ -24,7 +24,6 @@ from .registry import get_channel_registry
 from .unified_queue_manager import UnifiedQueueManager
 from ...config import get_available_channels
 from ...domain.channels.identity import ChannelIdentity
-from ...runtime.channel_request_bridge import ChannelRequestBridge
 
 if TYPE_CHECKING:
     from ...config.config import AgentProfileConfig, Config
@@ -132,7 +131,7 @@ class ChannelManager:
     ) -> "ChannelManager":
         """
         Create channels from env and inject unified process
-        (AgentRequest -> Event stream).
+        (ChannelTurn -> Event stream).
         process is typically workspace.stream_query.
         on_last_dispatch: called when a user send+reply was sent.
         """
@@ -205,28 +204,19 @@ class ChannelManager:
             sig = inspect.signature(ch_cls.from_config)
             filtered_kwargs: dict[str, Any]
             if any(
-                p.kind == inspect.Parameter.VAR_KEYWORD
-                for p in sig.parameters.values()
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
             ):
                 filtered_kwargs = from_config_kwargs
             else:
                 filtered_kwargs = {
-                    k: v
-                    for k, v in from_config_kwargs.items()
-                    if k in sig.parameters
+                    k: v for k, v in from_config_kwargs.items() if k in sig.parameters
                 }
 
             try:
                 channel = ch_cls.from_config(**filtered_kwargs)
                 channel.bind_identity(identity)
                 channel.on_runtime_bound()
-                channel.set_request_bridge(
-                    ChannelRequestBridge(
-                        agent_config.id,
-                        channel_type,
-                        instance_id,
-                    ),
-                )
+                channel.bind_route(agent_config.id)
                 channels.append(channel)
             except Exception as e:
                 logger.warning(
@@ -258,7 +248,7 @@ class ChannelManager:
 
         Args:
             ch: Channel instance
-            payload: Native dict or AgentRequest
+            payload: Native dict or ChannelTurn
 
         Returns:
             Normalized session_id (e.g. "console:user1")
@@ -656,8 +646,7 @@ class ChannelManager:
             # Load the latest config for this channel
             if self._workspace is None:
                 raise RuntimeError(
-                    "Cannot restart channel: workspace not set"
-                    " on ChannelManager",
+                    "Cannot restart channel: workspace not set" " on ChannelManager",
                 )
 
             if channel_name == "console":
@@ -685,13 +674,7 @@ class ChannelManager:
                 )
             new_channel.on_runtime_bound()
             if channel_name != "console":
-                new_channel.set_request_bridge(
-                    ChannelRequestBridge(
-                        self._workspace.config.id,
-                        channel_instance.channel,
-                        channel_name,
-                    ),
-                )
+                new_channel.bind_route(self._workspace.config.id)
             if self._workspace is not None:
                 new_channel.set_workspace(
                     self._workspace,
@@ -869,8 +852,7 @@ class ChannelManager:
         )
         ch_name = getattr(ch, "channel", channel)
         logger.info(
-            "channel send_text: channel=%s user_id=%s session_id=%s "
-            "to_handle=%s",
+            "channel send_text: channel=%s user_id=%s session_id=%s " "to_handle=%s",
             ch_name,
             (user_id or "")[:40],
             (session_id or "")[:40],

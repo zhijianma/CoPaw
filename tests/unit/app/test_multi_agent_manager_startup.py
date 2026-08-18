@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Tests for bounded multi-agent startup scheduling."""
+
 # pylint: disable=protected-access
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import qwenpaw.app.multi_agent_manager as multi_agent_manager_module
 import qwenpaw.constant as constants
 from qwenpaw.app.agent_startup import AgentStartupStatus
 from qwenpaw.app.multi_agent_manager import MultiAgentManager
-from qwenpaw.app.task_tracker import REPLAY_END_SSE, TaskTracker
+from qwenpaw.app.task_tracker import ReplayBoundary, TaskTracker
 from qwenpaw.app.workspace import Workspace
 from qwenpaw.agents.memory.adbpg_memory_manager import ADBPGMemoryManager
 from qwenpaw.agents.memory.dummy import NoopMemoryManager
@@ -177,9 +178,7 @@ async def test_reload_marks_rejected_reusable_service_for_cleanup(
 
     descriptor = old_workspace._service_manager.descriptors["memory_manager"]
     assert descriptor.reusable is False
-    assert (
-        "memory_manager" not in old_workspace._service_manager.reused_services
-    )
+    assert "memory_manager" not in old_workspace._service_manager.reused_services
     assert old_workspace.stopped is True
 
 
@@ -222,7 +221,7 @@ async def test_reload_reuses_tracker_for_active_stream_reconnect(
     reconnect_queue = await new_workspace.task_tracker.attach("chat-1")
     assert reconnect_queue is not None
     assert await reconnect_queue.get() == "data: replayed\n\n"
-    assert await reconnect_queue.get() == REPLAY_END_SSE
+    assert isinstance(await reconnect_queue.get(), ReplayBoundary)
 
     cleanup_tasks = list(manager._cleanup_tasks)
     assert cleanup_tasks
@@ -500,9 +499,7 @@ async def test_startup_preserves_loaded_agent_status_during_core_phase(
     task = asyncio.create_task(manager.start_all_configured_agents())
 
     await asyncio.wait_for(core_started.wait(), timeout=1)
-    assert manager.get_agent_startup_status("custom") == (
-        AgentStartupStatus.RUNNING
-    )
+    assert manager.get_agent_startup_status("custom") == (AgentStartupStatus.RUNNING)
     assert not manager.is_agent_startup_in_progress("custom")
 
     release_core.set()
@@ -589,9 +586,7 @@ async def test_runtime_startups_share_concurrency_and_pending_state(
     beta_task = manager.schedule_agent_startup("beta")
     await asyncio.wait_for(alpha_started.wait(), timeout=1)
 
-    assert manager.get_agent_startup_status("beta") == (
-        AgentStartupStatus.PENDING
-    )
+    assert manager.get_agent_startup_status("beta") == (AgentStartupStatus.PENDING)
     assert manager.is_agent_startup_in_progress("beta")
     assert not beta_started.is_set()
 
@@ -682,15 +677,11 @@ async def test_get_agent_updates_runtime_status(monkeypatch) -> None:
 
     task = asyncio.create_task(manager.get_agent("custom"))
     await asyncio.wait_for(started.wait(), timeout=1)
-    assert manager.get_agent_startup_status("custom") == (
-        AgentStartupStatus.STARTING
-    )
+    assert manager.get_agent_startup_status("custom") == (AgentStartupStatus.STARTING)
 
     release.set()
     assert await asyncio.wait_for(task, timeout=1) is workspace
-    assert manager.get_agent_startup_status("custom") == (
-        AgentStartupStatus.RUNNING
-    )
+    assert manager.get_agent_startup_status("custom") == (AgentStartupStatus.RUNNING)
 
 
 @pytest.mark.asyncio
@@ -717,6 +708,4 @@ async def test_cancelled_start_cleans_pending_state(monkeypatch) -> None:
         await task
 
     assert "custom" not in manager._pending_starts
-    assert manager.get_agent_startup_status("custom") == (
-        AgentStartupStatus.FAILED
-    )
+    assert manager.get_agent_startup_status("custom") == (AgentStartupStatus.FAILED)

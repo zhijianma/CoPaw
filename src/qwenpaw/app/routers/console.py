@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Console APIs: push messages, chat, and file upload for chat."""
+
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +9,7 @@ import logging
 import re
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, Optional, Union
 
@@ -33,10 +34,18 @@ from ..approvals.display import approval_display_fields
 from ..chats.title_generator import generate_and_update_title
 from ..utils import check_upload_size
 
-
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/console", tags=["console"])
+
+
+def _encode_sse(value: Any) -> str:
+    """Encode one Console transport item as an SSE data frame."""
+    if hasattr(value, "model_dump"):
+        value = value.model_dump(mode="json")
+    elif is_dataclass(value):
+        value = asdict(value)
+    return f"data: {json.dumps(value, ensure_ascii=False, default=str)}\n\n"
 
 
 async def _get_console_transport(workspace: Any) -> Any:
@@ -181,8 +190,7 @@ def _extract_session_and_payload(request_data: Union[AgentRequest, dict]):
                 # Coerce raw dicts to typed Content models so downstream
                 # getattr checks (e.g. _content_has_text) see real attrs.
                 content_parts.extend(
-                    _coerce_content_item(c)
-                    for c in (content_part["content"] or [])
+                    _coerce_content_item(c) for c in (content_part["content"] or [])
                 )
                 if isinstance(content_part.get("metadata"), dict):
                     message_metadata = content_part["metadata"]
@@ -372,13 +380,22 @@ async def post_console_chat(
         )
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        from ..task_tracker import ReplayBoundary, TaskStreamError
+
         # Hold iterator so finally can aclose(); guarantees stream_from_queue's
         # finally (detach_subscriber) on client abort / generator teardown.
         stream_it = tracker.stream_from_queue(queue, chat.id)
         try:
             try:
                 async for event_data in stream_it:
-                    yield event_data
+                    if isinstance(event_data, ReplayBoundary):
+                        yield _encode_sse({"type": "replay_end"})
+                    elif isinstance(event_data, TaskStreamError):
+                        yield _encode_sse({"error": event_data.message})
+                    elif isinstance(event_data, str):
+                        yield event_data
+                    else:
+                        yield _encode_sse(event_data)
             except Exception as e:
                 logger.exception("Console chat stream error")
                 yield f"data: {json.dumps({'error': str(e)})}\n\n"

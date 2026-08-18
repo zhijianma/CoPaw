@@ -20,11 +20,11 @@ from nio import (
 from nio.responses import WhoamiResponse
 
 from qwenpaw.schemas import (
-    AgentRequest,
     ContentType,
     ImageContent,
     TextContent,
 )
+from qwenpaw.app.channels.turn import ChannelTurn
 from qwenpaw.app.channels.matrix.channel import MatrixChannel
 from qwenpaw.app.channels.renderer import ChannelDisplayConfig
 from qwenpaw.config.config import MatrixConfig
@@ -402,7 +402,7 @@ class TestMatrixChannelDisabled:
 class TestMatrixChannelBuildRequest:
     """Test request building methods."""
 
-    def test_build_agent_request_from_native(self, matrix_channel):
+    def test_build_channel_turn_from_native(self, matrix_channel):
         """Test building AgentRequest from native payload."""
         payload = {
             "sender_id": "@user:example.com",
@@ -412,12 +412,12 @@ class TestMatrixChannelBuildRequest:
             "meta": {"room_id": "!room:example.com"},
         }
 
-        request = matrix_channel.build_agent_request_from_native(payload)
+        request = matrix_channel.build_channel_turn_from_native(payload)
 
-        assert isinstance(request, AgentRequest)
-        assert request.channel == "matrix"
+        assert isinstance(request, ChannelTurn)
+        assert request.channel_type == "matrix"
         # user_id is intentionally set to room_id for session keying
-        assert request.user_id == "!room:example.com"
+        assert request.sender_id == "!room:example.com"
         assert request.session_id == "matrix:!room:example.com"
 
     def test_build_agent_request_with_content_parts(self, matrix_channel):
@@ -431,44 +431,44 @@ class TestMatrixChannelBuildRequest:
             "meta": {"room_id": "!room:example.com"},
         }
 
-        request = matrix_channel.build_agent_request_from_native(payload)
+        request = matrix_channel.build_channel_turn_from_native(payload)
 
-        assert request.input[0].content == content_parts
+        assert request.messages[0].content == content_parts
 
-    def test_get_to_handle_from_request_with_session_id(self, matrix_channel):
+    def test_get_to_handle_from_turn_with_session_id(self, matrix_channel):
         """Test getting room_id from channel_meta."""
-        request = MagicMock(spec=AgentRequest)
+        request = MagicMock(spec=ChannelTurn)
         request.session_id = "matrix:!room:example.com"
-        request.channel_meta = {"room_id": "!room:example.com"}
+        request.metadata = {"room_id": "!room:example.com"}
 
-        result = matrix_channel.get_to_handle_from_request(request)
+        result = matrix_channel.get_to_handle_from_turn(request)
 
         assert result == "!room:example.com"
 
-    def test_get_to_handle_from_request_with_channel_meta(
+    def test_get_to_handle_from_turn_with_channel_meta(
         self,
         matrix_channel,
     ):
         """Test getting room_id from channel_meta."""
-        request = MagicMock(spec=AgentRequest)
+        request = MagicMock(spec=ChannelTurn)
         request.session_id = "other_session"
-        request.channel_meta = {"room_id": "!room:example.com"}
+        request.metadata = {"room_id": "!room:example.com"}
 
-        result = matrix_channel.get_to_handle_from_request(request)
+        result = matrix_channel.get_to_handle_from_turn(request)
 
         assert result == "!room:example.com"
 
-    def test_get_to_handle_from_request_fallback_to_user_id(
+    def test_get_to_handle_from_turn_fallback_to_user_id(
         self,
         matrix_channel,
     ):
         """Test fallback to user_id when no room_id."""
-        request = MagicMock(spec=AgentRequest)
+        request = MagicMock(spec=ChannelTurn)
         request.session_id = "other_session"
-        request.channel_meta = {}
-        request.user_id = "@user:example.com"
+        request.metadata = {}
+        request.sender_id = "@user:example.com"
 
-        result = matrix_channel.get_to_handle_from_request(request)
+        result = matrix_channel.get_to_handle_from_turn(request)
 
         assert result == "@user:example.com"
 
@@ -654,9 +654,7 @@ class TestMatrixChannelMediaCallback:
         matrix_channel._enqueue.assert_called_once()
         payload = matrix_channel._enqueue.call_args[0][0]
         parts = payload["content_parts"]
-        assert any(
-            getattr(p, "type", None) == ContentType.IMAGE for p in parts
-        )
+        assert any(getattr(p, "type", None) == ContentType.IMAGE for p in parts)
 
     async def test_media_callback_video(
         self,
@@ -687,9 +685,7 @@ class TestMatrixChannelMediaCallback:
         matrix_channel._enqueue.assert_called_once()
         payload = matrix_channel._enqueue.call_args[0][0]
         parts = payload["content_parts"]
-        assert any(
-            getattr(p, "type", None) == ContentType.VIDEO for p in parts
-        )
+        assert any(getattr(p, "type", None) == ContentType.VIDEO for p in parts)
 
     async def test_media_callback_audio(
         self,
@@ -720,9 +716,7 @@ class TestMatrixChannelMediaCallback:
         matrix_channel._enqueue.assert_called_once()
         payload = matrix_channel._enqueue.call_args[0][0]
         parts = payload["content_parts"]
-        assert any(
-            getattr(p, "type", None) == ContentType.AUDIO for p in parts
-        )
+        assert any(getattr(p, "type", None) == ContentType.AUDIO for p in parts)
 
     async def test_media_callback_file(
         self,

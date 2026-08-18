@@ -5,18 +5,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..schemas import (
-    AgentResponse,
-    ContentType,
-    MessageType,
-    RunStatus,
-)
+from ..domain.turns.events import RuntimeEvent
+from ..engines.harness import HarnessRuntimeEventMapper
+from ..schemas import ContentType
 from .base import HarnessAdapter
 from .capabilities import HarnessCapabilityResolver
 from .events import (
@@ -33,13 +28,12 @@ from .registry import (
     get_provider,
 )
 from .session import HarnessSessionBridge
-from .streaming import TextStream, ToolStream
 
 logger = logging.getLogger(__name__)
 
 
 class HarnessRuntime:
-    """Own adapters for one workspace and expose QwenPaw envelopes."""
+    """Own adapters for one workspace and emit canonical runtime events."""
 
     def __init__(
         self,
@@ -98,9 +92,7 @@ class HarnessRuntime:
         async with self._adapter_lock:
             adapter = self._adapters.get(provider_id)
             current_key = self._adapter_keys.get(provider_id)
-            if adapter is not None and (
-                current_key is None or current_key == next_key
-            ):
+            if adapter is not None and (current_key is None or current_key == next_key):
                 return adapter
             if adapter is not None:
                 await adapter.stop()
@@ -109,53 +101,32 @@ class HarnessRuntime:
             self._adapters[provider_id] = adapter
             return adapter
 
-    async def stream(  # pylint: disable=too-many-branches,too-many-statements
+    async def stream_events(
         self,
         *,
         backend: str,
         request: Any,
         cwd: Path,
         settings: dict[str, Any] | None = None,
-    ) -> AsyncGenerator[Any, None]:
-        """Run a harness turn and emit the established QwenPaw protocol."""
+    ) -> AsyncGenerator[RuntimeEvent, None]:
+        """Run one provider turn without choosing an output protocol."""
         settings = dict(settings or {})
         request_context = dict(settings.get("_request_context") or {})
-        settings[
-            "_runtime_capabilities"
-        ] = await self._capability_resolver.resolve(request_context)
+        settings["_runtime_capabilities"] = await self._capability_resolver.resolve(
+            request_context
+        )
         adapter = await self.adapter(backend, settings)
         session_id = str(getattr(request, "session_id", "") or "default")
         prompt, attachments = self._content_from_request(request)
         command, arguments = (
             self._parse_command(prompt) if not attachments else ("", "")
         )
-        response = AgentResponse(
-            id=f"response_{uuid.uuid4().hex}",
-            output=[],
-            status=RunStatus.Created,
-            created_at=datetime.now(timezone.utc).isoformat(
-                timespec="seconds",
-            ),
-        )
-        response.object = "response"
-        response.session_id = session_id
-        sequence = 0
-
-        def tagged(value: Any) -> Any:
-            nonlocal sequence
-            sequence += 1
-            value.sequence_number = sequence
-            return value
-
-        yield tagged(response.model_copy(deep=True))
-        response.status = RunStatus.InProgress
-        yield tagged(response.model_copy(deep=True))
-
-        text_stream = TextStream(response)
-        tool_stream = ToolStream(response)
+        mapper = HarnessRuntimeEventMapper(request.turn_id)
+        captured_events: list[HarnessEvent] = []
         error_text = ""
         cancelled = False
         task_cancelled = False
+        yield RuntimeEvent.turn_started(turn_id=request.turn_id)
 
         try:
             if command in {"new", "clear"}:
@@ -170,9 +141,7 @@ class HarnessRuntime:
                 event_stream = self._iter_events(events)
             elif command:
                 provider = get_provider(backend)
-                supported = {
-                    item.name for item in provider.capabilities.commands
-                }
+                supported = {item.name for item in provider.capabilities.commands}
                 if command not in supported:
                     raise ValueError(
                         f"Unsupported {provider.name} command: /{command}",
@@ -194,67 +163,32 @@ class HarnessRuntime:
                     attachments=attachments,
                 )
             async for event in event_stream:
-                if event.kind == HarnessEventKind.TEXT_DELTA:
-                    for item in text_stream.push(
-                        MessageType.MESSAGE,
-                        event.text,
-                    ):
-                        yield tagged(item)
-                elif event.kind == HarnessEventKind.REASONING_DELTA:
-                    for item in text_stream.push(
-                        MessageType.REASONING,
-                        event.text,
-                    ):
-                        yield tagged(item)
-                elif event.kind == HarnessEventKind.TOOL_STARTED:
-                    for item in text_stream.finish():
-                        yield tagged(item)
-                    for item in tool_stream.start(event):
-                        yield tagged(item)
-                elif event.kind == HarnessEventKind.TOOL_PROGRESS:
-                    for item in tool_stream.progress(event):
-                        yield tagged(item)
-                elif event.kind == HarnessEventKind.TOOL_COMPLETED:
-                    for item in tool_stream.complete(event):
-                        yield tagged(item)
-                elif event.kind == HarnessEventKind.ERROR:
+                captured_events.append(event)
+                if event.kind == HarnessEventKind.ERROR:
                     error_text = event.text
                 elif event.kind == HarnessEventKind.CANCELLED:
                     cancelled = True
+                else:
+                    for runtime_event in mapper.map(event):
+                        yield runtime_event
         except asyncio.CancelledError:
             cancelled = True
             task_cancelled = True
         except Exception as exc:
             error_text = str(exc)
 
-        for item in text_stream.finish():
-            yield tagged(item)
+        for runtime_event in mapper.finish_content():
+            yield runtime_event
 
         clear_history = command in {"new", "clear"}
-        if clear_history and response.output:
-            response.output[-1].metadata = {
-                **dict(response.output[-1].metadata or {}),
-                "clear_history": True,
-            }
-
-        if error_text:
-            response.status = RunStatus.Failed
-            response.error = {"code": "harness_error", "message": error_text}
-        elif cancelled:
-            response.status = RunStatus.Cancelled
-        else:
-            response.status = RunStatus.Completed
-        response.completed_at = datetime.now(timezone.utc).isoformat(
-            timespec="seconds",
-        )
         if self._session_bridge is not None and clear_history:
             try:
                 await self._session_bridge.clear(
                     session_id=session_id,
                     user_id=str(
-                        getattr(request, "user_id", "") or session_id,
+                        request.user_id or session_id,
                     ),
-                    channel=str(getattr(request, "channel", "") or ""),
+                    channel=str(request.source.channel_type or ""),
                 )
             except Exception:
                 logger.warning(
@@ -266,7 +200,7 @@ class HarnessRuntime:
             try:
                 await self._session_bridge.append_turn(
                     request=request,
-                    response=response,
+                    events=captured_events,
                     backend=backend,
                 )
             except Exception:
@@ -277,7 +211,16 @@ class HarnessRuntime:
                 )
         if task_cancelled:
             raise asyncio.CancelledError
-        yield tagged(response)
+        if error_text:
+            yield RuntimeEvent.turn_failed(
+                error_text,
+                "harness_error",
+                turn_id=request.turn_id,
+            )
+        elif cancelled:
+            yield RuntimeEvent.turn_cancelled(turn_id=request.turn_id)
+        else:
+            yield RuntimeEvent.turn_completed(turn_id=request.turn_id)
 
     async def stop(self) -> None:
         """Stop every initialized adapter."""
@@ -321,7 +264,7 @@ class HarnessRuntime:
     ) -> tuple[str, list[HarnessAttachment]]:
         parts: list[str] = []
         attachments: list[HarnessAttachment] = []
-        for message in getattr(request, "input", None) or []:
+        for message in request.messages:
             for content in getattr(message, "content", None) or []:
                 if isinstance(content, str):
                     parts.append(content)
@@ -349,9 +292,7 @@ class HarnessRuntime:
                     path_field = "data"
                 elif content_type == ContentType.VIDEO:
                     path_field = "video_url"
-                raw_path = (
-                    getattr(content, path_field, None) if path_field else None
-                )
+                raw_path = getattr(content, path_field, None) if path_field else None
                 if raw_path:
                     attachments.append(
                         HarnessAttachment(

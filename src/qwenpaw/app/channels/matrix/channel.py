@@ -300,11 +300,7 @@ class MatrixChannel(BaseChannel):
         if isinstance(config, dict):
             raw = config
         else:
-            raw = (
-                config.model_dump()
-                if hasattr(config, "model_dump")
-                else vars(config)
-            )
+            raw = config.model_dump() if hasattr(config, "model_dump") else vars(config)
         return cls(
             process=process,
             homeserver=raw.get("homeserver", ""),
@@ -321,8 +317,7 @@ class MatrixChannel(BaseChannel):
             history_limit=raw.get("history_limit", DEFAULT_HISTORY_LIMIT),
             sync_timeout_ms=raw.get("sync_timeout_ms", 30000),
             on_reply_sent=on_reply_sent,
-            display_config=display_config
-            or ChannelDisplayConfig.from_config(raw),
+            display_config=display_config or ChannelDisplayConfig.from_config(raw),
             no_text_debounce=no_text_debounce,
             streaming_enabled=raw.get("streaming_enabled", False),
             workspace_dir=workspace_dir,
@@ -484,9 +479,7 @@ class MatrixChannel(BaseChannel):
         if "device_name" in login_params and self.device_name:
             login_kwargs["device_name"] = self.device_name
         if "device_id" in login_params:
-            stable_device_id = (
-                self._client.device_id or resolved_device_id or ""
-            )
+            stable_device_id = self._client.device_id or resolved_device_id or ""
             if stable_device_id:
                 login_kwargs["device_id"] = stable_device_id
         # For nio versions that derive username from client.user.
@@ -508,11 +501,7 @@ class MatrixChannel(BaseChannel):
                 (self.password,),
                 {
                     "device_name": self.device_name,
-                    **(
-                        {"device_id": resolved_device_id}
-                        if resolved_device_id
-                        else {}
-                    ),
+                    **({"device_id": resolved_device_id} if resolved_device_id else {}),
                 },
             ),
         )
@@ -521,11 +510,7 @@ class MatrixChannel(BaseChannel):
                 (login_user, self.password),
                 {
                     "device_name": self.device_name,
-                    **(
-                        {"device_id": resolved_device_id}
-                        if resolved_device_id
-                        else {}
-                    ),
+                    **({"device_id": resolved_device_id} if resolved_device_id else {}),
                 },
             ),
         )
@@ -553,8 +538,7 @@ class MatrixChannel(BaseChannel):
         if getattr(resp, "access_token", None):
             self._client.access_token = resp.access_token
         logger.info(
-            "MatrixChannel: logged in as %s (password, device=%s, "
-            "device_name=%s)",
+            "MatrixChannel: logged in as %s (password, device=%s, " "device_name=%s)",
             self._user_id,
             getattr(self._client, "device_id", ""),
             self.device_name,
@@ -720,9 +704,8 @@ class MatrixChannel(BaseChannel):
             has_password_creds=has_password_creds,
             has_token_cred=has_token_cred,
         )
-        resolved_device_id = (
-            self.device_id
-            or self._derive_device_id_from_name(self.device_name)
+        resolved_device_id = self.device_id or self._derive_device_id_from_name(
+            self.device_name
         )
         self._init_async_client(resolved_device_id)
 
@@ -1228,8 +1211,7 @@ class MatrixChannel(BaseChannel):
             return
 
         logger.info(
-            "MatrixChannel: accepted key verification from %s "
-            "(device=%s, tx=%s)",
+            "MatrixChannel: accepted key verification from %s " "(device=%s, tx=%s)",
             event.sender,
             event.from_device,
             event.transaction_id,
@@ -1287,8 +1269,7 @@ class MatrixChannel(BaseChannel):
         self._remember_sent_verification_done(transaction_id)
         self._clear_verification_transaction(transaction_id)
         logger.info(
-            "MatrixChannel: sent verification done "
-            "(tx=%s, sender=%s, device=%s)",
+            "MatrixChannel: sent verification done " "(tx=%s, sender=%s, device=%s)",
             transaction_id,
             sender,
             device_id,
@@ -1303,10 +1284,7 @@ class MatrixChannel(BaseChannel):
         ):
             while store:
                 key, timestamp = next(iter(store.items()))
-                if (
-                    timestamp >= cutoff
-                    and len(store) <= VERIFICATION_STATE_MAX_ENTRIES
-                ):
+                if timestamp >= cutoff and len(store) <= VERIFICATION_STATE_MAX_ENTRIES:
                     break
                 store.pop(key)
 
@@ -1363,8 +1341,7 @@ class MatrixChannel(BaseChannel):
                 await self._client.keys_query()
         except Exception as exc:
             logger.warning(
-                "MatrixChannel: failed to query keys for verification "
-                "from %s: %s",
+                "MatrixChannel: failed to query keys for verification " "from %s: %s",
                 event.sender,
                 exc,
             )
@@ -1399,8 +1376,7 @@ class MatrixChannel(BaseChannel):
             return
 
         logger.warning(
-            "MatrixChannel: Element key verification challenge from %s "
-            "(tx=%s): %s",
+            "MatrixChannel: Element key verification challenge from %s " "(tx=%s): %s",
             event.sender,
             event.transaction_id,
             self._format_sas_challenge(sas),
@@ -1414,8 +1390,7 @@ class MatrixChannel(BaseChannel):
             )
         except LocalProtocolError as exc:
             logger.warning(
-                "MatrixChannel: confirm_short_auth_string failed "
-                "for tx=%s: %s",
+                "MatrixChannel: confirm_short_auth_string failed " "for tx=%s: %s",
                 event.transaction_id,
                 exc,
             )
@@ -1423,8 +1398,7 @@ class MatrixChannel(BaseChannel):
 
         if isinstance(resp, ToDeviceError):
             logger.warning(
-                "MatrixChannel: confirm_short_auth_string failed "
-                "for tx=%s: %s",
+                "MatrixChannel: confirm_short_auth_string failed " "for tx=%s: %s",
                 event.transaction_id,
                 resp,
             )
@@ -1449,8 +1423,7 @@ class MatrixChannel(BaseChannel):
                     parts.append(
                         "emoji="
                         + " ".join(
-                            f"{symbol}({description})"
-                            for symbol, description in emojis
+                            f"{symbol}({description})" for symbol, description in emojis
                         ),
                     )
             except Exception as exc:
@@ -1608,8 +1581,7 @@ class MatrixChannel(BaseChannel):
         """Return True if chat type is muted at channel level."""
         if is_dm and self.dm_disabled:
             logger.warning(
-                "MatrixChannel: dropping DM message (dm_disabled) "
-                "sender=%s room=%s",
+                "MatrixChannel: dropping DM message (dm_disabled) " "sender=%s room=%s",
                 sender_id,
                 room_id,
             )
@@ -1691,8 +1663,7 @@ class MatrixChannel(BaseChannel):
         if room and self._user_id:
             display_name = self._get_display_name(room, self._user_id)
             logger.debug(
-                "strip_mention_prefix: user_id=%s display_name=%r "
-                "room_users=%d",
+                "strip_mention_prefix: user_id=%s display_name=%r " "room_users=%d",
                 self._user_id,
                 display_name,
                 len(getattr(room, "users", {})),
@@ -1732,7 +1703,7 @@ class MatrixChannel(BaseChannel):
     # Display names & group history buffer (requireMention context)
     # display names from room / client.rooms (§5–§6);
     # per-room history buffer + history_limit; media_parts in buffer when
-    # applicable; prefix merged into AgentRequest on mention (§6).
+    # applicable; prefix merged into ChannelTurn on mention (§6).
     # ------------------------------------------------------------------
 
     def _get_display_name(self, room: Any, user_id: str) -> str:
@@ -1771,8 +1742,7 @@ class MatrixChannel(BaseChannel):
                             return name
                     except Exception as exc:
                         logger.debug(
-                            "MatrixChannel: client_room user_name failed "
-                            "for %s: %s",
+                            "MatrixChannel: client_room user_name failed " "for %s: %s",
                             user_id,
                             exc,
                         )
@@ -1884,9 +1854,7 @@ class MatrixChannel(BaseChannel):
         media_parts: list[Any] = []
 
         if isinstance(event, RoomMessageImage):
-            body_desc = (
-                f"[sent an image: {body}]" if body else "[sent an image]"
-            )
+            body_desc = f"[sent an image: {body}]" if body else "[sent an image]"
             if self.vision_enabled:
                 mxc_url: str = getattr(event, "url", "") or ""
                 if mxc_url:
@@ -1961,10 +1929,7 @@ class MatrixChannel(BaseChannel):
         if "/" not in rest:
             return mxc_url
         server, media_id = rest.split("/", 1)
-        return (
-            f"{self.homeserver}/_matrix/media/v3/download"
-            f"/{server}/{media_id}"
-        )
+        return f"{self.homeserver}/_matrix/media/v3/download" f"/{server}/{media_id}"
 
     async def _download_mxc(
         self,
@@ -2320,11 +2285,7 @@ class MatrixChannel(BaseChannel):
         try:
             users = list(getattr(room, "users", {}).keys())
             if users:
-                return (
-                    len(users) == 2
-                    and self._user_id in users
-                    and sender_id in users
-                )
+                return len(users) == 2 and self._user_id in users and sender_id in users
             member_count = int(getattr(room, "member_count", 0) or 0)
             return member_count == 2
         except Exception:
@@ -2371,9 +2332,7 @@ class MatrixChannel(BaseChannel):
             self._dm_room_cache.move_to_end(room_id)
             members = cached["members"]
             is_dm = (
-                len(members) == 2
-                and self._user_id in members
-                and sender_id in members
+                len(members) == 2 and self._user_id in members and sender_id in members
             )
             logger.debug(
                 "MatrixChannel: DM check (cached) room=%s members=%d is_dm=%s",
@@ -2418,8 +2377,7 @@ class MatrixChannel(BaseChannel):
                 )
                 fallback = self._is_dm_room_fallback(room, sender_id)
                 logger.warning(
-                    "MatrixChannel: joined_members fallback for %s "
-                    "-> is_dm=%s",
+                    "MatrixChannel: joined_members fallback for %s " "-> is_dm=%s",
                     room_id,
                     fallback,
                 )
@@ -2427,8 +2385,7 @@ class MatrixChannel(BaseChannel):
         except Exception as exc:
             fallback = self._is_dm_room_fallback(room, sender_id)
             logger.warning(
-                "MatrixChannel: joined_members error for %s: %s; "
-                "fallback is_dm=%s",
+                "MatrixChannel: joined_members error for %s: %s; " "fallback is_dm=%s",
                 room_id,
                 exc,
                 fallback,
@@ -2438,7 +2395,7 @@ class MatrixChannel(BaseChannel):
     # ------------------------------------------------------------------
     # Incoming message handling — text
     # text receive; allowlist + per-room rules +
-    # mention gating; history buffer when no mention; enqueue AgentRequest
+    # mention gating; history buffer when no mention; enqueue ChannelTurn
     # (§9).
     # ------------------------------------------------------------------
 
@@ -2515,9 +2472,7 @@ class MatrixChannel(BaseChannel):
             await self._send_typing(room_id, False)
             return
 
-        cmd = (
-            stripped.lstrip("/").split()[0] if stripped.startswith("/") else ""
-        )
+        cmd = stripped.lstrip("/").split()[0] if stripped.startswith("/") else ""
         if cmd in _SLASH_COMMANDS:
             command_text = stripped
             # Apply alias (e.g. /reset -> /clear)
@@ -2834,15 +2789,14 @@ class MatrixChannel(BaseChannel):
                     await self._client.room_typing(room_id, typing_state=False)
                 except Exception as exc:
                     logger.debug(
-                        "MatrixChannel: typing stop after cap failed "
-                        "for %s: %s",
+                        "MatrixChannel: typing stop after cap failed " "for %s: %s",
                         room_id,
                         exc,
                     )
             self._typing_tasks.pop(room_id, None)
 
     # ------------------------------------------------------------------
-    # build_agent_request_from_native (BaseChannel protocol)
+    # build_channel_turn_from_native (BaseChannel protocol)
     # native content_parts → QwenPaw Content; same
     # vision_enabled guard as inbound media for image parts (§11).
     # ------------------------------------------------------------------
@@ -2861,8 +2815,7 @@ class MatrixChannel(BaseChannel):
                 return TextContent(
                     type=ContentType.TEXT,
                     text=(
-                        "[Image omitted: current model does not support "
-                        "image input]"
+                        "[Image omitted: current model does not support " "image input]"
                     ),
                 )
             return ImageContent(
@@ -2883,7 +2836,7 @@ class MatrixChannel(BaseChannel):
             )
         return None
 
-    def build_agent_request_from_native(self, native_payload: Any) -> Any:
+    def build_channel_turn_from_native(self, native_payload: Any) -> Any:
         parts = native_payload.get("content_parts", [])
         meta = native_payload.get("meta", {})
         sender_id = native_payload.get("sender_id", "")
@@ -2896,18 +2849,18 @@ class MatrixChannel(BaseChannel):
         if not content:
             content = [TextContent(type=ContentType.TEXT, text="")]
 
-        # Use room_id as the AgentRequest user_id so that all participants
+        # Use room_id as the ChannelTurn user_id so that all participants
         # in the same room share one session (QwenPaw keys session state on
         # both session_id AND user_id).  The real sender is preserved in
         # meta["sender_id"] for reply mentions.
-        req = self.build_agent_request_from_user_content(
+        req = self.build_channel_turn_from_user_content(
             channel_id=CHANNEL_KEY,
             sender_id=room_id,
             session_id=session_id,
             content_parts=content,
             channel_meta=meta,
         )
-        req.channel_meta = meta  # type: ignore[attr-defined]
+        req.metadata = dict(meta)
         return req
 
     def resolve_session_id(self, sender_id: str, channel_meta=None) -> str:
@@ -2927,9 +2880,9 @@ class MatrixChannel(BaseChannel):
             return session_id[len("matrix:") :]
         return session_id
 
-    def get_to_handle_from_request(self, request: Any) -> str:
-        meta = getattr(request, "channel_meta", {}) or {}
-        return meta.get("room_id", getattr(request, "user_id", ""))
+    def get_to_handle_from_turn(self, request: Any) -> str:
+        meta = getattr(request, "metadata", {}) or {}
+        return meta.get("room_id", getattr(request, "sender_id", ""))
 
     # ------------------------------------------------------------------
     # Mention helper — MSC3952 m.mentions from body text scan
@@ -3013,9 +2966,7 @@ class MatrixChannel(BaseChannel):
         room = rooms.get(room_id) if rooms else None
         if room is not None and getattr(room, "encrypted", False) is True:
             return True
-        encrypted_rooms = (
-            getattr(self._client, "encrypted_rooms", set()) or set()
-        )
+        encrypted_rooms = getattr(self._client, "encrypted_rooms", set()) or set()
         if room_id in encrypted_rooms:
             self._mark_room_encrypted(room_id, room)
             return True

@@ -8,18 +8,17 @@ from agentscope.state import AgentState
 
 from qwenpaw.app.chats.session import SafeJSONSession
 from qwenpaw.app.chats.utils import agentscope_msg_to_message
+from qwenpaw.harnesses.events import HarnessEvent, HarnessEventKind
 from qwenpaw.harnesses.session import HarnessSessionBridge
+from qwenpaw.protocols.console import ConsoleTurnIngress
 from qwenpaw.schemas import (
     AgentRequest,
-    AgentResponse,
     AudioContent,
-    DataContent,
     FileContent,
     ImageContent,
     Message,
     MessageType,
     Role,
-    RunStatus,
     TextContent,
     VideoContent,
 )
@@ -41,61 +40,36 @@ async def test_bridge_persists_refreshable_reasoning_and_tools(
             ),
         ],
     )
-    reasoning = Message(
-        type=MessageType.REASONING,
-        role=Role.ASSISTANT,
-        status=RunStatus.Completed,
-        content=[TextContent(text="Checking")],
-    )
-    tool_call = Message(
-        type=MessageType.PLUGIN_CALL,
-        role=Role.ASSISTANT,
-        status=RunStatus.Completed,
-        content=[
-            DataContent(
-                data={
-                    "call_id": "tool-1",
-                    "name": "shell",
-                    "arguments": '{"command":"pytest"}',
-                },
-            ),
-        ],
-    )
-    tool_output = Message(
-        type=MessageType.PLUGIN_CALL_OUTPUT,
-        role=Role.TOOL,
-        status=RunStatus.Completed,
-        content=[
-            DataContent(
-                data={
-                    "call_id": "tool-1",
-                    "name": "shell",
-                    "output": "1 passed",
-                },
-            ),
-        ],
-    )
-    answer = Message(
-        type=MessageType.MESSAGE,
-        role=Role.ASSISTANT,
-        status=RunStatus.Completed,
-        content=[TextContent(text="Done")],
-    )
-    response = AgentResponse(
-        id="response-1",
-        output=[reasoning, tool_call, tool_output, answer],
-        status=RunStatus.Completed,
-    )
+    events = [
+        HarnessEvent(
+            kind=HarnessEventKind.REASONING_DELTA,
+            text="Checking",
+        ),
+        HarnessEvent(
+            kind=HarnessEventKind.TOOL_STARTED,
+            item_id="tool-1",
+            tool_name="shell",
+            data={"arguments": {"command": "pytest"}},
+        ),
+        HarnessEvent(
+            kind=HarnessEventKind.TOOL_COMPLETED,
+            item_id="tool-1",
+            tool_name="shell",
+            text="1 passed",
+        ),
+        HarnessEvent(kind=HarnessEventKind.TEXT_DELTA, text="Done"),
+    ]
 
     await bridge.append_turn(
-        request=request,
-        response=response,
+        request=ConsoleTurnIngress().decode(request),
+        events=events,
         backend="codex",
     )
 
     persisted = await session.get_session_state_dict(
         "chat-1",
         "user-1",
+        "console",
     )
     state = AgentState.model_validate(persisted["agent"]["state"])
     restored = agentscope_msg_to_message(list(state.context))
@@ -139,21 +113,16 @@ async def test_bridge_persists_attachment_only_message(
             ),
         ],
     )
-    response = AgentResponse(
-        id="response-1",
-        output=[],
-        status=RunStatus.Completed,
-    )
-
     await bridge.append_turn(
-        request=request,
-        response=response,
+        request=ConsoleTurnIngress().decode(request),
+        events=[],
         backend="codex",
     )
 
     persisted = await session.get_session_state_dict(
         "chat-1",
         "user-1",
+        "console",
     )
     state = AgentState.model_validate(persisted["agent"]["state"])
     restored = agentscope_msg_to_message(list(state.context))

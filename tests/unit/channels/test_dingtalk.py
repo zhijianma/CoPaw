@@ -545,10 +545,7 @@ class TestDingTalkTokenCache:
         assert token == "new_token_123"
         assert dingtalk_channel._token_value == "new_token_123"
         # Token expires in the future (uses loop time + TTL)
-        assert (
-            dingtalk_channel._token_expires_at
-            > asyncio.get_running_loop().time()
-        )
+        assert dingtalk_channel._token_expires_at > asyncio.get_running_loop().time()
         assert dingtalk_channel._token_expires_at <= (
             asyncio.get_running_loop().time() + DINGTALK_TOKEN_TTL_SECONDS
         )
@@ -1143,7 +1140,7 @@ class TestDingTalkGetSessionWebhook:
 
 
 class TestDingTalkBuildAgentRequest:
-    """Tests for build_agent_request_from_native method."""
+    """Tests for build_channel_turn_from_native method."""
 
     def test_build_agent_request_creates_request(self, dingtalk_channel):
         """Should create AgentRequest from native payload."""
@@ -1158,11 +1155,11 @@ class TestDingTalkBuildAgentRequest:
             "meta": {"session_webhook": "http://webhook.url"},
         }
 
-        request = dingtalk_channel.build_agent_request_from_native(payload)
+        request = dingtalk_channel.build_channel_turn_from_native(payload)
 
-        assert request.user_id == "user123"
-        assert request.channel == "dingtalk"
-        assert len(request.input) == 1
+        assert request.sender_id == "user123"
+        assert request.channel_type == "dingtalk"
+        assert len(request.messages) == 1
 
 
 # =============================================================================
@@ -1515,38 +1512,20 @@ class TestDingTalkWorkspaceIntegration:
         dingtalk_channel.set_workspace(mock_workspace)
         return dingtalk_channel
 
-    async def test_stream_with_tracker_yields_sse_events(
+    async def test_stream_with_tracker_yields_runtime_events(
         self,
         dingtalk_with_workspace,
     ):
-        """_stream_with_tracker should yield SSE formatted events."""
-        from qwenpaw.schemas import (
-            RunStatus,
-            Event,
-            Message,
-            MessageType,
-            Role,
-            TextContent,
-            ContentType,
-        )
+        """Task tracking should publish canonical runtime events."""
+        from qwenpaw.domain.turns.events import RuntimeEvent
+        from qwenpaw.schemas import TextContent, ContentType
 
-        mock_event = Event(
-            object="message",
-            status=RunStatus.Completed,
-            type="message.completed",
-            id="ev-1",
-            created_at=1234567890,
-            message=Message(
-                type=MessageType.MESSAGE,
-                role=Role.ASSISTANT,
-                content=[TextContent(type=ContentType.TEXT, text="Hello")],
-            ),
-        )
+        mock_event = RuntimeEvent.turn_started(turn_id="turn-1")
 
         async def mock_process(request):
             yield mock_event
 
-        dingtalk_with_workspace._process = mock_process
+        dingtalk_with_workspace._runtime_process = mock_process
 
         payload = {
             "sender_id": "user123",
@@ -1563,7 +1542,7 @@ class TestDingTalkWorkspaceIntegration:
             break  # Just check first event
 
         assert len(events) == 1
-        assert "data:" in events[0]
+        assert events[0] is mock_event
 
 
 @pytest.mark.asyncio
@@ -1911,7 +1890,7 @@ class TestDingTalkConsumeErrorHandling:
             ) as mock_webhook,
         ):
             request = MagicMock()
-            request.channel_meta = {
+            request.metadata = {
                 "message_id": "msg_123",
                 "conversation_id": "cid_123",
                 "session_webhook": "http://webhook.url",
@@ -1955,7 +1934,7 @@ class TestDingTalkConsumeErrorHandling:
             ) as mock_release,
         ):
             request = MagicMock()
-            request.channel_meta = {
+            request.metadata = {
                 "message_id": "msg_123",
                 "conversation_id": "cid_123",
                 "_message_ids": ["msg_123", "msg_456"],
@@ -2634,7 +2613,7 @@ class TestDingTalkRequestProcessing:
         from unittest.mock import MagicMock
 
         request = MagicMock()
-        request.channel_meta = {
+        request.metadata = {
             "message_id": "msg_123",
             "conversation_id": "cid_456",
         }
@@ -2764,8 +2743,7 @@ class TestDingTalkSendMethodsExtended:
             )
 
         assert any(
-            "no sessionWebhook" in str(call)
-            for call in mock_warning.call_args_list
+            "no sessionWebhook" in str(call) for call in mock_warning.call_args_list
         )
 
     async def test_send_no_delivery_target_raises_for_api_send(

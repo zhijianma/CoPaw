@@ -14,6 +14,7 @@ Corresponding Tier Strategy:
 - This file: As B-tier supplement, covers complex internal logic
   (debounce, merge, permissions)
 """
+
 # pylint: disable=redefined-outer-name,protected-access,unused-argument
 # pylint: disable=reimported,broad-exception-raised,using-constant-test
 from __future__ import annotations
@@ -27,7 +28,6 @@ import pytest
 from qwenpaw.app.channels.base import BaseChannel, ProcessHandler
 from qwenpaw.app.channels.console.channel import ConsoleChannel
 from qwenpaw.domain.channels.identity import ChannelIdentity
-
 
 # =============================================================================
 # Test Fixtures (Shared Infrastructure)
@@ -153,7 +153,7 @@ class TestBuildAgentRequestCore:
     """
     AgentRequest building core logic tests.
 
-    Contract tests verify: build_agent_request_from_user_content exists
+    Contract tests verify: build_channel_turn_from_user_content exists
     This unit test verifies: Building logic is correct, boundary cases handled
     """
 
@@ -163,7 +163,7 @@ class TestBuildAgentRequestCore:
         content_builder,
     ):
         """Created request should contain all required fields"""
-        request = base_channel.build_agent_request_from_user_content(
+        request = base_channel.build_channel_turn_from_user_content(
             channel_id="test_channel",
             sender_id="sender_123",
             session_id="test_channel:sender_123",
@@ -172,15 +172,15 @@ class TestBuildAgentRequestCore:
         )
 
         assert request.session_id == "test_channel:sender_123"
-        assert request.user_id == "sender_123"
-        assert request.channel == "test_channel"
-        assert len(request.input) == 1
+        assert request.sender_id == "sender_123"
+        assert request.channel_type == "test_channel"
+        assert len(request.messages) == 1
 
     def test_empty_content_gets_default(self, base_channel):
         """Empty content should auto-fill with default empty text"""
         from qwenpaw.schemas import ContentType
 
-        request = base_channel.build_agent_request_from_user_content(
+        request = base_channel.build_channel_turn_from_user_content(
             channel_id="test",
             sender_id="user1",
             session_id="test:user1",
@@ -188,10 +188,10 @@ class TestBuildAgentRequestCore:
         )
 
         # Should fill with default empty text (implementation uses space " ")
-        assert len(request.input[0].content) == 1
-        assert request.input[0].content[0].type == ContentType.TEXT
+        assert len(request.messages[0].content) == 1
+        assert request.messages[0].content[0].type == ContentType.TEXT
         # Implementation uses " " as default to satisfy non-empty validation
-        assert request.input[0].content[0].text == " "
+        assert request.messages[0].content[0].text == " "
 
 
 # =============================================================================
@@ -856,10 +856,13 @@ class TestConsumeWithTracker:
         base_channel.bind_identity(
             ChannelIdentity("telegram-backup", "telegram"),
         )
-        request = MagicMock(
+        from qwenpaw.app.channels.turn import ChannelTurn
+
+        request = ChannelTurn(
             session_id="conversation",
-            user_id="user123",
-            channel="telegram",
+            sender_id="user123",
+            messages=[],
+            channel_type="telegram",
         )
 
         await base_channel._consume_with_tracker(request, {})
@@ -927,51 +930,37 @@ class TestStreamWithTracker:
 
     async def test_stream_with_tracker_yields_sse_events(self, base_channel):
         """_stream_with_tracker should yield SSE-formatted events."""
-        from qwenpaw.schemas import (
-            RunStatus,
-            Event,
-            Message,
-            MessageType,
-            Role,
-            TextContent,
-            ContentType,
-        )
+        from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 
-        mock_event = Event(
-            object="message",
-            status=RunStatus.InProgress,
-            type="message.in_progress",
-            id="ev-1",
-            created_at=1234567890,
-            message=Message(
-                type=MessageType.MESSAGE,
-                role=Role.ASSISTANT,
-                content=[
-                    TextContent(type=ContentType.TEXT, text="Hello"),
-                ],
-            ),
+        mock_event = RuntimeEvent.canonical(
+            RuntimeEventType.CONTENT_DELTA,
+            turn_id="turn-1",
+            data={
+                "block_id": "text-1",
+                "content_kind": "text",
+                "delta": "Hello",
+            },
         )
 
         async def mock_process(request):
             yield mock_event
 
-        base_channel._process = mock_process
-        base_channel.set_workspace(MagicMock())
+        base_channel._runtime_process = mock_process
 
         mock_payload = MagicMock()
         with patch.object(
             base_channel,
-            "_payload_to_request",
-            return_value=MagicMock(
+            "_payload_to_turn",
+            return_value=base_channel.build_channel_turn_from_user_content(
+                channel_id="test",
+                sender_id="user123",
                 session_id="test:session",
-                user_id="user123",
-                channel="test",
-                channel_meta={},
+                content_parts=[],
             ),
         ):
             with patch.object(
                 base_channel,
-                "get_to_handle_from_request",
+                "get_to_handle_from_turn",
                 return_value="user123",
             ):
                 with patch.object(
@@ -986,16 +975,18 @@ class TestStreamWithTracker:
                         break  # Just check first event
 
                     assert len(events) == 1
-                    assert "data:" in events[0]
+                    assert events[0] is mock_event
 
     async def test_stream_with_tracker_handles_exception(self, base_channel):
         """_stream_with_tracker should handle exceptions gracefully."""
 
+        from qwenpaw.domain.turns.events import RuntimeEvent
+
         async def mock_process(request):
-            yield MagicMock()
+            yield RuntimeEvent.turn_started(turn_id="turn-1")
             raise ValueError("Test error")
 
-        base_channel._process = mock_process
+        base_channel._runtime_process = mock_process
 
         # Mock _on_consume_error to prevent actual error handling
         with patch.object(
@@ -1005,17 +996,17 @@ class TestStreamWithTracker:
         ):
             with patch.object(
                 base_channel,
-                "_payload_to_request",
-                return_value=MagicMock(
+                "_payload_to_turn",
+                return_value=base_channel.build_channel_turn_from_user_content(
+                    channel_id="test",
+                    sender_id="user123",
                     session_id="test:session",
-                    user_id="user123",
-                    channel="test",
-                    channel_meta={},
+                    content_parts=[],
                 ),
             ):
                 with patch.object(
                     base_channel,
-                    "get_to_handle_from_request",
+                    "get_to_handle_from_turn",
                     return_value="user123",
                 ):
                     with patch.object(
@@ -1028,53 +1019,37 @@ class TestStreamWithTracker:
                             ):
                                 pass
 
-    async def test_stream_with_tracker_falls_back_on_surrogate_json_error(
+    async def test_stream_with_tracker_does_not_serialize_runtime_events(
         self,
         base_channel,
     ):
-        """_stream_with_tracker should fallback on malformed surrogate data."""
-        from qwenpaw.schemas import RunStatus
+        """Task tracking publishes the domain event object unchanged."""
+        from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 
-        class BrokenJsonEvent:
-            object = "response"
-            status = RunStatus.Completed
-            type = "response.completed"
-
-            def model_dump_json(self):
-                raise UnicodeEncodeError(
-                    "utf-8",
-                    "\ud83c",
-                    0,
-                    1,
-                    "surrogates not allowed",
-                )
-
-            def model_dump(self, mode="python"):
-                del mode
-                return {
-                    "object": "response",
-                    "status": "completed",
-                    "text": "\ud83c broken",
-                }
+        runtime_event = RuntimeEvent.canonical(
+            RuntimeEventType.CUSTOM,
+            turn_id="turn-1",
+            data={"text": "\ud83c broken"},
+        )
 
         async def mock_process(_request):
-            yield BrokenJsonEvent()
+            yield runtime_event
 
-        base_channel._process = mock_process
+        base_channel._runtime_process = mock_process
 
         with patch.object(
             base_channel,
-            "_payload_to_request",
-            return_value=MagicMock(
+            "_payload_to_turn",
+            return_value=base_channel.build_channel_turn_from_user_content(
+                channel_id="test",
+                sender_id="user123",
                 session_id="test:session",
-                user_id="user123",
-                channel="test",
-                channel_meta={},
+                content_parts=[],
             ),
         ):
             with patch.object(
                 base_channel,
-                "get_to_handle_from_request",
+                "get_to_handle_from_turn",
                 return_value="user123",
             ):
                 with patch.object(
@@ -1087,9 +1062,7 @@ class TestStreamWithTracker:
                         break
 
         assert len(events) == 1
-        assert events[0].startswith("data: ")
-        assert "\\ud83c" not in events[0]
-        assert "? broken" in events[0]
+        assert events[0] is runtime_event
 
 
 # =============================================================================
@@ -1165,7 +1138,7 @@ class TestMergeRequests:
     def test_merge_requests_single_request_returns_it(self, base_channel):
         """Single request should return itself."""
         mock_request = MagicMock()
-        mock_request.input = [MagicMock(content=[MagicMock()])]
+        mock_request.messages = [MagicMock(content=[MagicMock()])]
 
         result = base_channel.merge_requests([mock_request])
 
@@ -1252,7 +1225,7 @@ class TestExtractChatName:
         msg.content = [content]
 
         payload = MagicMock()
-        payload.input = [msg]
+        payload.messages = [msg]
 
         result = base_channel._extract_chat_name(payload)
 
@@ -1276,7 +1249,7 @@ class TestExtractChatName:
 
 class TestPayloadToRequest:
     """
-    _payload_to_request tests.
+    _payload_to_turn tests.
 
     Convert queue payload to AgentRequest.
     """
@@ -1286,29 +1259,34 @@ class TestPayloadToRequest:
         base_channel,
     ):
         """Payload with session_id and input should be returned as-is."""
-        payload = MagicMock()
-        payload.session_id = "test:session"
-        payload.input = [MagicMock()]
+        from qwenpaw.app.channels.turn import ChannelTurn
 
-        result = base_channel._payload_to_request(payload)
+        payload = ChannelTurn(
+            session_id="test:session",
+            sender_id="user",
+            messages=[MagicMock()],
+            channel_type="test",
+        )
+
+        result = base_channel._payload_to_turn(payload)
 
         assert result is payload
 
     def test_none_payload_raises_value_error(self, base_channel):
         """None payload should raise ValueError."""
         with pytest.raises(ValueError, match="payload is None"):
-            base_channel._payload_to_request(None)
+            base_channel._payload_to_turn(None)
 
     def test_plain_dict_calls_build_agent_request(self, base_channel):
-        """Plain dict should call build_agent_request_from_native."""
+        """Plain dict should call build_channel_turn_from_native."""
         payload = {"sender_id": "user123"}
 
         with patch.object(
             base_channel,
-            "build_agent_request_from_native",
+            "build_channel_turn_from_native",
             return_value=MagicMock(),
         ) as mock_build:
-            base_channel._payload_to_request(payload)
+            base_channel._payload_to_turn(payload)
 
             mock_build.assert_called_once_with(payload)
 
@@ -1353,7 +1331,7 @@ class TestExtractQueryFromPayload:
         msg.content = [text_content]
 
         payload = MagicMock()
-        payload.input = [msg]
+        payload.messages = [msg]
 
         result = base_channel._extract_query_from_payload(payload)
 
@@ -1399,41 +1377,36 @@ class TestRunProcessLoopIntegration:
 
     async def test_completed_message_triggers_send(self, base_channel):
         """Complete message event should trigger sending"""
-        from qwenpaw.schemas import (
-            RunStatus,
-            Event,
-            Message,
-            MessageType,
-            Role,
-            TextContent,
-            ContentType,
-        )
+        from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 
         # Mock send method
         base_channel.send_message_content = AsyncMock()
 
         # Create mock request
         mock_request = MagicMock()
-        mock_request.user_id = "user1"
+        mock_request.sender_id = "user1"
         mock_request.session_id = "test:user1"
-        mock_request.channel_meta = {}
+        mock_request.metadata = {}
 
         # Define process that returns completed event
         async def mock_process(_request):
-            yield Event(
-                object="message",
-                status=RunStatus.Completed,
-                type="message.completed",
-                id="msg-1",
-                created_at=1234567890,
-                message=Message(
-                    type=MessageType.MESSAGE,
-                    role=Role.ASSISTANT,
-                    content=[TextContent(type=ContentType.TEXT, text="Hello")],
-                ),
+            yield RuntimeEvent.canonical(
+                RuntimeEventType.CONTENT_DELTA,
+                turn_id="turn-1",
+                data={
+                    "block_id": "text-1",
+                    "content_kind": "text",
+                    "delta": "Hello",
+                },
             )
+            yield RuntimeEvent.canonical(
+                RuntimeEventType.CONTENT_COMPLETED,
+                turn_id="turn-1",
+                data={"block_id": "text-1", "content_kind": "text"},
+            )
+            yield RuntimeEvent.turn_completed(turn_id="turn-1")
 
-        base_channel._process = mock_process
+        base_channel._runtime_process = mock_process
 
         # Execute
         await base_channel._run_process_loop(

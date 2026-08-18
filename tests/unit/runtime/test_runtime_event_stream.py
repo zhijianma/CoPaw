@@ -8,9 +8,8 @@ from typing import Any
 
 import pytest
 
-from qwenpaw.domain.channels.models import ReplyTarget
-from qwenpaw.domain.channels.ports import ReplyEventType
 from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
+from qwenpaw.protocols.console import ConsoleTurnIngress
 from qwenpaw.runtime.hooks import HookResult
 from qwenpaw.runtime.runtime import Runtime
 from qwenpaw.schemas import AgentRequest
@@ -88,7 +87,10 @@ async def test_stream_events_emits_runtime_lifecycle(
     )
     request.id = "turn-1"
 
-    events = [event async for event in runtime.stream_events(request)]
+    core_request = ConsoleTurnIngress(default_agent_id="agent-1").decode(
+        request,
+    )
+    events = [event async for event in runtime.stream_events(core_request)]
 
     assert [event.type for event in events] == [
         RuntimeEventType.TURN_STARTED,
@@ -98,29 +100,3 @@ async def test_stream_events_emits_runtime_lifecycle(
     assert events[1].data["delta"] == "hello"
     assert all(event.turn_id == "turn-1" for event in events)
     assert _Builder.agent.closed is True
-
-
-@pytest.mark.asyncio
-async def test_stream_replies_attaches_adapter_owned_target(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = Runtime(workspace=object(), app_services=object())
-    target = ReplyTarget("telegram:primary", "chat-1")
-
-    async def fake_stream_events(request: Any):
-        del request
-        yield RuntimeEvent.message("hello", turn_id="turn-1")
-        yield RuntimeEvent.turn_completed(turn_id="turn-1")
-
-    monkeypatch.setattr(runtime, "stream_events", fake_stream_events)
-
-    replies = [
-        event
-        async for event in runtime.stream_replies(object(), target=target)
-    ]
-
-    assert [event.type for event in replies] == [
-        ReplyEventType.MESSAGE,
-        ReplyEventType.COMPLETED,
-    ]
-    assert all(event.target is target for event in replies)

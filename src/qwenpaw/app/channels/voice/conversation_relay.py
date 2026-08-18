@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """ConversationRelay WebSocket handler for a single call."""
+
 from __future__ import annotations
 
 import json
@@ -162,24 +163,20 @@ class ConversationRelayHandler:
         )
 
     def _build_agent_request(self, text: str) -> Any:
-        """Build an AgentRequest from user speech text."""
-        from qwenpaw.schemas import (
-            AgentRequest,
-            Message,
-            Role,
-            TextContent,
-        )
+        """Build an ChannelTurn from user speech text."""
+        from qwenpaw.schemas import Message, Role, TextContent
+        from ..turn import ChannelTurn
 
         msg = Message(
             type=MessageType.MESSAGE,
             role=Role.USER,
             content=[TextContent(type=ContentType.TEXT, text=text)],
         )
-        return AgentRequest(
+        return ChannelTurn(
             session_id=f"voice:{self.call_sid}",
-            user_id=self.caller_info.get("from", ""),
-            input=[msg],
-            channel=self._channel_type,
+            sender_id=self.caller_info.get("from", ""),
+            messages=[msg],
+            channel_type=self._channel_type,
         )
 
     async def _process_and_stream(self, request: Any) -> None:
