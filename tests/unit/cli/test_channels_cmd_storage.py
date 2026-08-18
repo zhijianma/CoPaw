@@ -46,6 +46,7 @@ def test_cli_loads_the_channel_configuration() -> None:
         name="Sales",
         channels={
             "telegram": {
+                "type": "telegram",
                 "name": "Main",
                 "settings": {"bot_token": "main"},
             },

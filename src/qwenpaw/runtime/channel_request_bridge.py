@@ -6,6 +6,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from ..domain.channels.identity import ChannelIdentity
 from ..domain.channels.models import InboundMessage, ReplyTarget
 from ..domain.channels.routing import build_turn_request
 from ..domain.turns.models import TurnRequest
@@ -18,13 +19,24 @@ class ChannelRequestBridge:
         self,
         agent_id: str,
         channel_type: str,
+        instance_id: str | None = None,
     ) -> None:
         self._agent_id = agent_id
         self._channel_type = channel_type
+        self._identity = ChannelIdentity(
+            instance_id or channel_type,
+            channel_type,
+        )
 
     def build(self, request: Any) -> TurnRequest:
         """Build a transport-neutral request while preserving metadata."""
         metadata = dict(getattr(request, "channel_meta", None) or {})
+        metadata["channel_instance_id"] = self._identity.instance_id
+        metadata["_channel_instance"] = getattr(
+            request,
+            "channel_instance",
+            None,
+        )
         session_id = str(getattr(request, "session_id", "") or "")
         conversation_id = str(
             metadata.get("conversation_id") or session_id,
@@ -53,6 +65,7 @@ class ChannelRequestBridge:
             inbound,
             self._agent_id,
             turn_id=inbound.message_id,
+            session_id=self._identity.runtime_session_id(session_id),
         )
 
 

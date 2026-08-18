@@ -127,6 +127,7 @@ function resolveLocalized(value: unknown, lang: string): string {
 interface ChannelDrawerProps {
   open: boolean;
   activeKey: ChannelKey | null;
+  activeInstanceId: string | null;
   activeLabel: string;
   form: FormInstance<Record<string, unknown>>;
   saving: boolean;
@@ -144,6 +145,7 @@ interface ChannelDrawerProps {
 export function ChannelDrawer({
   open,
   activeKey,
+  activeInstanceId,
   activeLabel,
   form,
   saving,
@@ -178,7 +180,10 @@ export function ChannelDrawer({
   const onebotTokenRequired = !isLoopbackHost(
     onebotWsHost.trim() || "127.0.0.1",
   );
-  const qrcodeParams = (params: Record<string, string> = {}) => params;
+  const qrcodeParams = (params: Record<string, string> = {}) => ({
+    ...params,
+    instance_id: activeInstanceId || "__new__",
+  });
 
   // Parent calls form.setFieldsValue() before the Form mounts, which wins over
   // initialValues. Re-apply auth_method after open so the dropdown is correct.

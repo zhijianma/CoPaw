@@ -788,8 +788,10 @@ def load_editable_channel_configs(
     values: dict[str, object] = {
         "console": agent_config.transports.console,
     }
-    for channel_type, channel in agent_config.channels.items():
-        values[channel_type] = {
+    for instance_id, channel in agent_config.channels.items():
+        if instance_id != channel.type:
+            continue
+        values[channel.type] = {
             **channel.settings,
             "enabled": channel.enabled,
         }

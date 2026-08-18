@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""One-shot migration to one Channel configuration per type and Agent."""
+"""One-shot migration to agent-owned Channel instances."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from ..utils.session_paths import (
     session_filename,
 )
 
-CHANNEL_RUNTIME_MIGRATION_VERSION = 4
+CHANNEL_RUNTIME_MIGRATION_VERSION = 5
 
 
 class ChannelMigrationError(RuntimeError):
@@ -172,6 +172,7 @@ def _legacy_map_to_channels(
             continue
         enabled = bool(raw.pop("enabled", False))
         channel = {
+            "type": channel_type,
             "name": channel_type.replace("_", " ").title(),
             "enabled": enabled,
             "settings": raw,
@@ -213,7 +214,14 @@ def _validate_channel(
     value: dict[str, Any],
 ) -> None:
     try:
-        channel = AgentChannelConfig.model_validate(value)
+        payload = dict(value)
+        payload.setdefault("type", channel_type)
+        channel = AgentChannelConfig.model_validate(payload)
+        if channel.type != channel_type:
+            raise ValueError(
+                f"Channel type does not match instance data: "
+                f"{channel.type} != {channel_type}",
+            )
         channel.validate_for_type(channel_type)
     except (ValidationError, ValueError) as exc:
         raise ChannelMigrationError(
@@ -223,28 +231,58 @@ def _validate_channel(
 
 def _v2_list_to_channels(
     values: list[Any],
-) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, str], dict[str, list[str]]]:
     channels: dict[str, dict[str, Any]] = {}
-    instance_ids: dict[str, str] = {}
+    primary_instance_ids: dict[str, str] = {}
+    secondary_instance_ids: dict[str, list[str]] = {}
+    type_counts: dict[str, int] = {}
+    old_instance_ids: set[str] = set()
     for value in values:
         if not isinstance(value, dict):
             raise ChannelMigrationError(
                 "Channel configurations must be objects",
             )
         channel_type = str(value.get("type") or "")
-        if channel_type in channels:
+        if not channel_type:
             raise ChannelMigrationError(
-                f"Agent has multiple {channel_type} Channel configurations",
+                "Channel configuration type must not be empty",
+            )
+        count = type_counts.get(channel_type, 0)
+        old_instance_id = str(value.get("id") or "")
+        if old_instance_id and old_instance_id in old_instance_ids:
+            raise ChannelMigrationError(
+                f"Duplicate Channel instance ID: {old_instance_id}",
+            )
+        if count == 0:
+            instance_id = channel_type
+            primary_instance_ids[channel_type] = (
+                old_instance_id or channel_type
+            )
+        else:
+            instance_id = old_instance_id or f"{channel_type}-{count + 1}"
+            if instance_id == channel_type:
+                raise ChannelMigrationError(
+                    f"Duplicate Channel instance ID: {instance_id}",
+                )
+            secondary_instance_ids.setdefault(channel_type, []).append(
+                instance_id,
+            )
+        if instance_id in channels:
+            raise ChannelMigrationError(
+                f"Duplicate Channel instance ID: {instance_id}",
             )
         channel = {
+            "type": channel_type,
             "name": str(value.get("name") or channel_type.title()),
             "enabled": bool(value.get("enabled", True)),
             "settings": dict(value.get("settings") or {}),
         }
         _validate_channel(channel_type, channel)
-        channels[channel_type] = channel
-        instance_ids[channel_type] = str(value.get("id") or channel_type)
-    return channels, instance_ids
+        channels[instance_id] = channel
+        if old_instance_id:
+            old_instance_ids.add(old_instance_id)
+        type_counts[channel_type] = count + 1
+    return channels, primary_instance_ids, secondary_instance_ids
 
 
 def _v3_backup_instance_ids(
@@ -260,7 +298,7 @@ def _v3_backup_instance_ids(
         channels = _read_object(candidate).get("channels")
         if not isinstance(channels, list):
             continue
-        _, instance_ids = _v2_list_to_channels(channels)
+        _, instance_ids, _ = _v2_list_to_channels(channels)
         return instance_ids
     return {}
 
@@ -268,18 +306,31 @@ def _v3_backup_instance_ids(
 def _merge_channels(
     existing: dict[str, dict[str, Any]],
     additions: list[tuple[str, dict[str, Any], str]],
-) -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, str], dict[str, list[str]]]:
     merged = dict(existing)
-    instance_ids: dict[str, str] = {}
+    primary_instance_ids: dict[str, str] = {}
+    secondary_instance_ids: dict[str, list[str]] = {}
     for channel_type, value, instance_id in additions:
         _validate_channel(channel_type, value)
-        if channel_type in merged and merged[channel_type] != value:
+        has_type = any(
+            str(item.get("type") or key) == channel_type
+            for key, item in merged.items()
+        )
+        target_id = instance_id if has_type else channel_type
+        if target_id in merged and merged[target_id] != value:
             raise ChannelMigrationError(
-                f"Agent has multiple {channel_type} Channel configurations",
+                f"Duplicate Channel instance ID: {target_id}",
             )
-        merged[channel_type] = dict(value)
-        instance_ids[channel_type] = instance_id
-    return dict(sorted(merged.items())), instance_ids
+        migrated_value = dict(value)
+        migrated_value["type"] = channel_type
+        merged[target_id] = migrated_value
+        if not has_type:
+            primary_instance_ids[channel_type] = instance_id
+        else:
+            secondary_instance_ids.setdefault(channel_type, []).append(
+                target_id,
+            )
+    return merged, primary_instance_ids, secondary_instance_ids
 
 
 def _routing_additions(
@@ -335,6 +386,7 @@ def _routing_additions(
             )
         channel_type = str(endpoint.get("channel_key") or "")
         value = {
+            "type": channel_type,
             "name": str(endpoint.get("account_id") or endpoint_id),
             "enabled": bool(endpoint.get("enabled", True))
             and bool(binding.get("enabled", True)),
@@ -383,9 +435,10 @@ def _session_rewrites(
     agent_id: str,
     source: _SourceFile,
     instance_ids: dict[str, str],
+    secondary_instance_ids: dict[str, list[str]],
 ) -> tuple[list[_SessionRewrite], list[_SourceFile], _ChatsRewrite | None]:
     """Plan Session file rewrites without modifying the filesystem."""
-    if not instance_ids:
+    if not instance_ids and not secondary_instance_ids:
         return [], [], None
     chats_path = source.path.parent / "chats.json"
     chats_existed = chats_path.is_file()
@@ -497,6 +550,76 @@ def _session_rewrites(
             )
             chats_changed = True
 
+    for channel_type, secondary_ids in secondary_instance_ids.items():
+        session_dir = source.path.parent / "sessions" / channel_type
+        for instance_id in secondary_ids:
+            secondary_sessions: set[tuple[str, str]] = set()
+            for chat in chats:
+                if not isinstance(chat, dict):
+                    continue
+                if str(chat.get("channel") or "") != channel_type:
+                    continue
+                logical_id = str(chat.get("session_id") or "")
+                user_id = str(chat.get("user_id") or "")
+                if not logical_id or logical_id.startswith(
+                    f"{instance_id}:",
+                ):
+                    continue
+                qualified_path = session_dir / session_filename(
+                    f"{instance_id}:{logical_id}",
+                    user_id,
+                )
+                if qualified_path.is_file():
+                    secondary_sessions.add((logical_id, user_id))
+
+            marker = f"{sanitize_session_filename(instance_id)}--"
+            if session_dir.is_dir():
+                for qualified_path in session_dir.glob("*.json"):
+                    index = qualified_path.stem.rfind(marker)
+                    if index < 0:
+                        continue
+                    prefix = qualified_path.stem[:index]
+                    logical_id = qualified_path.stem[index + len(marker) :]
+                    user_id = prefix[:-1] if prefix.endswith("_") else ""
+                    if logical_id:
+                        secondary_sessions.add((logical_id, user_id))
+
+            for logical_id, user_id in sorted(secondary_sessions):
+                qualified_id = f"{instance_id}:{logical_id}"
+                existing_chat = next(
+                    (
+                        chat
+                        for chat in chats
+                        if isinstance(chat, dict)
+                        and str(chat.get("session_id") or "") == qualified_id
+                        and str(chat.get("user_id") or "") == user_id
+                        and str(chat.get("channel") or "") == channel_type
+                    ),
+                    None,
+                )
+                if existing_chat is None:
+                    chats.append(
+                        {
+                            "id": str(uuid.uuid4()),
+                            "name": (f"Migrated {channel_type.title()} chat"),
+                            "session_id": qualified_id,
+                            "user_id": user_id,
+                            "channel": channel_type,
+                            "meta": {
+                                "channel_instance_id": instance_id,
+                            },
+                        },
+                    )
+                    chats_changed = True
+                    continue
+                meta = existing_chat.setdefault("meta", {})
+                if not isinstance(meta, dict):
+                    meta = {}
+                    existing_chat["meta"] = meta
+                if meta.get("channel_instance_id") != instance_id:
+                    meta["channel_instance_id"] = instance_id
+                    chats_changed = True
+
     chats_rewrite = None
     if chats_changed:
         chats_data["chats"] = chats
@@ -577,7 +700,7 @@ def _backup_sources(
     backup_dir = (
         config_path.parent
         / "migrations"
-        / "channel-config-v4"
+        / "channel-config-v5"
         / f"{stamp}-{uuid.uuid4().hex[:8]}"
     )
     files = []
@@ -625,7 +748,7 @@ def _invalidate_config_caches() -> None:
 def migrate_channel_configuration(
     config_path: Path,
 ) -> ChannelMigrationResult:
-    """Persist one configuration per Channel type and repair V2 data."""
+    """Persist stable Channel instances and preserve primary history."""
     config_path = Path(config_path).expanduser().resolve()
     if not config_path.is_file():
         return ChannelMigrationResult(False)
@@ -652,16 +775,20 @@ def migrate_channel_configuration(
                     f"Cannot assign root channels to active agent "
                     f"{active_agent}: agent.json is missing",
                 )
-            current = target.data.get("channels")
-            if (
-                isinstance(current, dict)
-                and current
-                and current != root_legacy
-            ):
-                raise ChannelMigrationError(
-                    f"Root channels conflict with agent {active_agent}",
-                )
-            target.data["channels"] = dict(root_legacy)
+            target_schema = int(
+                target.data.get("channel_schema_version") or 0,
+            )
+            if target_schema < 4:
+                current = target.data.get("channels")
+                if (
+                    isinstance(current, dict)
+                    and current
+                    and current != root_legacy
+                ):
+                    raise ChannelMigrationError(
+                        f"Root channels conflict with agent {active_agent}",
+                    )
+                target.data["channels"] = dict(root_legacy)
 
         changed_agents = []
         changed_sources = []
@@ -677,10 +804,13 @@ def migrate_channel_configuration(
             )
             changed = False
             existing_instance_ids: dict[str, str] = {}
+            existing_secondary_ids: dict[str, list[str]] = {}
             if isinstance(raw_channels, list):
-                existing, existing_instance_ids = _v2_list_to_channels(
-                    raw_channels,
-                )
+                (
+                    existing,
+                    existing_instance_ids,
+                    existing_secondary_ids,
+                ) = _v2_list_to_channels(raw_channels)
                 changed = True
             elif isinstance(raw_channels, dict) and schema_version < 3:
                 existing = _legacy_map_to_channels(
@@ -690,15 +820,22 @@ def migrate_channel_configuration(
                 )
                 changed = True
             elif isinstance(raw_channels, dict):
-                existing = dict(raw_channels)
-                for channel_type, channel in existing.items():
+                existing = {}
+                for instance_id, channel in raw_channels.items():
                     if not isinstance(channel, dict):
                         raise ChannelMigrationError(
-                            f"Agent {agent_id} Channel {channel_type} "
+                            f"Agent {agent_id} Channel {instance_id} "
                             f"must be an object",
                         )
-                    _validate_channel(channel_type, channel)
-                if schema_version >= 3:
+                    migrated_channel = dict(channel)
+                    if schema_version < 5:
+                        migrated_channel.setdefault("type", instance_id)
+                    channel_type = str(
+                        migrated_channel.get("type") or "",
+                    )
+                    _validate_channel(channel_type, migrated_channel)
+                    existing[instance_id] = migrated_channel
+                if schema_version == 3:
                     existing_instance_ids = _v3_backup_instance_ids(
                         config_path,
                         source,
@@ -707,14 +844,20 @@ def migrate_channel_configuration(
                 raise ChannelMigrationError(
                     f"Agent {agent_id} channels must be an object",
                 )
-            merged, added_instance_ids = _merge_channels(
-                existing,
-                additions.get(agent_id, []),
-            )
+            (
+                merged,
+                added_instance_ids,
+                added_secondary_ids,
+            ) = _merge_channels(existing, additions.get(agent_id, []))
             instance_ids = {
                 **existing_instance_ids,
                 **added_instance_ids,
             }
+            secondary_instance_ids = dict(existing_secondary_ids)
+            for channel_type, instance_id_list in added_secondary_ids.items():
+                secondary_instance_ids.setdefault(channel_type, []).extend(
+                    instance_id_list,
+                )
             if merged != raw_channels:
                 changed = True
             if source.data.get("channel_schema_version") != (
@@ -739,6 +882,7 @@ def migrate_channel_configuration(
                 agent_id,
                 source,
                 instance_ids,
+                secondary_instance_ids,
             )
             session_rewrites.extend(rewrites)
             session_sources.extend(rewrite_sources)

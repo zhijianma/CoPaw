@@ -110,6 +110,7 @@ class ChatManager:
         channel: str = DEFAULT_CHANNEL,
         name: str = "New Chat",
         source: str | SessionSource = SessionSource.chat,
+        meta: dict | None = None,
     ) -> ChatSpec:
         """Get existing chat or create new one.
 
@@ -157,6 +158,7 @@ class ChatManager:
                 channel=channel,
                 name=name,
                 source=resolved_source,
+                meta=dict(meta or {}),
             )
             logger.debug(f"get_or_create_chat: created spec={spec.id}")
             # Call internal create without lock (already locked)

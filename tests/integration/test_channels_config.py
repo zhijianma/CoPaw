@@ -48,7 +48,9 @@ def test_agent_scoped_console_transport_roundtrip(app_server) -> None:
 
 @pytest.mark.integration
 @pytest.mark.p0
-def test_agent_scoped_channel_type_is_unique(app_server) -> None:
+def test_agent_scoped_channel_type_supports_multiple_instances(
+    app_server,
+) -> None:
     agent_id = "integ-scoped-channels-01"
     endpoint = f"/api/agents/{agent_id}/config/channels"
     _create_agent(app_server, agent_id)
@@ -68,13 +70,17 @@ def test_agent_scoped_channel_type_is_unique(app_server) -> None:
             endpoint,
             json={**payload, "name": "Scoped Backup"},
         )
-        assert duplicate.status_code == 422, app_server.logs_tail()
+        assert duplicate.status_code == 201, app_server.logs_tail()
+        assert created.json()["id"] == "telegram"
+        assert duplicate.json()["id"].startswith("telegram-")
 
         listed = app_server.api_request("GET", endpoint)
         assert listed.status_code == 200, app_server.logs_tail()
-        selected = next(
+        telegrams = [
             item for item in listed.json() if item["type"] == "telegram"
-        )
+        ]
+        assert len(telegrams) == 2
+        selected = next(item for item in telegrams if item["id"] == "telegram")
 
         updated = {
             **selected,
@@ -82,7 +88,7 @@ def test_agent_scoped_channel_type_is_unique(app_server) -> None:
         }
         put_response = app_server.api_request(
             "PUT",
-            f"{endpoint}/telegram",
+            f"{endpoint}/{selected['id']}",
             json=updated,
         )
         assert put_response.status_code == 200, app_server.logs_tail()

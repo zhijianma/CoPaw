@@ -83,7 +83,7 @@ def test_console_transport_get_put_roundtrip(app_server) -> None:
 
 @pytest.mark.integration
 @pytest.mark.p0
-def test_channel_type_has_only_one_configuration(app_server) -> None:
+def test_channel_type_supports_multiple_configurations(app_server) -> None:
     endpoint = "/api/config/channels"
     payload = {
         "type": "telegram",
@@ -92,6 +92,7 @@ def test_channel_type_has_only_one_configuration(app_server) -> None:
         "settings": {"bot_token": "main-token"},
     }
 
+    secondary_id = ""
     try:
         created = app_server.api_request(
             "POST",
@@ -107,7 +108,10 @@ def test_channel_type_has_only_one_configuration(app_server) -> None:
             json={**payload, "name": "Integration Backup"},
             timeout=_CHANNEL_HTTP_TIMEOUT,
         )
-        assert duplicate.status_code == 422, app_server.logs_tail()
+        assert duplicate.status_code == 201, app_server.logs_tail()
+        assert created.json()["id"] == "telegram"
+        secondary_id = duplicate.json()["id"]
+        assert secondary_id.startswith("telegram-")
 
         update = app_server.api_request(
             "PUT",
@@ -126,6 +130,12 @@ def test_channel_type_has_only_one_configuration(app_server) -> None:
         assert fetched.status_code == 200, app_server.logs_tail()
         assert fetched.json()["name"] == "Integration Renamed"
     finally:
+        if secondary_id:
+            app_server.api_request(
+                "DELETE",
+                f"{endpoint}/{secondary_id}",
+                timeout=_CHANNEL_HTTP_TIMEOUT,
+            )
         app_server.api_request(
             "DELETE",
             f"{endpoint}/telegram",

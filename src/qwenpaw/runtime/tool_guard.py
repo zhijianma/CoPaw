@@ -347,7 +347,9 @@ async def _ask_user_approval(
     ctx = request_context or {}
     session_id = str(ctx.get("session_id") or "")
     user_id = str(ctx.get("user_id") or "")
-    channel = str(ctx.get("channel") or "")
+    channel = str(
+        ctx.get("channel_instance_id") or ctx.get("channel") or "",
+    )
     root_session_id = str(ctx.get("root_session_id") or session_id)
     owner_agent_id = str(ctx.get("root_agent_id") or agent_id or "unknown")
 

@@ -26,6 +26,7 @@ import pytest
 # Import BaseChannel directly for internal logic testing
 from qwenpaw.app.channels.base import BaseChannel, ProcessHandler
 from qwenpaw.app.channels.console.channel import ConsoleChannel
+from qwenpaw.domain.channels.identity import ChannelIdentity
 
 
 # =============================================================================
@@ -837,6 +838,41 @@ class TestConsumeWithTracker:
             )
 
         mock_chat_manager.get_or_create_chat.assert_called_once()
+
+    async def test_secondary_instance_qualifies_registered_chat(
+        self,
+        base_channel,
+    ):
+        """Secondary instances must not collide in chats.json."""
+        workspace = MagicMock()
+        workspace.chat_manager = AsyncMock()
+        workspace.chat_manager.get_or_create_chat.return_value = MagicMock(
+            id="chat-123",
+        )
+        workspace.task_tracker.attach_or_start = AsyncMock(
+            return_value=(MagicMock(), False),
+        )
+        base_channel.set_workspace(workspace)
+        base_channel.bind_identity(
+            ChannelIdentity("telegram-backup", "telegram"),
+        )
+        request = MagicMock(
+            session_id="conversation",
+            user_id="user123",
+            channel="telegram",
+        )
+
+        await base_channel._consume_with_tracker(request, {})
+
+        call = workspace.chat_manager.get_or_create_chat.call_args
+        assert call.args[:3] == (
+            "telegram-backup:conversation",
+            "user123",
+            "telegram",
+        )
+        assert call.kwargs["meta"] == {
+            "channel_instance_id": "telegram-backup",
+        }
 
     async def test_consume_with_tracker_existing_task_logs_warning(
         self,

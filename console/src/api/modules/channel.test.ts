@@ -12,6 +12,7 @@ describe("channelApi", () => {
   it("lists agent-owned Channel configurations", async () => {
     const channels = [
       {
+        id: "telegram",
         type: "telegram",
         name: "Main",
         enabled: true,
@@ -26,6 +27,7 @@ describe("channelApi", () => {
 
   it("creates a Channel configuration", async () => {
     const value = {
+      id: "",
       type: "telegram",
       name: "Backup",
       enabled: false,
@@ -45,6 +47,7 @@ describe("channelApi", () => {
 
   it("gets and updates by encoded Channel type", async () => {
     const channel = {
+      id: "telegram",
       type: "telegram",
       name: "Main",
       enabled: true,
@@ -55,15 +58,11 @@ describe("channelApi", () => {
     await channelApi.getChannelConfig(channel.type);
     await channelApi.updateChannelConfig(channel.type, channel);
 
-    expect(request).toHaveBeenNthCalledWith(
-      1,
-      "/config/channels/telegram",
-    );
-    expect(request).toHaveBeenNthCalledWith(
-      2,
-      "/config/channels/telegram",
-      { method: "PUT", body: JSON.stringify(channel) },
-    );
+    expect(request).toHaveBeenNthCalledWith(1, "/config/channels/telegram");
+    expect(request).toHaveBeenNthCalledWith(2, "/config/channels/telegram", {
+      method: "PUT",
+      body: JSON.stringify(channel),
+    });
   });
 
   it("deletes by Channel type", async () => {
@@ -71,10 +70,9 @@ describe("channelApi", () => {
 
     await channelApi.deleteChannelConfig("telegram");
 
-    expect(request).toHaveBeenCalledWith(
-      "/config/channels/telegram",
-      { method: "DELETE" },
-    );
+    expect(request).toHaveBeenCalledWith("/config/channels/telegram", {
+      method: "DELETE",
+    });
   });
 
   it("keeps Console on its Transport API", async () => {
@@ -103,10 +101,9 @@ describe("channelApi", () => {
 
   it("checks conflicts by Channel type", async () => {
     vi.mocked(request).mockResolvedValue({ conflict: false, agents: [] });
-    await channelApi.checkChannelConflict(
-      "telegram",
-      { enabled: true } as never,
-    );
+    await channelApi.checkChannelConflict("telegram", {
+      enabled: true,
+    } as never);
     expect(request).toHaveBeenCalledWith(
       "/config/channels/telegram/conflict-check",
       expect.anything(),
@@ -116,11 +113,9 @@ describe("channelApi", () => {
   it("builds QR-code URLs with encoded values", async () => {
     vi.mocked(request).mockResolvedValue({});
     await channelApi.getChannelQrcode("wechat", { scene: "login" });
-    await channelApi.getChannelQrcodeStatus(
-      "wechat",
-      "token with space",
-      { scene: "login" },
-    );
+    await channelApi.getChannelQrcodeStatus("wechat", "token with space", {
+      scene: "login",
+    });
     expect(vi.mocked(request).mock.calls[0][0]).toContain("scene=login");
     expect(vi.mocked(request).mock.calls[1][0]).toContain(
       "token%20with%20space",

@@ -65,7 +65,9 @@ async def list_dispatch_targets(
     deduped: dict[tuple[str, str, str], CronDispatchTargetItem] = {}
     for chat in chats:
         item = CronDispatchTargetItem(
-            channel=chat.channel,
+            channel=str(
+                chat.meta.get("channel_instance_id") or chat.channel,
+            ),
             user_id=chat.user_id,
             session_id=chat.session_id,
         )

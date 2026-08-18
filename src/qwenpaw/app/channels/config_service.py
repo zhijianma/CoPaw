@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from ...config.config import AgentChannelConfig, AgentProfileConfig
 
 
 class ChannelConfigService:
-    """Manage the single configuration for each Channel type."""
+    """Manage stable Channel instances owned by one Agent."""
 
     def __init__(self, agent: AgentProfileConfig) -> None:
         self._agent = agent
@@ -18,49 +19,71 @@ class ChannelConfigService:
         """Return Channel configurations in persisted order."""
         return list(self._agent.channels.items())
 
-    def get(self, channel_type: str) -> AgentChannelConfig | None:
-        """Return the configuration for a Channel type."""
-        return self._agent.channels.get(channel_type)
+    def get(self, instance_id: str) -> AgentChannelConfig | None:
+        """Return one configuration by stable instance ID."""
+        return self._agent.channels.get(instance_id)
 
     def create(
         self,
         channel_type: str,
         value: dict[str, Any],
-    ) -> AgentChannelConfig:
-        """Create the only configuration for a Channel type."""
-        if self.get(channel_type) is not None:
-            raise ValueError(
-                f"Channel type is already configured: {channel_type}",
-            )
+    ) -> tuple[str, AgentChannelConfig]:
+        """Create a primary-compatible or generated secondary instance."""
+        instance_id = self._new_instance_id(channel_type)
         channel = self._validate(channel_type, value)
-        self._agent.channels[channel_type] = channel
-        return channel
+        self._agent.channels[instance_id] = channel
+        return instance_id, channel
 
     def update(
         self,
-        channel_type: str,
+        instance_id: str,
         value: dict[str, Any],
     ) -> AgentChannelConfig:
-        """Replace the configuration for a Channel type."""
-        if self.get(channel_type) is None:
-            raise KeyError(channel_type)
-        channel = self._validate(channel_type, value)
-        self._agent.channels[channel_type] = channel
+        """Replace one configuration without changing its identity."""
+        current = self.get(instance_id)
+        if current is None:
+            raise KeyError(instance_id)
+        requested_type = str(value.get("type") or current.type)
+        if requested_type != current.type:
+            raise ValueError("Channel type cannot be changed")
+        channel = self._validate(current.type, value)
+        self._agent.channels[instance_id] = channel
         return channel
 
-    def delete(self, channel_type: str) -> AgentChannelConfig:
-        """Remove and return the configuration for a Channel type."""
+    def delete(self, instance_id: str) -> AgentChannelConfig:
+        """Remove one instance without implicitly promoting another."""
+        channel = self.get(instance_id)
+        if channel is None:
+            raise KeyError(instance_id)
+        if instance_id == channel.type and any(
+            key != instance_id and value.type == channel.type
+            for key, value in self._agent.channels.items()
+        ):
+            raise ValueError(
+                f"Cannot delete primary Channel while secondary instances "
+                f"exist: {instance_id}",
+            )
         try:
-            return self._agent.channels.pop(channel_type)
+            return self._agent.channels.pop(instance_id)
         except KeyError:
-            raise KeyError(channel_type) from None
+            raise KeyError(instance_id) from None
+
+    def _new_instance_id(self, channel_type: str) -> str:
+        if self.get(channel_type) is None:
+            return channel_type
+        while True:
+            instance_id = f"{channel_type}-{uuid.uuid4().hex[:8]}"
+            if self.get(instance_id) is None:
+                return instance_id
 
     @staticmethod
     def _validate(
         channel_type: str,
         value: dict[str, Any],
     ) -> AgentChannelConfig:
-        channel = AgentChannelConfig.model_validate(value)
+        payload = dict(value)
+        payload["type"] = channel_type
+        channel = AgentChannelConfig.model_validate(payload)
         channel.validate_for_type(channel_type)
         return channel
 

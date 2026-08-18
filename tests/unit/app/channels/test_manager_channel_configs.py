@@ -11,7 +11,9 @@ import pytest
 from qwenpaw.app.channels import manager as manager_module
 from qwenpaw.app.channels.base import BaseChannel
 from qwenpaw.app.channels.manager import ChannelManager
+from qwenpaw.app.channels.manager import _bind_dispatch_callback
 from qwenpaw.config.config import AgentProfileConfig, Config, TelegramConfig
+from qwenpaw.domain.channels.identity import ChannelIdentity
 
 
 class _FakeTelegramChannel:
@@ -36,6 +38,7 @@ def _agent() -> AgentProfileConfig:
         name="Sales",
         channels={
             "telegram": {
+                "type": "telegram",
                 "name": "Sales Bot",
                 "settings": {
                     "bot_token": "secret",
@@ -71,6 +74,43 @@ def test_manager_builds_one_adapter_for_channel_type(
     config = _FakeTelegramChannel.captured_configs[0]
     assert isinstance(config, TelegramConfig)
     assert config.bot_token == "secret"
+    manager.channels[0].bind_identity.assert_called_once()
+    identity = manager.channels[0].bind_identity.call_args.args[0]
+    assert identity.instance_id == "telegram"
+    assert identity.is_primary is True
+
+
+def test_manager_builds_multiple_adapters_for_one_channel_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _agent()
+    agent.channels["telegram-backup"] = agent.channels["telegram"].model_copy(
+        update={"name": "Backup"},
+    )
+    monkeypatch.setattr(
+        manager_module,
+        "get_available_channels",
+        lambda: ["telegram"],
+    )
+    monkeypatch.setattr(
+        manager_module,
+        "get_channel_registry",
+        lambda **_kwargs: {"telegram": _FakeTelegramChannel},
+    )
+
+    manager = ChannelManager.from_config(
+        process=MagicMock(),
+        config=Config(),
+        agent_config=agent,
+    )
+
+    identities = [
+        channel.bind_identity.call_args.args[0] for channel in manager.channels
+    ]
+    assert [item.instance_id for item in identities] == [
+        "telegram",
+        "telegram-backup",
+    ]
 
 
 def test_manager_skips_disabled_channel(
@@ -117,6 +157,7 @@ def test_manager_preserves_plugin_settings(
         name="Sales",
         channels={
             "custom_chat": {
+                "type": "custom_chat",
                 "name": "Custom",
                 "settings": {"server": "https://plugin.invalid"},
             },
@@ -150,6 +191,7 @@ async def test_restart_preserves_plugin_config_and_channel_bridge() -> None:
         name="Sales",
         channels={
             "custom_chat": {
+                "type": "custom_chat",
                 "name": "Custom",
                 "settings": {"server": "https://plugin.invalid"},
             },
@@ -181,3 +223,56 @@ def test_channel_state_path_uses_the_channel_workspace(tmp_path) -> None:
     path = channel.channel_state_path(tmp_path, "state.json")
 
     assert path == tmp_path / "state.json"
+
+
+def test_secondary_channel_state_path_is_isolated(tmp_path) -> None:
+    channel = object.__new__(BaseChannel)
+    channel.channel = "telegram"
+    channel._channel_identity = ChannelIdentity(
+        "telegram-backup",
+        "telegram",
+    )
+
+    path = channel.channel_state_path(tmp_path, "state.json")
+
+    assert path.parent.parent == tmp_path / ".channel_instances"
+
+
+def test_secondary_dispatch_callback_persists_runtime_identity() -> None:
+    callback = MagicMock()
+    bound = _bind_dispatch_callback(
+        callback,
+        ChannelIdentity("telegram-backup", "telegram"),
+    )
+
+    assert bound is not None
+    bound("telegram", "user", "conversation")
+
+    callback.assert_called_once_with(
+        "telegram-backup",
+        "user",
+        "telegram-backup:conversation",
+    )
+
+
+@pytest.mark.asyncio
+async def test_secondary_send_event_restores_platform_session() -> None:
+    channel = MagicMock(channel="telegram")
+    channel._channel_identity = ChannelIdentity(
+        "telegram-backup",
+        "telegram",
+    )
+    channel.send_event = AsyncMock()
+    manager = ChannelManager([channel])
+
+    await manager.send_event(
+        channel="telegram-backup",
+        user_id="user",
+        session_id="telegram-backup:conversation",
+        event=MagicMock(),
+    )
+
+    assert channel.send_event.call_args.kwargs["session_id"] == "conversation"
+    assert channel.send_event.call_args.kwargs["meta"]["session_id"] == (
+        "conversation"
+    )

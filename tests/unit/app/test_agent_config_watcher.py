@@ -12,6 +12,7 @@ def test_channel_runtime_hash_tracks_channels_and_transports() -> None:
         name="Sales",
         channels={
             "telegram": {
+                "type": "telegram",
                 "name": "Main",
                 "enabled": False,
                 "settings": {},

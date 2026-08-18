@@ -10,9 +10,9 @@ import { useAgentStore } from "../../../stores/agentStore";
 export function useChannels() {
   const { selectedAgent } = useAgentStore();
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
-  const [consoleConfig, setConsoleConfig] = useState<
-    Record<string, unknown>
-  >({});
+  const [consoleConfig, setConsoleConfig] = useState<Record<string, unknown>>(
+    {},
+  );
   const [channelTypes, setChannelTypes] = useState<string[]>([]);
   const [channelCatalog, setChannelCatalog] = useState<ChannelDefinition[]>([]);
   const [channelSchemas, setChannelSchemas] = useState<
@@ -75,19 +75,15 @@ export function useChannels() {
   const applyChannelConfig = useCallback((value: ChannelConfig) => {
     revision.current += 1;
     setChannels((current) => {
-      const index = current.findIndex((item) => item.type === value.type);
+      const index = current.findIndex((item) => item.id === value.id);
       if (index < 0) return [...current, value];
-      return current.map((item) =>
-        item.type === value.type ? value : item,
-      );
+      return current.map((item) => (item.id === value.id ? value : item));
     });
   }, []);
 
-  const removeChannelConfig = useCallback((channelType: string) => {
+  const removeChannelConfig = useCallback((instanceId: string) => {
     revision.current += 1;
-    setChannels((current) =>
-      current.filter((item) => item.type !== channelType),
-    );
+    setChannels((current) => current.filter((item) => item.id !== instanceId));
   }, []);
 
   const applyConsoleConfig = useCallback((value: Record<string, unknown>) => {

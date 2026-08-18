@@ -61,9 +61,9 @@ export const channelApi = {
   listChannelSchemas: () =>
     request<Record<string, ChannelSchema>>("/config/channels/schemas"),
 
-  getChannelConfig: (channelType: string) =>
+  getChannelConfig: (instanceId: string) =>
     request<ChannelConfig>(
-      `/config/channels/${encodeURIComponent(channelType)}`,
+      `/config/channels/${encodeURIComponent(instanceId)}`,
     ),
 
   createChannelConfig: (body: ChannelConfig) =>
@@ -72,17 +72,17 @@ export const channelApi = {
       body: JSON.stringify(body),
     }),
 
-  updateChannelConfig: (channelType: string, body: ChannelConfig) =>
+  updateChannelConfig: (instanceId: string, body: ChannelConfig) =>
     request<ChannelConfig>(
-      `/config/channels/${encodeURIComponent(channelType)}`,
+      `/config/channels/${encodeURIComponent(instanceId)}`,
       {
         method: "PUT",
         body: JSON.stringify(body),
       },
     ),
 
-  deleteChannelConfig: (channelType: string) =>
-    request<void>(`/config/channels/${encodeURIComponent(channelType)}`, {
+  deleteChannelConfig: (instanceId: string) =>
+    request<void>(`/config/channels/${encodeURIComponent(instanceId)}`, {
       method: "DELETE",
     }),
 
@@ -92,10 +92,7 @@ export const channelApi = {
       body: JSON.stringify(body),
     }),
 
-  checkChannelConflict: (
-    channelName: string,
-    body: SingleChannelConfig,
-  ) =>
+  checkChannelConflict: (channelName: string, body: SingleChannelConfig) =>
     request<ChannelConflictResponse>(
       `/config/channels/${encodeURIComponent(channelName)}/conflict-check`,
       {

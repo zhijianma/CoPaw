@@ -23,6 +23,7 @@ async def test_saved_config_targets_the_channel_type() -> None:
         name="Sales",
         channels={
             "feishu": {
+                "type": "feishu",
                 "name": "Main",
                 "enabled": False,
                 "settings": {"app_id": "main"},
@@ -30,6 +31,7 @@ async def test_saved_config_targets_the_channel_type() -> None:
         },
     )
     request = MagicMock()
+    request.query_params = {}
 
     with patch(
         "qwenpaw.app.agent_context.get_agent_for_request",
@@ -42,10 +44,48 @@ async def test_saved_config_targets_the_channel_type() -> None:
     assert config["enabled"] is False
 
 
+@pytest.mark.asyncio
+async def test_saved_config_targets_an_explicit_instance() -> None:
+    from qwenpaw.app.channels.qrcode_auth_handler import (
+        _saved_channel_config,
+    )
+
+    agent = MagicMock()
+    agent.config = AgentProfileConfig(
+        id="sales",
+        name="Sales",
+        channels={
+            "feishu": {
+                "type": "feishu",
+                "name": "Main",
+                "settings": {"app_id": "main"},
+            },
+            "feishu-backup": {
+                "type": "feishu",
+                "name": "Backup",
+                "settings": {"app_id": "backup"},
+            },
+        },
+    )
+    request = MagicMock()
+    request.query_params = {"instance_id": "feishu-backup"}
+
+    with patch(
+        "qwenpaw.app.agent_context.get_agent_for_request",
+        new=AsyncMock(return_value=agent),
+    ):
+        config = await _saved_channel_config(request, "feishu")
+
+    assert config is not None
+    assert config["app_id"] == "backup"
+
+
 @pytest.fixture
 def mock_request():
     """Mock FastAPI Request object."""
-    return MagicMock()
+    request = MagicMock()
+    request.query_params = {}
+    return request
 
 
 @pytest.fixture

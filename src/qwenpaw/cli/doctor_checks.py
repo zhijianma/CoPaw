@@ -762,12 +762,12 @@ def _effective_channels_mcp(
     except Exception:  # pylint: disable=broad-exception-caught
         agent = None
     if agent is not None:
-        for channel_type, channel in agent.channels.items():
+        for instance_id, channel in agent.channels.items():
             if not channel.enabled:
                 continue
-            ch[channel_type] = (
-                channel_type,
-                channel.typed_config(channel_type),
+            ch[instance_id] = (
+                channel.type,
+                channel.typed_config(channel.type),
             )
     mcp = cfg.mcp
     if raw is None:

@@ -184,8 +184,35 @@ class BaseChannel(ABC):
         workspace_dir: Path,
         filename: str,
     ) -> Path:
-        """Return the state path for the Agent's single Channel config."""
-        return workspace_dir / filename
+        """Return compatible primary or isolated secondary state path."""
+        identity = getattr(self, "_channel_identity", None)
+        if identity is None or not hasattr(identity, "state_dir"):
+            return workspace_dir / filename
+        state_dir = identity.state_dir(workspace_dir)
+        state_dir.mkdir(parents=True, exist_ok=True)
+        return state_dir / filename
+
+    def bind_identity(self, identity: Any) -> None:
+        """Bind the stable instance identity assigned by the manager."""
+        self._channel_identity = identity
+        self._on_identity_bound()
+
+    def _on_identity_bound(self) -> None:
+        """Reload constructor-time state after an instance is assigned."""
+
+    def runtime_session_id(self, platform_session_id: str) -> str:
+        """Return the persisted session identity for this instance."""
+        identity = getattr(self, "_channel_identity", None)
+        if identity is None or not hasattr(identity, "runtime_session_id"):
+            return platform_session_id
+        return identity.runtime_session_id(platform_session_id)
+
+    def platform_session_id(self, runtime_session_id: str) -> str:
+        """Return the adapter-native session identity for this instance."""
+        identity = getattr(self, "_channel_identity", None)
+        if identity is None or not hasattr(identity, "platform_session_id"):
+            return runtime_session_id
+        return identity.platform_session_id(runtime_session_id)
 
     def on_runtime_bound(self) -> None:
         """Refresh workspace-dependent state after manager binding."""
@@ -552,15 +579,23 @@ class BaseChannel(ABC):
             request: AgentRequest
             payload: Original payload
         """
-        session_id = getattr(request, "session_id", "") or ""
+        platform_session_id = getattr(request, "session_id", "") or ""
+        session_id = self.runtime_session_id(platform_session_id)
         user_id = getattr(request, "user_id", "") or ""
         channel_id = getattr(request, "channel", self.channel)
+        identity = getattr(self, "_channel_identity", None)
+        chat_meta = (
+            {"channel_instance_id": identity.instance_id}
+            if identity is not None and not identity.is_primary
+            else None
+        )
 
         chat = await self._workspace.chat_manager.get_or_create_chat(
             session_id,
             user_id,
             channel_id,
             name=self._extract_chat_name(payload),
+            meta=chat_meta,
         )
 
         logger.info(

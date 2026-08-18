@@ -375,8 +375,9 @@ class ConsoleTransportConfig(BaseChannelConfig):
 
 
 class AgentChannelConfig(BaseModel):
-    """The single configuration for one Channel type owned by an agent."""
+    """One named Channel instance owned by an agent."""
 
+    type: str = Field(min_length=1)
     name: str = Field(min_length=1)
     enabled: bool = True
     settings: dict[str, Any] = Field(default_factory=dict)
@@ -1882,8 +1883,8 @@ class AgentProfileConfig(BaseModel):
         description="Builtin template used when this agent was created",
     )
     channel_schema_version: int = Field(
-        default=4,
-        ge=4,
+        default=5,
+        ge=5,
         description="Version of the agent-owned Channel configuration schema",
     )
 
@@ -1894,7 +1895,7 @@ class AgentProfileConfig(BaseModel):
     )
     channels: dict[str, AgentChannelConfig] = Field(
         default_factory=dict,
-        description="One configuration per Channel type",
+        description="Channel configurations keyed by stable instance ID",
     )
     mcp: Optional["MCPConfig"] = Field(
         default=None,
@@ -1961,8 +1962,23 @@ class AgentProfileConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_agent_channels(self) -> "AgentProfileConfig":
-        for channel_type, channel in self.channels.items():
-            channel.validate_for_type(channel_type)
+        channel_types = set()
+        for instance_id, channel in self.channels.items():
+            if not re.fullmatch(
+                r"[a-zA-Z0-9][a-zA-Z0-9._-]*",
+                instance_id,
+            ):
+                raise ValueError(
+                    f"Invalid Channel instance ID: {instance_id}",
+                )
+            channel.validate_for_type(channel.type)
+            channel_types.add(channel.type)
+        for channel_type in channel_types:
+            primary = self.channels.get(channel_type)
+            if primary is None or primary.type != channel_type:
+                raise ValueError(
+                    f"Channel type {channel_type} has no primary instance",
+                )
         return self
 
 

@@ -84,8 +84,8 @@ async def list_channels(request: Request) -> list[dict[str, Any]]:
 
     agent = await get_agent_for_request(request)
     return [
-        {"type": channel_type, **channel.model_dump(mode="json")}
-        for channel_type, channel in ChannelConfigService(
+        {"id": instance_id, **channel.model_dump(mode="json")}
+        for instance_id, channel in ChannelConfigService(
             agent.config,
         ).list()
     ]
@@ -100,7 +100,7 @@ async def create_channel_config(
     request: Request,
     body: dict[str, Any] = Body(...),
 ) -> dict[str, Any]:
-    """Create the only configuration for one Channel type."""
+    """Create a primary-compatible or secondary Channel instance."""
     from ...config.config import save_agent_config
     from ..agent_context import get_agent_for_request
 
@@ -109,7 +109,7 @@ async def create_channel_config(
     payload = dict(body)
     channel_type = str(payload.pop("type", "") or "")
     try:
-        channel = ChannelConfigService(agent_config).create(
+        instance_id, channel = ChannelConfigService(agent_config).create(
             channel_type,
             payload,
         )
@@ -117,7 +117,7 @@ async def create_channel_config(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     save_agent_config(agent.agent_id, agent_config)
     schedule_agent_reload(request, agent.agent_id)
-    return {"type": channel_type, **channel.model_dump(mode="json")}
+    return {"id": instance_id, **channel.model_dump(mode="json")}
 
 
 @router.get(
@@ -374,7 +374,7 @@ async def get_channel(
             status_code=404,
             detail=f"Channel '{channel_id}' is not configured",
         )
-    return {"type": channel_id, **channel.model_dump(mode="json")}
+    return {"id": channel_id, **channel.model_dump(mode="json")}
 
 
 @router.post(
@@ -405,12 +405,16 @@ async def check_channel_conflict(
             detail=f"Channel '{channel_name}' not found",
         )
 
-    if not single_channel_config.get("enabled", False):
+    proposed_config = dict(single_channel_config)
+    edited_instance_id = str(
+        proposed_config.pop("_instance_id", "") or "",
+    )
+    if not proposed_config.get("enabled", False):
         return ChannelConflictResponse(conflict=False)
 
     proposed_identity = get_channel_bot_identity(
         channel_name,
-        single_channel_config,
+        proposed_config,
     )
     if proposed_identity is None:
         return ChannelConflictResponse(conflict=False)
@@ -420,14 +424,16 @@ async def check_channel_conflict(
     conflicts = []
 
     for agent_id, workspace in list(manager.agents.items()):
-        if agent_id == current_agent.agent_id:
-            continue
-        channel = workspace.config.channels.get(channel_name)
-        matching_configs = (
-            [{**channel.settings, "enabled": channel.enabled}]
-            if channel is not None and channel.enabled
-            else []
-        )
+        matching_configs = [
+            {**channel.settings, "enabled": channel.enabled}
+            for instance_id, channel in workspace.config.channels.items()
+            if channel.type == channel_name
+            and channel.enabled
+            and not (
+                agent_id == current_agent.agent_id
+                and instance_id == edited_instance_id
+            )
+        ]
         if not any(
             get_channel_bot_identity(channel_name, value) == proposed_identity
             for value in matching_configs
@@ -469,12 +475,6 @@ async def put_channel(
     agent = await get_agent_for_request(request)
     agent_config = agent.config.model_copy(deep=True)
     payload = dict(body)
-    body_type = payload.pop("type", channel_id)
-    if body_type != channel_id:
-        raise HTTPException(
-            status_code=422,
-            detail="Channel type cannot be changed",
-        )
     try:
         channel = ChannelConfigService(agent_config).update(
             channel_id,
@@ -489,7 +489,7 @@ async def put_channel(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     save_agent_config(agent.agent_id, agent_config)
     schedule_agent_reload(request, agent.agent_id)
-    return {"type": channel_id, **channel.model_dump(mode="json")}
+    return {"id": channel_id, **channel.model_dump(mode="json")}
 
 
 @router.delete(
@@ -514,6 +514,8 @@ async def delete_channel(
             status_code=404,
             detail=f"Channel '{channel_id}' is not configured",
         ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     save_agent_config(agent.agent_id, agent_config)
     schedule_agent_reload(request, agent.agent_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

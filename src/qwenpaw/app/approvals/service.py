@@ -125,6 +125,15 @@ class ApprovalService:
                 if is_spawn_child
                 else pending.session_id
             )
+            resolve_platform_session = getattr(
+                channel_instance,
+                "platform_session_id",
+                None,
+            )
+            if callable(resolve_platform_session):
+                delivery_session_id = resolve_platform_session(
+                    delivery_session_id,
+                )
             await channel_instance.send_approval_notification(
                 session_id=delivery_session_id,
                 user_id=pending.user_id,

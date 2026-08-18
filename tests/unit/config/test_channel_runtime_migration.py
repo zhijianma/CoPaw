@@ -60,7 +60,7 @@ def _install(tmp_path: Path) -> tuple[Path, Path]:
     return config_path, agent_path
 
 
-def test_migrates_v2_instance_list_to_type_keyed_configuration(
+def test_migrates_v2_instance_list_to_instance_keyed_configuration(
     tmp_path: Path,
 ) -> None:
     config_path, agent_path = _install(tmp_path)
@@ -80,9 +80,10 @@ def test_migrates_v2_instance_list_to_type_keyed_configuration(
     migrate_channel_configuration(config_path)
 
     migrated = _read_json(agent_path)
-    assert migrated["channel_schema_version"] == 4
+    assert migrated["channel_schema_version"] == 5
     assert migrated["channels"] == {
         "telegram": {
+            "type": "telegram",
             "name": "Main Bot",
             "enabled": True,
             "settings": {"bot_token": "secret"},
@@ -91,7 +92,7 @@ def test_migrates_v2_instance_list_to_type_keyed_configuration(
     AgentProfileConfig.model_validate(migrated)
 
 
-def test_migration_rejects_multiple_configs_of_same_type_without_writes(
+def test_migration_keeps_multiple_configs_of_same_type(
     tmp_path: Path,
 ) -> None:
     config_path, agent_path = _install(tmp_path)
@@ -112,12 +113,161 @@ def test_migration_rejects_multiple_configs_of_same_type_without_writes(
         },
     ]
     _write_json(agent_path, agent)
-    original = agent_path.read_bytes()
+    migrate_channel_configuration(config_path)
 
-    with pytest.raises(ChannelMigrationError, match="multiple telegram"):
+    migrated = _read_json(agent_path)
+    assert migrated["channels"] == {
+        "telegram": {
+            "type": "telegram",
+            "name": "Main",
+            "enabled": True,
+            "settings": {"bot_token": "main"},
+        },
+        "telegram-backup": {
+            "type": "telegram",
+            "name": "Backup",
+            "enabled": True,
+            "settings": {"bot_token": "backup"},
+        },
+    }
+
+
+def test_v2_migration_rejects_duplicate_legacy_instance_ids(
+    tmp_path: Path,
+) -> None:
+    config_path, agent_path = _install(tmp_path)
+    agent = _read_json(agent_path)
+    agent["channel_schema_version"] = 2
+    agent["channels"] = [
+        {
+            "id": "shared-instance",
+            "type": "telegram",
+            "settings": {"bot_token": "main"},
+        },
+        {
+            "id": "shared-instance",
+            "type": "feishu",
+            "settings": {},
+        },
+    ]
+    _write_json(agent_path, agent)
+
+    with pytest.raises(
+        ChannelMigrationError,
+        match="Duplicate Channel instance ID: shared-instance",
+    ):
         migrate_channel_configuration(config_path)
 
-    assert agent_path.read_bytes() == original
+
+def test_v2_secondary_history_gets_an_instance_chat_index(
+    tmp_path: Path,
+) -> None:
+    config_path, agent_path = _install(tmp_path)
+    workspace = agent_path.parent
+    agent = _read_json(agent_path)
+    agent["channel_schema_version"] = 2
+    agent["channels"] = [
+        {
+            "id": "feishu-main",
+            "type": "feishu",
+            "name": "Main",
+            "settings": {},
+        },
+        {
+            "id": "feishu-backup",
+            "type": "feishu",
+            "name": "Backup",
+            "settings": {},
+        },
+    ]
+    _write_json(agent_path, agent)
+    _write_json(
+        workspace / "chats.json",
+        {
+            "version": 1,
+            "chats": [
+                {
+                    "id": "legacy-chat",
+                    "name": "Feishu",
+                    "session_id": "tenant:conversation",
+                    "user_id": "ou-user",
+                    "channel": "feishu",
+                },
+            ],
+        },
+    )
+    session_dir = workspace / "sessions" / "feishu"
+    primary_path = session_dir / session_filename(
+        "feishu-main:tenant:conversation",
+        "ou-user",
+    )
+    secondary_path = session_dir / session_filename(
+        "feishu-backup:tenant:conversation",
+        "ou-user",
+    )
+    _write_json(primary_path, {"agent": {"state": {"context": []}}})
+    _write_json(secondary_path, {"agent": {"state": {"context": []}}})
+
+    migrate_channel_configuration(config_path)
+
+    chats = _read_json(workspace / "chats.json")["chats"]
+    secondary = next(
+        chat
+        for chat in chats
+        if chat["session_id"] == "feishu-backup:tenant:conversation"
+    )
+    assert secondary["channel"] == "feishu"
+    assert secondary["meta"]["channel_instance_id"] == "feishu-backup"
+    assert secondary_path.exists()
+
+
+def test_v4_to_v5_does_not_rewrite_chat_or_session_files(
+    tmp_path: Path,
+) -> None:
+    config_path, agent_path = _install(tmp_path)
+    workspace = agent_path.parent
+    agent = _read_json(agent_path)
+    agent["channel_schema_version"] = 4
+    agent["channels"] = {
+        "feishu": {
+            "name": "Feishu",
+            "enabled": True,
+            "settings": {},
+        },
+    }
+    _write_json(agent_path, agent)
+    chats_path = workspace / "chats.json"
+    session_path = (
+        workspace
+        / "sessions"
+        / "feishu"
+        / session_filename("conversation", "ou-user")
+    )
+    _write_json(
+        chats_path,
+        {
+            "version": 1,
+            "chats": [
+                {
+                    "id": "chat-id",
+                    "name": "Feishu",
+                    "session_id": "conversation",
+                    "user_id": "ou-user",
+                    "channel": "feishu",
+                },
+            ],
+        },
+    )
+    _write_json(session_path, {"agent": {"state": {"context": []}}})
+    chats_before = chats_path.read_bytes()
+    session_before = session_path.read_bytes()
+
+    migrate_channel_configuration(config_path)
+
+    migrated = _read_json(agent_path)
+    assert migrated["channels"]["feishu"]["type"] == "feishu"
+    assert chats_path.read_bytes() == chats_before
+    assert session_path.read_bytes() == session_before
 
 
 def test_migration_merges_instance_qualified_session_history(
@@ -218,7 +368,7 @@ def test_migration_restores_instance_state_to_agent_workspace(
     assert not instance_path.exists()
 
 
-def test_v4_repairs_sessions_and_state_left_by_v3_migration(
+def test_v4_to_v5_leaves_session_and_state_files_untouched(
     tmp_path: Path,
 ) -> None:
     config_path, agent_path = _install(tmp_path)
@@ -281,21 +431,17 @@ def test_v4_repairs_sessions_and_state_left_by_v3_migration(
     migrate_channel_configuration(config_path)
 
     migrated = _read_json(agent_path)
-    assert migrated["channel_schema_version"] == 4
-    assert not qualified_path.exists()
+    assert migrated["channel_schema_version"] == 5
+    assert migrated["channels"]["feishu"]["type"] == "feishu"
+    assert qualified_path.exists()
     assert [
         item["id"]
         for item in _read_json(canonical_path)["agent"]["state"]["context"]
-    ] == ["old", "new"]
+    ] == ["old"]
     chats = _read_json(workspace / "chats.json")["chats"]
-    assert [
-        (chat["session_id"], chat["user_id"], chat["channel"])
-        for chat in chats
-    ] == [("conversation", "ou-user", "feishu")]
-    assert _read_json(workspace / "feishu_receive_ids.json") == {
-        "event": 1,
-    }
-    assert not instance_state.exists()
+    assert chats == []
+    assert not (workspace / "feishu_receive_ids.json").exists()
+    assert instance_state.exists()
 
 
 def test_migrates_legacy_channel_map_into_type_keyed_configs(
@@ -330,6 +476,7 @@ def test_migrates_legacy_channel_map_into_type_keyed_configs(
     assert list(migrated["channels"]) == ["dingtalk", "telegram"]
     telegram = migrated["channels"]["telegram"]
     assert telegram == {
+        "type": "telegram",
         "name": "Telegram",
         "enabled": True,
         "settings": {
@@ -361,7 +508,7 @@ def test_migrates_onebot_download_limit_without_data_loss(
     assert channels["onebot"]["settings"]["media_download_max_mb"] == 75
 
 
-def test_routing_migration_rejects_multiple_configs_of_same_type(
+def test_routing_migration_keeps_multiple_configs_of_same_type(
     tmp_path: Path,
 ) -> None:
     config_path, agent_path = _install(tmp_path)
@@ -401,14 +548,12 @@ def test_routing_migration_rejects_multiple_configs_of_same_type(
     }
     _write_json(config_path, root)
 
-    original_root = config_path.read_bytes()
-    original_agent = agent_path.read_bytes()
+    migrate_channel_configuration(config_path)
 
-    with pytest.raises(ChannelMigrationError, match="multiple telegram"):
-        migrate_channel_configuration(config_path)
-
-    assert config_path.read_bytes() == original_root
-    assert agent_path.read_bytes() == original_agent
+    channels = _read_json(agent_path)["channels"]
+    assert list(channels) == ["telegram", "telegram-backup"]
+    assert channels["telegram"]["enabled"] is True
+    assert channels["telegram-backup"]["enabled"] is False
 
 
 def test_migrates_projected_endpoint_to_channel_type(
@@ -506,6 +651,33 @@ def test_migration_assigns_root_map_to_active_agent(tmp_path: Path) -> None:
     )
 
 
+def test_v4_agent_is_authoritative_over_stale_root_channels(
+    tmp_path: Path,
+) -> None:
+    config_path, agent_path = _install(tmp_path)
+    root = _read_json(config_path)
+    root["channels"] = {
+        "feishu": {"enabled": False, "app_id": "stale"},
+    }
+    _write_json(config_path, root)
+    agent = _read_json(agent_path)
+    agent["channel_schema_version"] = 4
+    agent["channels"] = {
+        "feishu": {
+            "name": "Current",
+            "enabled": True,
+            "settings": {"app_id": "current"},
+        },
+    }
+    _write_json(agent_path, agent)
+
+    migrate_channel_configuration(config_path)
+
+    assert "channels" not in _read_json(config_path)
+    migrated = _read_json(agent_path)
+    assert migrated["channels"]["feishu"]["settings"]["app_id"] == ("current")
+
+
 def test_migration_is_idempotent(tmp_path: Path) -> None:
     config_path, _ = _install(tmp_path)
     root = _read_json(config_path)
@@ -554,7 +726,7 @@ def test_migration_rejects_unbound_endpoint_without_writes(
     assert agent_path.read_bytes() == original_agent
 
 
-def test_migration_rejects_conflicting_instance_without_writes(
+def test_migration_preserves_conflicting_type_as_secondary_instance(
     tmp_path: Path,
 ) -> None:
     config_path, agent_path = _install(tmp_path)
@@ -589,14 +761,11 @@ def test_migration_rejects_conflicting_instance_without_writes(
         ],
     }
     _write_json(config_path, root)
-    original_root = config_path.read_bytes()
-    original_agent = agent_path.read_bytes()
+    migrate_channel_configuration(config_path)
 
-    with pytest.raises(ChannelMigrationError, match="multiple telegram"):
-        migrate_channel_configuration(config_path)
-
-    assert config_path.read_bytes() == original_root
-    assert agent_path.read_bytes() == original_agent
+    channels = _read_json(agent_path)["channels"]
+    assert channels["telegram"]["settings"]["bot_token"] == "existing"
+    assert channels["telegram-main"]["settings"]["bot_token"] == ("different")
 
 
 def test_migration_creates_recoverable_backup_manifest(

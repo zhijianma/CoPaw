@@ -33,16 +33,14 @@ describe("useChannels", () => {
   it("loads channels, Console, types, and catalog", async () => {
     vi.mocked(api.listChannels).mockResolvedValue([
       {
+        id: "telegram",
         type: "telegram",
         name: "Main",
         enabled: true,
         settings: {},
       },
     ]);
-    vi.mocked(api.listChannelTypes).mockResolvedValue([
-      "telegram",
-      "console",
-    ]);
+    vi.mocked(api.listChannelTypes).mockResolvedValue(["telegram", "console"]);
     vi.mocked(api.listChannelCatalog).mockResolvedValue([
       {
         key: "console",
@@ -69,18 +67,20 @@ describe("useChannels", () => {
     expect(result.current.isBuiltin("telegram")).toBe(true);
   });
 
-  it("replaces a saved configuration of the same type", async () => {
+  it("keeps multiple configurations of the same type by id", async () => {
     const { result } = renderHook(() => useChannels());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     act(() => {
       result.current.applyChannelConfig({
+        id: "telegram",
         type: "telegram",
         name: "Main",
         enabled: true,
         settings: {},
       });
       result.current.applyChannelConfig({
+        id: "telegram-backup",
         type: "telegram",
         name: "Backup",
         enabled: false,
@@ -88,8 +88,8 @@ describe("useChannels", () => {
       });
     });
 
-    expect(result.current.channels).toHaveLength(1);
-    expect(result.current.channels[0].name).toBe("Backup");
+    expect(result.current.channels).toHaveLength(2);
+    expect(result.current.channels[1].name).toBe("Backup");
   });
 
   it("does not let an older fetch overwrite a saved config", async () => {
@@ -106,6 +106,7 @@ describe("useChannels", () => {
     act(() => {
       refresh = result.current.fetchChannels();
       result.current.applyChannelConfig({
+        id: "telegram",
         type: "telegram",
         name: "Saved",
         enabled: true,

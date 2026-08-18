@@ -43,7 +43,12 @@ async def _saved_channel_config(
     from ..agent_context import get_agent_for_request
 
     agent = await get_agent_for_request(request)
-    channel = agent.config.channels.get(channel_key)
+    instance_id = str(
+        request.query_params.get("instance_id") or channel_key,
+    )
+    channel = agent.config.channels.get(instance_id)
+    if channel is not None and channel.type != channel_key:
+        channel = None
     if channel is None:
         return None
     return {**channel.settings, "enabled": channel.enabled}

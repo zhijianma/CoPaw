@@ -223,6 +223,11 @@ class YuanbaoChannel(BaseChannel):
         # Typing indicator keepalive tasks: session_id → Task
         self._typing_tasks: Dict[str, asyncio.Task] = {}
 
+    def _on_identity_bound(self) -> None:
+        """Reload the session map from the instance-specific state path."""
+        self._session_map.clear()
+        self._load_session_map_from_disk()
+
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------

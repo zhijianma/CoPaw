@@ -14,6 +14,7 @@ export interface BaseChannelConfig {
 }
 
 export interface ChannelConfig {
+  id: string;
   type: string;
   name: string;
   enabled: boolean;

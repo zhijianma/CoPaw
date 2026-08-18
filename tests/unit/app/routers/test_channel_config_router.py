@@ -23,6 +23,7 @@ def agent_workspace() -> MagicMock:
         name="Default",
         channels={
             "telegram": {
+                "type": "telegram",
                 "name": "Main Bot",
                 "settings": {"bot_token": "secret"},
             },
@@ -52,6 +53,7 @@ def test_list_returns_channel_configurations(client: TestClient) -> None:
     assert response.status_code == 200
     assert response.json() == [
         {
+            "id": "telegram",
             "type": "telegram",
             "name": "Main Bot",
             "enabled": True,
@@ -60,21 +62,24 @@ def test_list_returns_channel_configurations(client: TestClient) -> None:
     ]
 
 
-def test_create_rejects_second_configuration_of_same_type(
+def test_create_adds_second_configuration_of_same_type(
     client: TestClient,
 ) -> None:
-    response = client.post(
-        "/api/config/channels",
-        json={
-            "type": "telegram",
-            "name": "Backup Bot",
-            "enabled": False,
-            "settings": {"bot_token": "backup"},
-        },
-    )
+    with patch("qwenpaw.config.config.save_agent_config") as save:
+        response = client.post(
+            "/api/config/channels",
+            json={
+                "type": "telegram",
+                "name": "Backup Bot",
+                "enabled": False,
+                "settings": {"bot_token": "backup"},
+            },
+        )
 
-    assert response.status_code == 422
-    assert "already configured" in response.text
+    assert response.status_code == 201, response.text
+    assert response.json()["id"].startswith("telegram-")
+    assert response.json()["type"] == "telegram"
+    assert len(save.call_args.args[1].channels) == 2
 
 
 def test_update_uses_channel_type(client: TestClient) -> None:
@@ -114,8 +119,24 @@ def test_conflict_check_ignores_current_agent(
 ) -> None:
     response = client.post(
         "/api/config/channels/telegram/conflict-check",
-        json={"enabled": True, "bot_token": "secret"},
+        json={
+            "enabled": True,
+            "bot_token": "secret",
+            "_instance_id": "telegram",
+        },
     )
 
     assert response.status_code == 200
     assert response.json()["conflict"] is False
+
+
+def test_conflict_check_rejects_duplicate_instance_bot(
+    client: TestClient,
+) -> None:
+    response = client.post(
+        "/api/config/channels/telegram/conflict-check",
+        json={"enabled": True, "bot_token": "secret"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["conflict"] is True

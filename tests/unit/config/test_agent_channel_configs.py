@@ -15,11 +15,13 @@ def test_agent_owns_one_configuration_per_channel_type() -> None:
         name="Sales",
         channels={
             "telegram": {
+                "type": "telegram",
                 "name": "Sales Bot",
                 "enabled": True,
                 "settings": {"bot_token": "token"},
             },
             "feishu": {
+                "type": "feishu",
                 "name": "Sales Feishu",
                 "enabled": False,
                 "settings": {},
@@ -37,6 +39,7 @@ def test_builtin_channel_settings_are_typed_and_normalized() -> None:
         name="Sales",
         channels={
             "telegram": {
+                "type": "telegram",
                 "name": "Main Bot",
                 "settings": {"tool_call_max_length": "42"},
             },
@@ -56,6 +59,7 @@ def test_channel_settings_cannot_override_enabled() -> None:
             name="Sales",
             channels={
                 "telegram": {
+                    "type": "telegram",
                     "name": "Main Bot",
                     "settings": {"enabled": False},
                 },
@@ -70,6 +74,7 @@ def test_console_cannot_be_configured_as_channel() -> None:
             name="Sales",
             channels={
                 "console": {
+                    "type": "console",
                     "name": "Console",
                     "settings": {},
                 },

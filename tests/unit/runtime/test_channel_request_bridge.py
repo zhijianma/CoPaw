@@ -59,3 +59,18 @@ def test_bridge_preserves_an_explicit_reply_target() -> None:
 
     assert turn.reply_target is target
     assert turn.context["reply_target"] is target
+
+
+def test_secondary_bridge_qualifies_runtime_session_only() -> None:
+    bridge = ChannelRequestBridge(
+        "sales",
+        "telegram",
+        "telegram-backup",
+    )
+
+    turn = bridge.build(_request())
+
+    assert turn.session_id == "telegram-backup:chat-42"
+    assert turn.source.channel_type == "telegram"
+    assert turn.context["channel_instance_id"] == "telegram-backup"
+    assert turn.reply_target.conversation_id == "chat-42"

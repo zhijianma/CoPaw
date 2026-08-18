@@ -42,6 +42,7 @@ function ChannelsPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [activeType, setActiveType] = useState<ChannelKey | null>(null);
+  const [activeInstanceId, setActiveInstanceId] = useState<string | null>(null);
   const [activeConfigured, setActiveConfigured] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [aclDrawerOpen, setAclDrawerOpen] = useState(false);
@@ -83,8 +84,10 @@ function ChannelsPage() {
     configured: boolean,
     config: Record<string, unknown>,
     name: string,
+    instanceId: string | null = null,
   ) => {
     setActiveType(type);
+    setActiveInstanceId(instanceId);
     setActiveConfigured(configured);
     form.resetFields();
     form.setFieldsValue(
@@ -99,6 +102,7 @@ function ChannelsPage() {
       true,
       { ...channel.settings, enabled: channel.enabled },
       channel.name,
+      channel.id,
     );
   };
 
@@ -110,15 +114,14 @@ function ChannelsPage() {
   const closeDrawer = () => {
     setDrawerOpen(false);
     setActiveType(null);
+    setActiveInstanceId(null);
     setActiveConfigured(false);
   };
 
   const handleSubmit = async (values: Record<string, unknown>) => {
     if (!activeType) return;
     const { configuration_name, isBuiltin: _builtin, ...settings } = values;
-    const name = String(
-      configuration_name || getChannelLabel(activeType, t),
-    );
+    const name = String(configuration_name || getChannelLabel(activeType, t));
     setSaving(true);
     try {
       if (activeType === "console") {
@@ -128,26 +131,25 @@ function ChannelsPage() {
         const enabled = settings.enabled === true;
         delete settings.enabled;
         if (enabled) {
-          const conflict = await api.checkChannelConflict(
-            activeType,
-            {
-              ...settings,
-              enabled,
-            } as never,
-          );
+          const conflict = await api.checkChannelConflict(activeType, {
+            ...settings,
+            enabled,
+            _instance_id: activeInstanceId || "",
+          } as never);
           if (conflict.conflict) {
             message.error(t("channels.botConflictTitle"));
             return;
           }
         }
         const value = {
+          id: activeInstanceId || "",
           type: activeType,
           name,
           enabled,
           settings,
         };
         const persisted = activeConfigured
-          ? await api.updateChannelConfig(activeType, value)
+          ? await api.updateChannelConfig(activeInstanceId!, value)
           : await api.createChannelConfig(value);
         applyChannelConfig(persisted);
       }
@@ -162,7 +164,13 @@ function ChannelsPage() {
   };
 
   const handleDelete = () => {
-    if (!activeType || activeType === "console" || !activeConfigured) return;
+    if (
+      !activeType ||
+      !activeInstanceId ||
+      activeType === "console" ||
+      !activeConfigured
+    )
+      return;
     modal.confirm({
       centered: true,
       title: t("common.delete"),
@@ -171,8 +179,8 @@ function ChannelsPage() {
       onOk: async () => {
         setDeleting(true);
         try {
-          await api.deleteChannelConfig(activeType);
-          removeChannelConfig(activeType);
+          await api.deleteChannelConfig(activeInstanceId);
+          removeChannelConfig(activeInstanceId);
           closeDrawer();
         } finally {
           setDeleting(false);
@@ -187,8 +195,16 @@ function ChannelsPage() {
     { key: "custom", label: t("channels.custom") },
   ];
   const activeConfig = activeConfigured
-    ? channels.find((item) => item.type === activeType)
+    ? channels.find((item) => item.id === activeInstanceId)
     : undefined;
+  const primaryHasSecondaries = Boolean(
+    activeConfig &&
+      activeConfig.id === activeConfig.type &&
+      channels.some(
+        (item) =>
+          item.type === activeConfig.type && item.id !== activeConfig.id,
+      ),
+  );
 
   return (
     <div className={styles.channelsPage}>
@@ -255,7 +271,7 @@ function ChannelsPage() {
                 )}
                 {enabledChannels.map((channel) => (
                   <ChannelCard
-                    key={channel.type}
+                    key={channel.id}
                     channelKey={channel.type as ChannelKey}
                     displayName={channel.name}
                     config={{
@@ -290,7 +306,7 @@ function ChannelsPage() {
                 <div className={styles.channelsGrid}>
                   {disabledChannels.map((channel) => (
                     <ChannelCard
-                      key={channel.type}
+                      key={channel.id}
                       channelKey={channel.type as ChannelKey}
                       displayName={channel.name}
                       config={{
@@ -307,9 +323,6 @@ function ChannelsPage() {
               <div className={styles.availableGrid}>
                 {orderedTypes
                   .filter((type) => {
-                    if (channels.some((channel) => channel.type === type)) {
-                      return false;
-                    }
                     if (filter === "builtin") return isBuiltin(type);
                     if (filter === "custom") return !isBuiltin(type);
                     return true;
@@ -330,11 +343,16 @@ function ChannelsPage() {
       <ChannelDrawer
         open={drawerOpen}
         activeKey={activeType}
+        activeInstanceId={activeInstanceId}
         activeLabel={activeType ? getChannelLabel(activeType, t) : ""}
         form={form}
         saving={saving}
         deleting={deleting}
-        canDelete={Boolean(activeConfigured && activeType !== "console")}
+        canDelete={Boolean(
+          activeConfigured &&
+            activeType !== "console" &&
+            !primaryHasSecondaries,
+        )}
         initialValues={
           activeConfig
             ? { ...activeConfig.settings, enabled: activeConfig.enabled }

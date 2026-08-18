@@ -97,7 +97,18 @@ class CronExecutor:
         assert job.request is not None
         req: Dict[str, Any] = job.request.model_dump(mode="json")
 
-        req["channel"] = target_channel
+        agent_config = getattr(self._workspace, "config", None)
+        if agent_config is None:
+            agent_config = getattr(self._workspace, "_config", None)
+        channel_config = (
+            getattr(agent_config, "channels", {}).get(target_channel)
+            if agent_config is not None
+            else None
+        )
+        storage_channel = (
+            channel_config.type if channel_config else target_channel
+        )
+        req["channel"] = storage_channel
         req["user_id"] = target_user_id or "cron"
         raw_context = req.get("request_context")
         request_context = (
@@ -134,9 +145,14 @@ class CronExecutor:
                 _chat_spec = await chat_manager.get_or_create_chat(
                     session_id=req["session_id"],
                     user_id=req.get("user_id", "cron"),
-                    channel=target_channel,
+                    channel=storage_channel,
                     name=job.name or f"Cron: {job.id}",
                     source="cron",
+                    meta=(
+                        {"channel_instance_id": target_channel}
+                        if storage_channel != target_channel
+                        else None
+                    ),
                 )
             except Exception:
                 logger.debug(
@@ -150,7 +166,7 @@ class CronExecutor:
             runner=self._workspace,
             session_id=req["session_id"],
             user_id=req["user_id"],
-            channel=target_channel,
+            channel=storage_channel,
         )
         baseline_count = len(baseline_messages)
 
@@ -228,7 +244,7 @@ class CronExecutor:
                 runner=self._workspace,
                 session_id=req["session_id"],
                 user_id=req["user_id"],
-                channel=target_channel,
+                channel=storage_channel,
                 baseline_count=baseline_count,
             )
             await finalize_trace(run_id, status="success")
@@ -257,7 +273,7 @@ class CronExecutor:
                 runner=self._workspace,
                 session_id=req["session_id"],
                 user_id=req["user_id"],
-                channel=target_channel,
+                channel=storage_channel,
                 baseline_count=baseline_count,
             )
             await finalize_trace(
@@ -273,7 +289,7 @@ class CronExecutor:
                 runner=self._workspace,
                 session_id=req["session_id"],
                 user_id=req["user_id"],
-                channel=target_channel,
+                channel=storage_channel,
                 baseline_count=baseline_count,
             )
             await finalize_trace(
@@ -288,7 +304,7 @@ class CronExecutor:
                 runner=self._workspace,
                 session_id=req["session_id"],
                 user_id=req["user_id"],
-                channel=target_channel,
+                channel=storage_channel,
                 baseline_count=baseline_count,
             )
             await finalize_trace(

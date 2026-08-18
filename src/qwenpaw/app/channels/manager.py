@@ -23,6 +23,7 @@ from .command_registry import CommandRegistry
 from .registry import get_channel_registry
 from .unified_queue_manager import UnifiedQueueManager
 from ...config import get_available_channels
+from ...domain.channels.identity import ChannelIdentity
 from ...runtime.channel_request_bridge import ChannelRequestBridge
 
 if TYPE_CHECKING:
@@ -35,6 +36,23 @@ OnLastDispatch = Optional[Callable[[str, str, str], None]]
 
 # Default max size per channel queue
 _CHANNEL_QUEUE_MAXSIZE = 1000
+
+
+def _bind_dispatch_callback(
+    callback: OnLastDispatch,
+    identity: ChannelIdentity,
+) -> Callable[..., None] | None:
+    """Persist the runtime instance ID instead of the adapter type."""
+    if callback is None:
+        return None
+
+    def bound(_channel_type: str, *args: str) -> None:
+        values = list(args)
+        if values:
+            values[-1] = identity.runtime_session_id(values[-1])
+        callback(identity.instance_id, *values)
+
+    return bound
 
 
 async def _process_batch(ch: BaseChannel, batch: List[Any]) -> None:
@@ -100,7 +118,10 @@ class ChannelManager:
 
     @staticmethod
     def _runtime_id(channel: BaseChannel) -> str:
-        """Return the Channel type used as the runtime identity."""
+        """Return the stable instance ID used by runtime coordination."""
+        identity = getattr(channel, "_channel_identity", None)
+        if isinstance(identity, ChannelIdentity):
+            return identity.instance_id
         return channel.channel
 
     @classmethod
@@ -149,7 +170,9 @@ class ChannelManager:
         show_tool_details = getattr(config, "show_tool_details", True)
         channels: list[BaseChannel] = []
         registry = get_channel_registry(surface="channel")
-        for channel_type, channel_config in agent_config.channels.items():
+        for instance_id, channel_config in agent_config.channels.items():
+            channel_type = channel_config.type
+            identity = ChannelIdentity(instance_id, channel_type)
             if not channel_config.enabled or channel_type not in available:
                 continue
             ch_cls = registry.get(channel_type)
@@ -164,7 +187,10 @@ class ChannelManager:
             from_config_kwargs: dict[str, Any] = {
                 "process": process,
                 "config": ch_cfg,
-                "on_reply_sent": on_last_dispatch,
+                "on_reply_sent": _bind_dispatch_callback(
+                    on_last_dispatch,
+                    identity,
+                ),
                 "display_config": ChannelDisplayConfig.from_config(
                     ch_cfg,
                     show_tool_details=show_tool_details,
@@ -192,18 +218,20 @@ class ChannelManager:
 
             try:
                 channel = ch_cls.from_config(**filtered_kwargs)
+                channel.bind_identity(identity)
                 channel.on_runtime_bound()
                 channel.set_request_bridge(
                     ChannelRequestBridge(
                         agent_config.id,
                         channel_type,
+                        instance_id,
                     ),
                 )
                 channels.append(channel)
             except Exception as e:
                 logger.warning(
                     "Failed to initialize channel '%s', skipping: %s",
-                    channel_type,
+                    instance_id,
                     e,
                 )
                 continue
@@ -642,16 +670,26 @@ class ChannelManager:
                     raise RuntimeError(
                         f"No config found for Channel '{channel_name}'",
                     )
-                channel_cfg = channel_config.typed_config(channel_name)
+                channel_cfg = channel_config.typed_config(
+                    channel_config.type,
+                )
 
             # Clone a fresh instance and replace
             new_channel = channel_instance.clone(channel_cfg)
+            if channel_name != "console":
+                new_channel.bind_identity(
+                    ChannelIdentity(
+                        channel_name,
+                        channel_instance.channel,
+                    ),
+                )
             new_channel.on_runtime_bound()
             if channel_name != "console":
                 new_channel.set_request_bridge(
                     ChannelRequestBridge(
                         self._workspace.config.id,
                         channel_instance.channel,
+                        channel_name,
                     ),
                 )
             if self._workspace is not None:
@@ -779,8 +817,14 @@ class ChannelManager:
         ch = await self.get_channel(channel)
         if not ch:
             raise KeyError(f"channel not found: {channel}")
+        identity = getattr(ch, "_channel_identity", None)
+        platform_session_id = (
+            identity.platform_session_id(session_id)
+            if isinstance(identity, ChannelIdentity)
+            else session_id
+        )
         merged_meta = dict(meta or {})
-        merged_meta["session_id"] = session_id
+        merged_meta["session_id"] = platform_session_id
         merged_meta["user_id"] = user_id
         bot_prefix = getattr(ch, "bot_prefix", None) or getattr(
             ch,
@@ -791,7 +835,7 @@ class ChannelManager:
             merged_meta["bot_prefix"] = bot_prefix
         await ch.send_event(
             user_id=user_id,
-            session_id=session_id,
+            session_id=platform_session_id,
             event=event,
             meta=merged_meta,
         )
@@ -812,10 +856,16 @@ class ChannelManager:
         if not ch:
             raise KeyError(f"channel not found: {channel}")
 
-        # Convert (user_id, session_id) into the channel-specific target handle
+        identity = getattr(ch, "_channel_identity", None)
+        platform_session_id = (
+            identity.platform_session_id(session_id)
+            if isinstance(identity, ChannelIdentity)
+            else session_id
+        )
+        # Convert the logical target into the adapter's platform target.
         to_handle = ch.to_handle_from_target(
             user_id=user_id,
-            session_id=session_id,
+            session_id=platform_session_id,
         )
         ch_name = getattr(ch, "channel", channel)
         logger.info(
@@ -838,7 +888,7 @@ class ChannelManager:
         )
         if bot_prefix and "bot_prefix" not in merged_meta:
             merged_meta["bot_prefix"] = bot_prefix
-        merged_meta["session_id"] = session_id
+        merged_meta["session_id"] = platform_session_id
         merged_meta["user_id"] = user_id
 
         # Send as content parts (single text part; use TextContent so channel
