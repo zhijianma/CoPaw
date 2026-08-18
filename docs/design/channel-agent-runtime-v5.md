@@ -184,6 +184,50 @@ AgentProfileConfig
 Registry、CLI、配置 API 和类型目录都从 Catalog 派生。Registry 内的
 `_BUILTIN_SPECS` 只是运行时投影，不再手工维护第二份定义。
 
+### 4.1 配置模型也是唯一字段定义
+
+内置 Channel 的配置字段从 Catalog 指向的 Pydantic `config_model` 派生，
+不再在 CLI 中维护 `_ALL_CHANNEL_CONFIGURATORS`、`configure_feishu()` 等
+逐平台函数，也不再维护单独的敏感字段名单：
+
+```mermaid
+flowchart LR
+    C[BUILTIN_CHANNEL_CATALOG] --> M[Pydantic config_model]
+    M --> V[保存时语义校验]
+    M --> S[JSON Schema / form fields]
+    S --> CLI[通用 CLI Editor]
+    S --> UI[Console 动态表单]
+    M --> R[Adapter typed_config]
+```
+
+CLI 的实例列表直接读取 `AgentProfileConfig.channels`，因此主实例和次实例均可
+显示、编辑、删除和新增；保存统一经过 `ChannelConfigService`，不会绕过实例 ID、
+主实例保护或配置校验。Console 由独立的 `ConsoleTransportConfig` 编辑器处理，
+不再混入外部 Channel configurator。
+
+### 4.2 插件 Channel 扩展契约
+
+新插件通过 `PluginApi.register_channel(..., config_model=MyConfig)` 注册配置模型。
+该模型同时驱动存储校验、CLI 和 Console schema；注册过程自动投影
+`config_fields`，以保持现有 WebUI API 的响应类型不变。示例：
+
+```python
+class MyChannelConfig(BaseModel):
+    endpoint: str
+    api_token: str = ""
+    retries: int = Field(default=3, ge=1)
+
+api.register_channel(
+    MyChannel,
+    label="My Channel",
+    config_model=MyChannelConfig,
+)
+```
+
+旧插件只传 `config_fields` 的调用仍可运行，且原有位置参数顺序保持不变；但它
+只能获得表单元数据和宽松 settings 保存。需要端到端类型校验的新插件必须使用
+`config_model`，避免插件内部、WebUI 和 CLI 各维护一份字段定义。
+
 ## 5. 核心链路
 
 ### 5.1 外部 Channel 入站
@@ -340,9 +384,14 @@ instance envelope 回写成 flat map，形成产品不支持的 mixed 格式。
 - [x] API 与 Console 按实例 ID 寻址
 - [x] Console Envelope 从外部 Channel 转换链路中隔离
 - [x] 内置 Channel 定义集中到 Catalog
+- [x] Channel CLI 由 Catalog/config model 生成，删除逐平台 configurator
+- [x] CLI 支持按 instance_id 编辑、新增和删除同类型实例
+- [x] 插件 config model 同时驱动校验、CLI 和 Console schema
+- [x] 旧插件 `config_fields` 与位置参数 API 保持兼容
 - [x] 迁移器只接受最原始 flat dict
 - [x] 删除开发阶段 list/routing/mixed/session 修复逻辑
 - [x] 原始迁移、API、当前格式加载定向回归：48 passed
+- [x] CLI/Catalog/插件配置模型定向回归：52 passed
 - [x] 未执行 `npm run build`
 
 关键实施提交：

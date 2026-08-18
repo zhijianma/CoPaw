@@ -6,6 +6,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Type
 
+from pydantic import BaseModel
+
 logger = logging.getLogger(__name__)
 
 
@@ -630,6 +632,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
         config_fields: Optional[List[Dict[str, Any]]] = None,
         icon: str = "",
         doc_url: Any = "",
+        config_model: Optional[Type[BaseModel]] = None,
     ) -> None:
         """Register a custom messaging channel.
 
@@ -643,7 +646,8 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             label: Display name shown in the UI (defaults to channel key).
             description: Short description for the UI.
             config_fields: List of config field descriptors for the
-                frontend settings form.  Each dict should contain:
+                frontend settings form. Deprecated compatibility fallback
+                for plugins without ``config_model``. Each dict should contain:
                 - name (str): field key in the config
                 - label (str): display label
                 - type (str): "text" | "password" | "number" | "switch"
@@ -660,27 +664,16 @@ class PluginApi:  # pylint: disable=too-many-public-methods
                 URL string, or a localized mapping such as
                 ``{"zh": "...", "en": "..."}``. The Console shows a "Doc"
                 button only when it resolves to a usable http(s) URL.
+            config_model: Authoritative Pydantic configuration model. Prefer
+                this over ``config_fields`` so storage validation, Console,
+                and CLI all use the same contract.
 
         Example:
             >>> api.register_channel(
             ...     channel_class=SlackChannel,
             ...     label="Slack",
             ...     description="Slack workspace integration",
-            ...     config_fields=[
-            ...         {
-            ...             "name": "bot_token",
-            ...             "label": "Bot Token",
-            ...             "type": "password",
-            ...             "required": True,
-            ...             "placeholder": "xoxb-...",
-            ...         },
-            ...         {
-            ...             "name": "signing_secret",
-            ...             "label": "Signing Secret",
-            ...             "type": "password",
-            ...             "required": True,
-            ...         },
-            ...     ],
+            ...     config_model=SlackChannelConfig,
             ... )
         """
         if not self._registry:
@@ -702,6 +695,7 @@ class PluginApi:  # pylint: disable=too-many-public-methods
             channel_class=channel_class,
             label=label,
             description=description,
+            config_model=config_model,
             config_fields=config_fields,
             icon=icon,
             doc_url=doc_url,

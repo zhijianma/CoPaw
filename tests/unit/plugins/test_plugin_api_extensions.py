@@ -17,6 +17,7 @@ from typing import Any, Dict
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,67 @@ def plugin_api(fresh_registry):
     api = PluginApi("test-plugin", config={}, manifest={"id": "test-plugin"})
     api.set_registry(fresh_registry)
     return api
+
+
+def test_register_channel_accepts_authoritative_config_model(
+    plugin_api,
+    fresh_registry,
+):
+    """Plugin Channel schema is registered once as a Pydantic model."""
+    from qwenpaw.app.channels.base import BaseChannel
+
+    class DemoConfig(BaseModel):
+        endpoint: str
+        retries: int = Field(default=3, ge=1)
+
+    class DemoChannel(BaseChannel):
+        channel = "demo_plugin_channel"
+
+    plugin_api.register_channel(
+        DemoChannel,
+        label="Demo",
+        config_model=DemoConfig,
+    )
+
+    registration = fresh_registry.get_channel_registration(
+        "demo_plugin_channel",
+    )
+    assert registration is not None
+    assert registration.config_model is DemoConfig
+    assert [item["name"] for item in registration.config_fields] == [
+        "endpoint",
+        "retries",
+    ]
+
+
+def test_register_channel_preserves_legacy_positional_arguments(
+    plugin_api,
+    fresh_registry,
+):
+    """Appending config_model does not reinterpret old plugin arguments."""
+    from qwenpaw.app.channels.base import BaseChannel
+
+    class LegacyChannel(BaseChannel):
+        channel = "legacy_plugin_channel"
+
+    fields = [
+        {"name": "token", "label": "Token", "type": "password"},
+    ]
+    plugin_api.register_channel(
+        LegacyChannel,
+        "Legacy",
+        "Legacy positional call",
+        fields,
+        "https://example.test/icon.png",
+        "https://example.test/docs",
+    )
+
+    registration = fresh_registry.get_channel_registration(
+        "legacy_plugin_channel",
+    )
+    assert registration is not None
+    assert registration.config_fields == fields
+    assert registration.config_model is None
 
 
 # ---------------------------------------------------------------------------

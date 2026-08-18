@@ -4,10 +4,19 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError
 
 from qwenpaw.app.channels.config_service import ChannelConfigService
+from qwenpaw.app.routers.config import list_channel_schemas
 from qwenpaw.config.config import AgentProfileConfig
+from qwenpaw.plugins.registry import PluginRegistry
+
+
+class DemoPluginConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    retries: int = Field(default=1, ge=1)
 
 
 def _agent() -> AgentProfileConfig:
@@ -98,3 +107,66 @@ def test_primary_cannot_be_deleted_while_secondary_exists() -> None:
     service.delete(secondary_id)
     service.delete("telegram")
     assert agent.channels == {}
+
+
+def test_plugin_settings_use_registered_config_model(monkeypatch) -> None:
+    registration = type(
+        "Registration",
+        (),
+        {"config_model": DemoPluginConfig},
+    )()
+    monkeypatch.setattr(
+        PluginRegistry,
+        "get_channel_registration",
+        lambda _self, key: registration if key == "demo" else None,
+    )
+
+    with pytest.raises(ValidationError):
+        ChannelConfigService(_agent()).create(
+            "demo",
+            {"name": "Demo", "settings": {"retries": 0}},
+        )
+
+    _, channel = ChannelConfigService(_agent()).create(
+        "demo",
+        {"name": "Demo", "settings": {"retries": 2}},
+    )
+    assert channel.settings == {"retries": 2}
+
+
+@pytest.mark.asyncio
+async def test_plugin_schema_api_keeps_fields_and_adds_json_schema(
+    monkeypatch,
+) -> None:
+    registration = type(
+        "Registration",
+        (),
+        {
+            "config_model": DemoPluginConfig,
+            "config_fields": [
+                {
+                    "name": "retries",
+                    "label": "Retries",
+                    "type": "number",
+                },
+            ],
+            "label": "Demo",
+            "description": "Demo Channel",
+            "plugin_id": "demo-plugin",
+            "icon": "",
+            "doc_url": "",
+        },
+    )()
+    monkeypatch.setattr(
+        PluginRegistry,
+        "get_registered_channels",
+        lambda _self: {"demo": registration},
+    )
+
+    result = await list_channel_schemas()
+
+    assert isinstance(result["demo"]["config_fields"], list)
+    assert (
+        result["demo"]["config_schema"]["properties"]["retries"]["minimum"]
+        == 1
+    )

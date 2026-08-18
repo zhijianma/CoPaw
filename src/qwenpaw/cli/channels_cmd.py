@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """CLI channel: list and interactively configure channels in config.json."""
+
 from __future__ import annotations
 
-from collections.abc import Mapping
-from types import SimpleNamespace
-from typing import Optional
+from dataclasses import dataclass, field
+import json
+from typing import Any, Optional
 
 import click
 from pydantic import BaseModel
@@ -16,18 +17,10 @@ from ..config.config import (
     AgentProfileConfig,
     Config,
     ConsoleTransportConfig,
-    DiscordConfig,
-    TelegramConfig,
-    DingTalkConfig,
-    FeishuConfig,
-    IMessageChannelConfig,
-    QQConfig,
-    VoiceChannelConfig,
-    WeChatConfig,
     load_agent_config,
     save_agent_config,
 )
-from .utils import prompt_confirm, prompt_path, prompt_select
+from .utils import prompt_confirm, prompt_select
 from .http import client, print_json, resolve_base_url
 from ..config import (
     get_available_channels,
@@ -35,17 +28,14 @@ from ..config import (
 )
 from ..app.channels.config_service import ChannelConfigService
 from ..app.channels.registry import get_channel_registry
-from ..domain.channels.catalog import BUILTIN_CHANNEL_CATALOG
-
-
-# Fields that contain secrets — display masked in ``list``
-_SECRET_FIELDS = {
-    "bot_token",
-    "client_secret",
-    "app_secret",
-    "http_proxy_auth",
-    "twilio_auth_token",
-}
+from ..domain.channels.catalog import (
+    BUILTIN_CHANNEL_CATALOG,
+    get_channel_config_model,
+)
+from ..domain.channels.schema import (
+    channel_config_fields_from_model,
+    is_channel_secret_field,
+)
 
 CHANNEL_NAMES = {item.key: item.label for item in BUILTIN_CHANNEL_CATALOG}
 
@@ -77,763 +67,457 @@ def _mask(value: str) -> str:
     return value[:4] + "****"
 
 
-# ── per-channel interactive configurators ──────────────────────────
+# ── Catalog-driven interactive editor ────────────────────────
 
 
-def configure_imessage(
-    current_config: IMessageChannelConfig,
-) -> IMessageChannelConfig:
-    """Configure iMessage channel interactively."""
-    click.echo("\n=== Configure iMessage Channel ===")
+@dataclass(frozen=True, slots=True)
+class ChannelEditorField:  # pylint: disable=too-many-instance-attributes
+    """One setting exposed by the generic Channel editor."""
 
-    enabled = prompt_confirm(
-        "Enable iMessage channel?",
-        default=current_config.enabled,
-    )
-
-    if not enabled:
-        current_config.enabled = False
-        return current_config
-
-    current_config.enabled = True
-
-    bot_prefix = click.prompt(
-        "Bot prefix (e.g., @bot)",
-        default=current_config.bot_prefix or "",
-        type=str,
-    )
-    current_config.bot_prefix = bot_prefix
-
-    db_path = prompt_path(
-        "iMessage database path",
-        default=current_config.db_path or "~/Library/Messages/chat.db",
-    )
-    current_config.db_path = db_path
-
-    poll_sec = click.prompt(
-        "Poll interval (seconds)",
-        default=current_config.poll_sec,
-        type=float,
-    )
-    current_config.poll_sec = poll_sec
-
-    return current_config
+    name: str
+    label: str
+    kind: str = "text"
+    required: bool = False
+    secret: bool = False
+    default: Any = None
+    description: str = ""
+    options: tuple[Any, ...] = ()
 
 
-def configure_discord(current_config: DiscordConfig) -> DiscordConfig:
-    """Configure Discord channel interactively."""
-    click.echo("\n=== Configure Discord Channel ===")
+@dataclass(frozen=True, slots=True)
+class ChannelEditorDefinition:
+    """Runtime-neutral metadata used by the Console-style CLI editor."""
 
-    enabled = prompt_confirm(
-        "Enable Discord channel?",
-        default=current_config.enabled,
-    )
-
-    if not enabled:
-        current_config.enabled = False
-        return current_config
-
-    current_config.enabled = True
-
-    bot_prefix = click.prompt(
-        "Bot prefix (e.g., @bot)",
-        default=current_config.bot_prefix or "",
-        type=str,
-    )
-    current_config.bot_prefix = bot_prefix
-
-    bot_token = click.prompt(
-        "Discord Bot Token",
-        default=current_config.bot_token or "",
-        hide_input=True,
-        type=str,
-    )
-    current_config.bot_token = bot_token
-
-    use_proxy = prompt_confirm(
-        "Use HTTP proxy?",
-        default=bool(current_config.http_proxy),
-    )
-
-    if use_proxy:
-        http_proxy = click.prompt(
-            "HTTP proxy address (e.g., http://127.0.0.1:7890)",
-            default=current_config.http_proxy or "",
-            type=str,
-        )
-        current_config.http_proxy = http_proxy
-
-        use_proxy_auth = prompt_confirm(
-            "Does proxy require authentication?",
-            default=bool(current_config.http_proxy_auth),
-        )
-
-        if use_proxy_auth:
-            http_proxy_auth = click.prompt(
-                "Proxy authentication (format: username:password)",
-                default=current_config.http_proxy_auth or "",
-                hide_input=True,
-                type=str,
-            )
-            current_config.http_proxy_auth = http_proxy_auth
-        else:
-            current_config.http_proxy_auth = ""
-    else:
-        current_config.http_proxy = ""
-        current_config.http_proxy_auth = ""
-
-    streaming_enabled = prompt_confirm(
-        "Enable streaming?",
-        default=current_config.streaming_enabled,
-    )
-    current_config.streaming_enabled = streaming_enabled
-
-    return current_config
+    key: str
+    label: str
+    fields: tuple[ChannelEditorField, ...]
+    config_model: type[BaseModel] | None = None
+    plugin_id: str | None = None
 
 
-def configure_dingtalk(current_config: DingTalkConfig) -> DingTalkConfig:
-    """Configure DingTalk channel interactively."""
-    click.echo("\n=== Configure DingTalk Channel ===")
+@dataclass(slots=True)
+class EditableChannel:
+    """One persisted or pending Channel instance in the CLI editor."""
 
-    enabled = prompt_confirm(
-        "Enable DingTalk channel?",
-        default=current_config.enabled,
-    )
-
-    if not enabled:
-        current_config.enabled = False
-        return current_config
-
-    current_config.enabled = True
-
-    bot_prefix = click.prompt(
-        "Bot prefix (e.g., @bot)",
-        default=current_config.bot_prefix or "",
-        type=str,
-    )
-    current_config.bot_prefix = bot_prefix
-
-    client_id = click.prompt(
-        "DingTalk Client ID",
-        default=current_config.client_id or "",
-        type=str,
-    )
-    current_config.client_id = client_id
-
-    client_secret = click.prompt(
-        "DingTalk Client Secret",
-        default=current_config.client_secret or "",
-        hide_input=True,
-        type=str,
-    )
-    current_config.client_secret = client_secret
-
-    streaming_enabled = prompt_confirm(
-        "Enable streaming?",
-        default=current_config.streaming_enabled,
-    )
-    current_config.streaming_enabled = streaming_enabled
-
-    return current_config
+    instance_id: str | None
+    channel_type: str
+    name: str
+    enabled: bool = False
+    settings: dict[str, Any] = field(default_factory=dict)
 
 
-def configure_feishu(current_config: FeishuConfig) -> FeishuConfig:
-    """Configure Feishu channel interactively."""
-    click.echo("\n=== Configure Feishu Channel ===")
+@dataclass(slots=True)
+class ChannelEditorState:
+    """Editable snapshot of one Agent's Channels and Console Transport."""
 
-    enabled = prompt_confirm(
-        "Enable Feishu channel?",
-        default=current_config.enabled,
-    )
-
-    if not enabled:
-        current_config.enabled = False
-        return current_config
-
-    current_config.enabled = True
-
-    # Domain selection: feishu (China) or lark (International)
-    domain_choices = ["feishu", "lark"]
-    current_domain = current_config.domain or "feishu"
-    domain = click.prompt(
-        "Region (feishu for China, lark for International)",
-        default=current_domain,
-        type=click.Choice(domain_choices),
-    )
-    current_config.domain = domain
-
-    bot_prefix = click.prompt(
-        "Bot prefix (e.g., @bot)",
-        default=current_config.bot_prefix or "",
-        type=str,
-    )
-    current_config.bot_prefix = bot_prefix
-
-    app_id = click.prompt(
-        "Feishu App ID",
-        default=current_config.app_id or "",
-        type=str,
-    )
-    current_config.app_id = app_id
-
-    app_secret = click.prompt(
-        "Feishu App Secret",
-        default=current_config.app_secret or "",
-        hide_input=True,
-        type=str,
-    )
-    current_config.app_secret = app_secret
-
-    streaming_enabled = prompt_confirm(
-        "Enable streaming?",
-        default=current_config.streaming_enabled,
-    )
-    current_config.streaming_enabled = streaming_enabled
-
-    return current_config
+    channels: list[EditableChannel]
+    console: ConsoleTransportConfig
+    deleted_instance_ids: set[str] = field(default_factory=set)
 
 
-def configure_wechat(current_config: WeChatConfig) -> WeChatConfig:
-    """Configure WeChat (iLink Bot) personal account channel interactively.
-
-    ``bot_token`` is intentionally not prompted: it is a short-lived bearer
-    token obtained via QR-code login at runtime and persisted to
-    ``bot_token_file``. The wizard only collects the surrounding config.
-    """
-    click.echo("\n=== Configure WeChat (iLink Bot) Channel ===")
-
-    enabled = prompt_confirm(
-        "Enable WeChat channel?",
-        default=current_config.enabled,
-    )
-
-    if not enabled:
-        current_config.enabled = False
-        return current_config
-
-    current_config.enabled = True
-
-    click.echo(
-        "Note: bot_token is obtained via QR-code login at runtime and "
-        "persisted to bot_token_file; it is not prompted here.",
-    )
-
-    bot_token_file = click.prompt(
-        "bot_token file path",
-        default=(
-            current_config.bot_token_file or "~/.qwenpaw/wechat_bot_token"
+def _model_editor_fields(
+    model: type[BaseModel],
+    *,
+    include_enabled: bool = False,
+) -> tuple[ChannelEditorField, ...]:
+    """Derive CLI fields from the same Pydantic model used by the backend."""
+    return _plugin_editor_fields(
+        channel_config_fields_from_model(
+            model,
+            include_enabled=include_enabled,
         ),
-        type=str,
-    )
-    current_config.bot_token_file = bot_token_file
-
-    base_url = click.prompt(
-        "iLink API base URL (leave empty for default)",
-        default=current_config.base_url or "",
-        type=str,
-    )
-    current_config.base_url = base_url
-
-    media_dir = click.prompt(
-        "Local media download directory (leave empty to disable)",
-        default=current_config.media_dir or "",
-        type=str,
-    )
-    current_config.media_dir = media_dir or None
-
-    return current_config
-
-
-def configure_qq(current_config: QQConfig) -> QQConfig:
-    """Configure QQ channel interactively."""
-    click.echo("\n=== Configure QQ Channel ===")
-
-    enabled = prompt_confirm(
-        "Enable QQ channel?",
-        default=current_config.enabled,
     )
 
-    if not enabled:
-        current_config.enabled = False
-        return current_config
 
-    current_config.enabled = True
+def _plugin_editor_fields(
+    config_fields: list[dict[str, Any]],
+) -> tuple[ChannelEditorField, ...]:
+    """Normalize the existing plugin field protocol for the generic editor."""
 
-    bot_prefix = click.prompt(
-        "Bot prefix (e.g., @bot)",
-        default=current_config.bot_prefix or "",
-        type=str,
-    )
-    current_config.bot_prefix = bot_prefix
+    def editor_kind(item: dict[str, Any]) -> str:
+        kind = str(item.get("schema_type") or item.get("type") or "text")
+        if kind in {"array", "object"}:
+            return "json"
+        return kind
 
-    app_id = click.prompt(
-        "QQ App ID",
-        default=current_config.app_id or "",
-        type=str,
-    )
-    current_config.app_id = app_id
-
-    client_secret = click.prompt(
-        "QQ Client Secret",
-        default=current_config.client_secret or "",
-        hide_input=True,
-        type=str,
-    )
-    current_config.client_secret = client_secret
-
-    markdown_enabled = prompt_confirm(
-        "Enable QQ markdown replies?",
-        default=current_config.markdown_enabled,
-    )
-    current_config.markdown_enabled = markdown_enabled
-
-    return current_config
-
-
-def configure_telegram(current_config: TelegramConfig) -> TelegramConfig:
-    """Configure Telegram channel interactively."""
-    click.echo("\n=== Configure Telegram Channel ===")
-
-    enabled = prompt_confirm(
-        "Enable Telegram channel?",
-        default=current_config.enabled,
-    )
-
-    if not enabled:
-        current_config.enabled = False
-        return current_config
-
-    current_config.enabled = True
-
-    bot_prefix = click.prompt(
-        "Bot prefix (e.g., @bot)",
-        default=current_config.bot_prefix or "",
-        type=str,
-    )
-    current_config.bot_prefix = bot_prefix
-
-    bot_token = click.prompt(
-        "Telegram Bot Token",
-        default=current_config.bot_token or "",
-        hide_input=True,
-        type=str,
-    )
-    token = bot_token.strip()
-    current_config.bot_token = token
-    if not token:
-        click.echo("Warning: Empty bot token provided.")
-        click.echo("Disabling Telegram channel.")
-        current_config.enabled = False
-        return current_config
-
-    base_url = click.prompt(
-        "Telegram API Base URL (blank for default)",
-        default=current_config.base_url or "",
-        type=str,
-    )
-    current_config.base_url = base_url.strip().rstrip("/")
-
-    show_typing = prompt_confirm(
-        "Show typing indicator?",
-        default=current_config.show_typing is not False,
-    )
-    current_config.show_typing = show_typing
-
-    use_proxy = prompt_confirm(
-        "Use HTTP proxy?",
-        default=bool(current_config.http_proxy),
-    )
-
-    if use_proxy:
-        http_proxy = click.prompt(
-            "HTTP proxy address (e.g., http://127.0.0.1:7890)",
-            default=current_config.http_proxy or "",
-            type=str,
+    return tuple(
+        ChannelEditorField(
+            name=str(item["name"]),
+            label=str(item.get("label") or item["name"]),
+            kind=editor_kind(item),
+            required=bool(item.get("required", False)),
+            secret=str(item.get("type") or "") == "password",
+            default=item.get("default"),
+            description=str(item.get("help") or ""),
+            options=tuple(item.get("options") or ()),
         )
-        current_config.http_proxy = http_proxy
+        for item in config_fields
+    )
 
-        use_proxy_auth = prompt_confirm(
-            "Does proxy require authentication?",
-            default=bool(current_config.http_proxy_auth),
+
+def get_channel_editor_definitions() -> dict[str, ChannelEditorDefinition]:
+    """Return available external Channel definitions from one catalog view."""
+    available = set(get_available_channels())
+    definitions: dict[str, ChannelEditorDefinition] = {}
+    for definition in sorted(
+        BUILTIN_CHANNEL_CATALOG,
+        key=lambda item: item.order,
+    ):
+        if definition.surface != "channel" or definition.key not in available:
+            continue
+        model = get_channel_config_model(definition.key)
+        if model is None:
+            continue
+        definitions[definition.key] = ChannelEditorDefinition(
+            key=definition.key,
+            label=definition.label or definition.key.title(),
+            fields=_model_editor_fields(model),
+            config_model=model,
         )
 
-        if use_proxy_auth:
-            http_proxy_auth = click.prompt(
-                "Proxy authentication (format: username:password)",
-                default=current_config.http_proxy_auth or "",
-                hide_input=True,
+    from ..plugins.registry import PluginRegistry
+
+    for key, registration in (
+        PluginRegistry().get_registered_channels().items()
+    ):
+        if key not in available:
+            continue
+        config_model = getattr(registration, "config_model", None)
+        fields = (
+            _model_editor_fields(config_model)
+            if config_model is not None
+            else _plugin_editor_fields(registration.config_fields)
+        )
+        definitions[key] = ChannelEditorDefinition(
+            key=key,
+            label=registration.label or key.title(),
+            fields=fields,
+            config_model=config_model,
+            plugin_id=registration.plugin_id,
+        )
+    return definitions
+
+
+def get_console_editor_definition() -> ChannelEditorDefinition:
+    """Return the Console Transport editor outside the Channel catalog."""
+    return ChannelEditorDefinition(
+        key="console",
+        label="Console",
+        fields=_model_editor_fields(ConsoleTransportConfig),
+        config_model=ConsoleTransportConfig,
+    )
+
+
+def _display_setting(field_spec: ChannelEditorField, value: Any) -> str:
+    if value in (None, ""):
+        return "(empty)"
+    if field_spec.secret:
+        return _mask(str(value))
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _prompt_json(label: str, current: Any) -> Any:
+    default = json.dumps(
+        current if current is not None else {},
+        ensure_ascii=False,
+    )
+    while True:
+        value = click.prompt(label, default=default, type=str)
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as exc:
+            click.echo(f"Invalid JSON: {exc}", err=True)
+
+
+def _prompt_setting(
+    field_spec: ChannelEditorField,
+    current: Any,
+) -> Any:
+    """Prompt one setting using its schema-derived type."""
+    default = current
+    if default is None:
+        default = field_spec.default
+    if field_spec.kind in {"switch", "boolean"}:
+        return prompt_confirm(
+            field_spec.label,
+            default=bool(default),
+        )
+    if field_spec.kind in {"select"} and field_spec.options:
+        return prompt_select(
+            field_spec.label,
+            options=[(str(option), option) for option in field_spec.options],
+        )
+    if field_spec.kind in {"integer", "number"}:
+        prompt_type = int if field_spec.kind == "integer" else float
+        return click.prompt(
+            field_spec.label,
+            default=default if default is not None else 0,
+            type=prompt_type,
+        )
+    if field_spec.kind == "json":
+        return _prompt_json(field_spec.label, default)
+
+    value = click.prompt(
+        field_spec.label,
+        default="" if default is None else str(default),
+        hide_input=field_spec.secret,
+        type=str,
+    )
+    if value == "" and field_spec.required:
+        raise click.UsageError(f"{field_spec.label} is required")
+    return value
+
+
+def _edit_channel_interactive(
+    channel: EditableChannel,
+    definition: ChannelEditorDefinition,
+) -> str:
+    """Edit or delete one Channel instance. Return the chosen action."""
+    fields_by_name = {item.name: item for item in definition.fields}
+    while True:
+        choices = [
+            (f"Name: {channel.name}", "__name__"),
+            (
+                f"Enabled: {'yes' if channel.enabled else 'no'}",
+                "__enabled__",
+            ),
+        ]
+        for field_spec in definition.fields:
+            current = channel.settings.get(
+                field_spec.name,
+                field_spec.default,
+            )
+            choices.append(
+                (
+                    f"{field_spec.label}: "
+                    f"{_display_setting(field_spec, current)}",
+                    field_spec.name,
+                ),
+            )
+        choices.extend(
+            [
+                ("Delete instance", "__delete__"),
+                ("Back", "__back__"),
+            ],
+        )
+        choice = prompt_select(
+            f"Configure {definition.label} ({channel.name})",
+            options=choices,
+        )
+        if choice in (None, "__back__"):
+            return "save"
+        if choice == "__delete__":
+            return "delete"
+        if choice == "__name__":
+            channel.name = click.prompt(
+                "Instance name",
+                default=channel.name,
                 type=str,
             )
-            current_config.http_proxy_auth = http_proxy_auth
-        else:
-            current_config.http_proxy_auth = ""
-    else:
-        current_config.http_proxy = ""
-        current_config.http_proxy_auth = ""
-
-    streaming_enabled = prompt_confirm(
-        "Enable streaming?",
-        default=current_config.streaming_enabled,
-    )
-    current_config.streaming_enabled = streaming_enabled
-
-    return current_config
-
-
-def configure_voice(
-    current_config: VoiceChannelConfig,
-) -> VoiceChannelConfig:
-    """Configure Twilio voice channel interactively."""
-    click.echo("\n=== Configure Twilio Channel ===")
-
-    enabled = prompt_confirm(
-        "Enable Twilio channel?",
-        default=current_config.enabled,
-    )
-
-    if not enabled:
-        current_config.enabled = False
-        return current_config
-
-    current_config.enabled = True
-
-    # — Twilio credentials —
-
-    twilio_account_sid = click.prompt(
-        "Twilio Account SID",
-        default=current_config.twilio_account_sid or "",
-        type=str,
-    )
-    current_config.twilio_account_sid = twilio_account_sid
-
-    twilio_auth_token = click.prompt(
-        "Twilio Auth Token",
-        default=current_config.twilio_auth_token or "",
-        hide_input=True,
-        type=str,
-    )
-    current_config.twilio_auth_token = twilio_auth_token
-
-    # — Phone number (may be blank if provisioning later via API) —
-
-    phone_number = click.prompt(
-        "Phone number (e.g., +15551234567, blank to provision later)",
-        default=current_config.phone_number or "",
-        type=str,
-    )
-    current_config.phone_number = phone_number
-
-    phone_number_sid = click.prompt(
-        "Phone Number SID (e.g., PN..., blank to provision later)",
-        default=current_config.phone_number_sid or "",
-        type=str,
-    )
-    current_config.phone_number_sid = phone_number_sid
-
-    # — TTS / STT settings —
-
-    configure_tts = prompt_confirm(
-        "Configure TTS/STT settings? (default: Google TTS + Deepgram STT)",
-        default=False,
-    )
-
-    if configure_tts:
-        tts_provider = click.prompt(
-            "TTS provider",
-            default=current_config.tts_provider or "google",
-            type=str,
+            continue
+        if choice == "__enabled__":
+            channel.enabled = prompt_confirm(
+                "Enable this instance?",
+                default=channel.enabled,
+            )
+            continue
+        field_spec = fields_by_name[choice]
+        channel.settings[choice] = _prompt_setting(
+            field_spec,
+            channel.settings.get(choice),
         )
-        current_config.tts_provider = tts_provider
 
-        tts_voice = click.prompt(
-            "TTS voice",
-            default=current_config.tts_voice or "en-US-Journey-D",
-            type=str,
-        )
-        current_config.tts_voice = tts_voice
 
-        stt_provider = click.prompt(
-            "STT provider",
-            default=current_config.stt_provider or "deepgram",
-            type=str,
-        )
-        current_config.stt_provider = stt_provider
-
-        language = click.prompt(
-            "Language",
-            default=current_config.language or "en-US",
-            type=str,
-        )
-        current_config.language = language
-
-    # — Welcome greeting —
-
-    welcome_greeting = click.prompt(
-        "Welcome greeting",
-        default=current_config.welcome_greeting
-        or "Hi! This is QwenPaw. How can I help you?",
-        type=str,
+def _edit_console_interactive(
+    console: ConsoleTransportConfig,
+) -> None:
+    definition = get_console_editor_definition()
+    values = console.model_dump(mode="json")
+    enabled = bool(values.pop("enabled", True))
+    editable = EditableChannel(
+        instance_id="console",
+        channel_type="console",
+        name="Console",
+        enabled=enabled,
+        settings=values,
     )
-    current_config.welcome_greeting = welcome_greeting
-
-    return current_config
-
-
-def configure_console(
-    current_config: ConsoleTransportConfig,
-) -> ConsoleTransportConfig:
-    """Configure Console channel interactively."""
-    click.echo("\n=== Configure Console Channel ===")
-
-    enabled = prompt_confirm(
-        "Enable Console channel?",
-        default=current_config.enabled,
-    )
-
-    if not enabled:
-        current_config.enabled = False
-        return current_config
-
-    current_config.enabled = True
-
-    bot_prefix = click.prompt(
-        "Bot prefix (e.g., [BOT])",
-        default=current_config.bot_prefix or "",
-        type=str,
-    )
-    current_config.bot_prefix = bot_prefix
-
-    return current_config
+    action = _edit_channel_interactive(editable, definition)
+    if action == "delete":
+        click.echo("Console Transport cannot be deleted.", err=True)
+        return
+    payload = {**editable.settings, "enabled": editable.enabled}
+    updated = ConsoleTransportConfig.model_validate(payload)
+    for name in updated.model_fields:
+        setattr(console, name, getattr(updated, name))
 
 
-# ── reusable channel configuration flow (used by init_cmd too) ─────
-
-# Full registry — filtered at runtime by get_channel_configurators().
-_ALL_CHANNEL_CONFIGURATORS = {
-    "imessage": ("iMessage", configure_imessage),
-    "discord": ("Discord", configure_discord),
-    "telegram": ("Telegram", configure_telegram),
-    "dingtalk": ("DingTalk", configure_dingtalk),
-    "feishu": ("Feishu", configure_feishu),
-    "wechat": ("WeChat (iLink Bot)", configure_wechat),
-    "qq": ("QQ", configure_qq),
-    "console": ("Console", configure_console),
-    "voice": ("Twilio", configure_voice),
-}
-
-
-def _plugin_configure(
-    _key: str,
-    configurator,
-    current,
-):
-    """Run plugin configurator; accept/return dict or object."""
-    if isinstance(current, dict):
-        cur_ns = SimpleNamespace(**current)
-    else:
-        cur_ns = current
-    out = configurator(cur_ns)
-    if out is None:
-        return current
-    if hasattr(out, "__dict__"):
-        return vars(out)
-    if isinstance(out, dict):
-        return out
-    return current
-
-
-def get_channel_configurators() -> dict:
-    """Return channel configurators (built-in + plugin get_configurator)."""
-    available = get_available_channels()
-    registry = get_channel_registry()
-    out = {
-        k: v for k, v in _ALL_CHANNEL_CONFIGURATORS.items() if k in available
+def _default_settings(
+    definition: ChannelEditorDefinition,
+) -> dict[str, Any]:
+    """Return plugin defaults without persisting every built-in default."""
+    if definition.config_model is not None:
+        return {}
+    return {
+        item.name: item.default
+        for item in definition.fields
+        if item.default is not None
     }
 
-    def _default_plugin_configure(current):
-        """Minimal configurator: enabled + bot_prefix."""
 
-        def _get(obj, k, default=None):
-            return (
-                obj.get(k, default)
-                if isinstance(obj, dict)
-                else getattr(
-                    obj,
-                    k,
-                    default,
-                )
-            )
-
-        def _set(obj, k, v):
-            if isinstance(obj, dict):
-                obj[k] = v
-            else:
-                setattr(obj, k, v)
-
-        enabled = _get(current, "enabled", False)
-        _set(
-            current,
-            "enabled",
-            prompt_confirm("Enable this channel?", default=enabled),
-        )
-        prefix = _get(current, "bot_prefix", "") or ""
-        _set(
-            current,
-            "bot_prefix",
-            click.prompt("Bot prefix (e.g. [BOT])", default=prefix, type=str),
-        )
-        return current
-
-    for key in available:
-        if key in out:
-            continue
-        ch_cls = registry.get(key)
-        if ch_cls is None:
-            continue
-        display = (
-            getattr(ch_cls, "display_name", None)
-            or key.replace(
-                "_",
-                " ",
-            ).title()
-        )
-        configurator = getattr(ch_cls, "get_configurator", None)
-        if callable(configurator):
-            configurator = configurator()
-        if not callable(configurator):
-            configurator = _default_plugin_configure
-
-        def _wrap(cf, k=key):
-            def _run(current):
-                return _plugin_configure(k, cf, current)
-
-            return _run
-
-        out[key] = (display, _wrap(configurator))
-    return out
-
-
-def _get_channel_config(configs: dict[str, object], key: str):
-    """Get one channel configuration from the editable mapping."""
-    return configs.get(key)
-
-
-def configure_channels_interactive(configs: dict[str, object]) -> None:
-    """Run the interactive channel selection / configuration loop.
-
-    Mutates *configs* in-place.
-    """
-    configurators = get_channel_configurators()
-    registry = get_channel_registry()
-    click.echo("\n=== Channel Configuration ===")
-
+def configure_channels_interactive(  # pylint: disable=too-many-branches
+    state: ChannelEditorState,
+) -> None:
+    """Edit all Channel instances through Catalog-derived definitions."""
+    definitions = get_channel_editor_definitions()
     while True:
-        channel_choices: list[tuple[str, str]] = []
-        for channel_key, (channel_name, _) in configurators.items():
-            channel_config = _get_channel_config(configs, channel_key)
-            status = "✓" if _channel_enabled(channel_config) else "✗"
-            channel_choices.append(
-                (f"{channel_name} [{status}]", channel_key),
+        choices: list[tuple[str, str]] = []
+        for index, channel in enumerate(state.channels):
+            status = "✓" if channel.enabled else "✗"
+            label = definitions.get(channel.channel_type)
+            type_label = label.label if label else channel.channel_type
+            instance = channel.instance_id or "new"
+            choices.append(
+                (
+                    f"{channel.name} ({type_label}, {instance}) [{status}]",
+                    f"instance:{index}",
+                ),
             )
-        channel_choices.append(("Save and exit", "exit"))
-
-        click.echo()
+        choices.extend(
+            [
+                ("Add Channel instance", "__add__"),
+                (
+                    "Configure Console Transport "
+                    f"[{'✓' if state.console.enabled else '✗'}]",
+                    "__console__",
+                ),
+                ("Save and exit", "__exit__"),
+            ],
+        )
         choice = prompt_select(
-            "Select a channel to configure:",
-            options=channel_choices,
+            "Select a Channel instance:",
+            options=choices,
         )
-
         if choice is None:
-            click.echo("\n\nOperation cancelled.")
+            click.echo("\nOperation cancelled.")
             return
-
-        if choice == "exit":
-            break
-
-        channel_name, configure_func = configurators[choice]
-        current_config = _get_channel_config(configs, choice)
-        if current_config is None:
-            ch_cls = registry.get(choice)
-            default = (
-                getattr(ch_cls, "get_default_config", lambda: None)()
-                if ch_cls
-                else None
+        if choice == "__exit__":
+            return
+        if choice == "__console__":
+            _edit_console_interactive(state.console)
+            continue
+        if choice == "__add__":
+            if not definitions:
+                click.echo("No Channel types are available.", err=True)
+                continue
+            channel_type = prompt_select(
+                "Select Channel type:",
+                options=[
+                    (item.label, item.key) for item in definitions.values()
+                ],
             )
-            current_config = default or {"enabled": False, "bot_prefix": ""}
-        updated_config = configure_func(current_config)
-        configs[choice] = updated_config
+            if channel_type is None:
+                continue
+            definition = definitions[channel_type]
+            item = EditableChannel(
+                instance_id=None,
+                channel_type=channel_type,
+                name=click.prompt(
+                    "Instance name",
+                    default=definition.label,
+                    type=str,
+                ),
+                settings=_default_settings(definition),
+            )
+            state.channels.append(item)
+            if _edit_channel_interactive(item, definition) == "delete":
+                state.channels.remove(item)
+            continue
 
-    # Show enabled channels summary
-    enabled_channels = [
-        name
-        for key, (name, _) in configurators.items()
-        if _channel_enabled(_get_channel_config(configs, key))
-    ]
-
-    if enabled_channels:
-        click.echo(
-            f"\n✓ Enabled channels: {', '.join(enabled_channels)}",
-        )
-    else:
-        click.echo("\n⚠ Warning: No channels enabled!")
+        index = int(choice.split(":", 1)[1])
+        channel = state.channels[index]
+        definition = definitions.get(channel.channel_type)
+        if definition is None:
+            click.echo(
+                f"Channel type '{channel.channel_type}' is unavailable; "
+                "its configuration was preserved.",
+                err=True,
+            )
+            continue
+        action = _edit_channel_interactive(channel, definition)
+        if action != "delete":
+            continue
+        if channel.instance_id == channel.channel_type and any(
+            item is not channel and item.channel_type == channel.channel_type
+            for item in state.channels
+        ):
+            click.echo(
+                "Delete secondary instances before the primary instance.",
+                err=True,
+            )
+            continue
+        if channel.instance_id is not None:
+            state.deleted_instance_ids.add(channel.instance_id)
+        state.channels.remove(channel)
 
 
 def load_editable_channel_configs(
     root_config: Config,
     agent_config: AgentProfileConfig,
     agent_id: str,
-) -> dict[str, object]:
+) -> ChannelEditorState:
     """Build the CLI editor view from authoritative storage."""
     del root_config, agent_id
-    values: dict[str, object] = {
-        "console": agent_config.transports.console,
-    }
-    for instance_id, channel in agent_config.channels.items():
-        if instance_id != channel.type:
-            continue
-        values[channel.type] = {
-            **channel.settings,
-            "enabled": channel.enabled,
-        }
-    return values
+    return ChannelEditorState(
+        channels=[
+            EditableChannel(
+                instance_id=instance_id,
+                channel_type=channel.type,
+                name=channel.name,
+                enabled=channel.enabled,
+                settings=dict(channel.settings),
+            )
+            for instance_id, channel in agent_config.channels.items()
+        ],
+        console=agent_config.transports.console.model_copy(deep=True),
+    )
 
 
 def persist_editable_channel_configs(
     root_config: Config,
     agent_config: AgentProfileConfig,
     agent_id: str,
-    channel_configs: dict[str, object],
+    channel_configs: ChannelEditorState,
 ) -> None:
-    """Persist CLI edits with one configuration per Channel type."""
+    """Persist instance-addressed CLI edits through ChannelConfigService."""
     del root_config
     service = ChannelConfigService(agent_config)
-    console = channel_configs.get("console")
-    if console is not None:
-        agent_config.transports.console = (
-            ConsoleTransportConfig.model_validate(console)
-        )
-    for channel_key, value in channel_configs.items():
-        if channel_key == "console":
-            continue
-        if isinstance(value, BaseModel):
-            payload = value.model_dump(mode="json")
-        elif isinstance(value, Mapping):
-            payload = dict(value)
-        else:
-            raise TypeError(
-                f"Invalid Channel configuration for {channel_key}",
-            )
-        enabled = bool(payload.pop("enabled", False))
-        current = agent_config.channels.get(channel_key)
+    agent_config.transports.console = ConsoleTransportConfig.model_validate(
+        channel_configs.console.model_dump(mode="json"),
+    )
+
+    deleted = sorted(
+        channel_configs.deleted_instance_ids,
+        key=lambda instance_id: (
+            instance_id
+            == getattr(agent_config.channels.get(instance_id), "type", None)
+        ),
+    )
+    for instance_id in deleted:
+        if service.get(instance_id) is not None:
+            service.delete(instance_id)
+
+    for item in channel_configs.channels:
         value = {
-            "name": current.name if current else channel_key.title(),
-            "enabled": enabled,
-            "settings": payload,
+            "name": item.name,
+            "enabled": item.enabled,
+            "settings": dict(item.settings),
         }
-        if current is None:
-            service.create(channel_key, value)
+        if item.instance_id is None:
+            service.create(item.channel_type, value)
         else:
-            service.update(channel_key, value)
+            service.update(item.instance_id, value)
     save_agent_config(agent_id, agent_config)
 
 
@@ -842,8 +526,7 @@ def persist_editable_channel_configs(
 
 @click.group("channels")
 def channels_group() -> None:
-    """Manage channel configuration
-    (iMessage/Discord/DingTalk/Feishu/QQ/Console)."""
+    """Manage Agent-owned Channel instances."""
 
 
 def _channel_config_fields(ch):
@@ -892,23 +575,25 @@ def list_cmd(agent_id: str) -> None:
         entries = [
             (
                 "console",
+                "console",
                 "Console",
                 agent_config.transports.console,
             ),
             *[
                 (
-                    channel_type,
+                    instance_id,
+                    channel.type,
                     channel.name,
                     {
                         **channel.settings,
                         "enabled": channel.enabled,
                     },
                 )
-                for channel_type, channel in agent_config.channels.items()
+                for instance_id, channel in agent_config.channels.items()
             ],
         ]
-        for key, display_name, ch in entries:
-            type_name = channel_names.get(key, key)
+        for instance_id, channel_type, display_name, ch in entries:
+            type_name = channel_names.get(channel_type, channel_type)
             status = (
                 click.style("enabled", fg="green")
                 if _channel_enabled(ch)
@@ -916,14 +601,15 @@ def list_cmd(agent_id: str) -> None:
             )
             click.echo(f"\n{'─' * 40}")
             click.echo(
-                f"  {display_name} ({type_name})  [{status}]",
+                f"  {display_name} ({type_name}, {instance_id})  "
+                f"[{status}]",
             )
             click.echo(f"{'─' * 40}")
 
             for field_name, value in _channel_config_fields(ch):
                 display = (
                     _mask(str(value))
-                    if field_name in _SECRET_FIELDS
+                    if is_channel_secret_field(field_name)
                     else value
                 )
                 click.echo(f"  {field_name:20s}: {display}")

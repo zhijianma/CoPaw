@@ -206,6 +206,11 @@ async def list_channel_schemas() -> dict:
             "description": reg.description,
             "plugin_id": reg.plugin_id,
             "config_fields": reg.config_fields,
+            "config_schema": (
+                reg.config_model.model_json_schema()
+                if reg.config_model is not None
+                else None
+            ),
             "icon": reg.icon,
             "doc_url": reg.doc_url,
         }

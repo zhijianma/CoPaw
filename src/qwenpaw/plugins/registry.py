@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import logging
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ class MiddlewareRegistration:
 
 
 @dataclass
-class ChannelRegistration:
+class ChannelRegistration:  # pylint: disable=too-many-instance-attributes
     """Channel registration record from a plugin."""
 
     plugin_id: str
@@ -104,6 +105,7 @@ class ChannelRegistration:
     config_fields: List[Dict[str, Any]] = field(default_factory=list)
     icon: str = ""
     doc_url: Any = ""
+    config_model: Optional[Type[BaseModel]] = None
 
 
 @dataclass
@@ -756,6 +758,7 @@ class PluginRegistry:  # pylint:disable=too-many-public-methods
         config_fields: Optional[List[Dict[str, Any]]] = None,
         icon: str = "",
         doc_url: Any = "",
+        config_model: Optional[Type[BaseModel]] = None,
     ) -> None:
         """Register a custom channel from a plugin.
 
@@ -766,7 +769,9 @@ class PluginRegistry:  # pylint:disable=too-many-public-methods
             label: Human-readable display name for the channel.
             description: Short description shown in the UI.
             config_fields: List of configuration field descriptors for
-                the frontend form. Each dict should have at least
+                the frontend form. Deprecated compatibility override for
+                plugins without ``config_model``. Each dict should have at
+                least
                 ``name``, ``label``, ``type`` keys. Supported types:
                 text, password, number, switch, select.
             icon: Optional display icon URL for the channel card. The
@@ -776,6 +781,8 @@ class PluginRegistry:  # pylint:disable=too-many-public-methods
                 plain http(s) URL string, or a localized mapping such as
                 ``{"zh": "...", "en": "..."}``. The Console renders a "Doc"
                 button only when it resolves to a usable http(s) URL.
+            config_model: Authoritative Pydantic configuration model. Its
+                fields drive validation, Console metadata, and the CLI.
 
         Raises:
             ValueError: If channel_key is already registered or invalid.
@@ -783,11 +790,35 @@ class PluginRegistry:  # pylint:disable=too-many-public-methods
         """
         from ..app.channels.base import BaseChannel
         from ..app.channels.registry import BUILTIN_CHANNEL_KEYS
+        from ..domain.channels.schema import (
+            channel_config_fields_from_model,
+        )
 
         if not channel_key or not channel_key.strip():
             raise ValueError("channel_key must be a non-empty string")
 
         normalized_key = channel_key.strip().lower()
+
+        if config_model is not None and not (
+            isinstance(config_model, type)
+            and issubclass(config_model, BaseModel)
+        ):
+            raise TypeError(
+                "config_model must be a Pydantic BaseModel subclass, "
+                f"got {config_model!r}",
+            )
+
+        if config_model is not None:
+            generated_fields = channel_config_fields_from_model(config_model)
+            if config_fields is not None:
+                generated_names = {item["name"] for item in generated_fields}
+                supplied_names = {item["name"] for item in config_fields}
+                if supplied_names != generated_names:
+                    raise ValueError(
+                        "config_fields must describe exactly the fields in "
+                        "config_model; omit config_fields to generate them",
+                    )
+            config_fields = generated_fields
 
         if normalized_key != channel_key:
             logger.warning(
@@ -844,6 +875,7 @@ class PluginRegistry:  # pylint:disable=too-many-public-methods
             channel_class=channel_class,
             label=label or normalized_key,
             description=description,
+            config_model=config_model,
             config_fields=config_fields or [],
             icon=(icon or "").strip(),
             doc_url=doc_url or "",

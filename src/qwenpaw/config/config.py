@@ -407,7 +407,9 @@ class AgentChannelConfig(BaseModel):
             raise ValueError(
                 f"Unknown {channel_type} setting: {unknown[0]}",
             )
-        payload = {**self.settings, "enabled": self.enabled}
+        payload = dict(self.settings)
+        if "enabled" in model.model_fields:
+            payload["enabled"] = self.enabled
         validated = model.model_validate(payload)
         self.settings = validated.model_dump(
             mode="json",
@@ -417,18 +419,38 @@ class AgentChannelConfig(BaseModel):
     def typed_config(self, channel_type: str) -> Any:
         """Return the complete typed config consumed by an adapter."""
         model = self._config_model(channel_type)
-        payload = {**self.settings, "enabled": self.enabled}
         if model is None:
+            payload = {**self.settings, "enabled": self.enabled}
             defaults = BaseChannelConfig().model_dump(mode="json")
             defaults.update(payload)
             return SimpleNamespace(**defaults)
+        payload = dict(self.settings)
+        if "enabled" in model.model_fields:
+            payload["enabled"] = self.enabled
         return model.model_validate(payload)
 
     @staticmethod
     def _config_model(channel_type: str) -> Type[BaseModel] | None:
         from ..domain.channels.catalog import get_channel_config_model
 
-        return get_channel_config_model(channel_type)
+        model = get_channel_config_model(channel_type)
+        if model is not None:
+            return model
+
+        # Plugin models are optional at load time: an uninstalled plugin's
+        # settings remain round-trippable, while a loaded plugin gets the
+        # same semantic validation as a built-in Channel.
+        from ..plugins.registry import PluginRegistry
+
+        registration = PluginRegistry().get_channel_registration(
+            channel_type,
+        )
+        plugin_model = getattr(registration, "config_model", None)
+        if isinstance(plugin_model, type) and issubclass(
+            plugin_model, BaseModel
+        ):
+            return plugin_model
+        return None
 
 
 class AgentTransportConfig(BaseModel):
