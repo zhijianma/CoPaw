@@ -2,6 +2,82 @@
 
 > 状态：已实施。本文是唯一有效设计；V4 及开发阶段迁移方案已废止。
 
+## 0. 为什么必须重构
+
+### 0.1 旧架构的问题
+
+旧实现把“平台接入”“Agent 归属”“运行时请求”“Console 展示协议”放在
+Channel 层交叉处理，形成了错误的依赖方向：
+
+```mermaid
+flowchart LR
+    UI[Console WebUI] --> E[Console Envelope]
+    E --> AR[AgentRequest / AgentResponse]
+    C1[Feishu Channel] --> AR
+    C2[DingTalk Channel] --> AR
+    C3[Telegram Channel] --> AR
+    AR --> R[Agent Runtime]
+
+    G[Global ChannelConfig] --> C1
+    G --> C2
+    G --> C3
+    EP[Endpoint] --> B[Binding]
+    B --> A[Agent]
+
+    S1[Registry specs] -.重复.-> C1
+    S2[CLI names] -.重复.-> C1
+    S3[API catalog] -.重复.-> C1
+    S4[Config models] -.重复.-> C1
+```
+
+主要问题如下：
+
+| 问题 | 旧表现 | 直接后果 |
+|---|---|---|
+| Channel 与 Agent 归属不清 | 全局 Channel、Endpoint、Binding、Agent 配置同时表达归属 | 多事实来源，启动和保存时互相覆盖 |
+| Console 被当作普通 Channel | `Envelope` 位于 Channel 体系并定义 `AgentRequest/AgentResponse` 展示协议 | Console 的 UI 协议泄漏给所有外部 Channel |
+| 平台转换与运行时协议耦合 | 每个 Adapter 都要构造旧请求并解析旧响应 | 重复转换代码多，新增 Channel 成本高 |
+| `type` 同时承担类型和实例身份 | `feishu` 既用于选 Adapter，又用于队列、配置和会话寻址 | 同类型只能配置一份，扩展后发生会话和状态碰撞 |
+| 配置模型职责过重 | 平台配置、启停、实例身份和运行时字段混在 flat dict/BaseModel 中 | API、落盘与运行时投影难以保持一致 |
+| 内置 Channel 重复定义 | Registry、CLI、API、配置模型分别维护 key、类名、名称和能力 | 新增或改名容易漏改，产生“可展示但不可加载”等不一致 |
+| 历史兼容散落 | Chat、Session、状态路径由各 Channel 自行拼接 | 修改实例模型时必须到处补迁移和兼容判断 |
+| Console 与外部消息共用旧协议 | AgentScope Event 先转 Envelope/AgentResponse，再被平台转换 | 产生无业务价值的二次转换和协议耦合 |
+
+### 0.2 根因
+
+这些问题不是几个独立 bug，而是三个基础抽象缺失：
+
+1. **缺少稳定所有权**：没有明确规定 `Agent -> Channel instance` 是配置聚合
+   关系，导致用 Endpoint/Binding 做运行时补丁。
+2. **缺少稳定身份**：没有区分 `channel_type` 与 `instance_id`，类型键被迫
+   承担配置、路由、会话和状态的全部身份。
+3. **缺少协议边界**：没有以 `TurnRequest/RuntimeEvent` 作为 Core 边界，
+   Console 的 Envelope 协议被误当成通用 Agent 协议。
+
+根因链路：
+
+```mermaid
+flowchart TD
+    O[所有权不明确] --> B[Endpoint/Binding 补丁]
+    I[类型与实例身份混用] --> N[无法同类型多实例]
+    P[Console 协议没有隔离] --> D[各 Channel 重复转换]
+    B --> M[多份配置与迁移分支]
+    N --> M
+    D --> M
+    M --> X[数据不一致与维护成本持续上升]
+```
+
+### 0.3 不重构的后果
+
+- 每增加一种 Channel，都要同时修改 Registry、配置、API、CLI 和消息转换。
+- 支持同类型第二个机器人时，只能继续堆 Endpoint/Binding 和特殊会话前缀。
+- Console UI 协议一旦变化，所有外部 Channel 都可能被迫跟随修改。
+- 多个版本进程共享配置时，缺少单一稳定格式，容易反复回写和损坏数据。
+- 为兼容开发期临时格式而不断增加迁移分支，最终迁移代码比业务模型更复杂。
+
+因此本次重构不是单纯增加“多 Channel 配置”，而是重新建立所有权、身份、
+Core 协议和展示协议四条边界，从根源消除耦合与重复。
+
 ## 1. 最终决策
 
 - Channel 配置归 Agent 所有，`agent.json` 是唯一事实来源。
