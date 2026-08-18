@@ -72,10 +72,10 @@ def test_agent_model_config_defaults_to_none(
     assert agent_config.active_model is None
 
 
-def test_load_migrates_channels_rewritten_by_legacy_runtime(
+def test_loads_current_channel_instances_without_explicit_schema_version(
     mock_agent_workspace,
 ) -> None:
-    """A legacy rewrite after startup is migrated before validation."""
+    """The stable instance map does not depend on a persisted marker."""
     import json
 
     agent_path = mock_agent_workspace / "agent.json"
@@ -83,9 +83,13 @@ def test_load_migrates_channels_rewritten_by_legacy_runtime(
     data.pop("channel_schema_version", None)
     data["channels"] = {
         "feishu": {
+            "type": "feishu",
+            "name": "Primary Feishu",
             "enabled": True,
-            "app_id": "legacy-app",
-            "app_secret": "legacy-secret",
+            "settings": {
+                "app_id": "primary-app",
+                "app_secret": "primary-secret",
+            },
         },
         "feishu-2f87b8f4": {
             "type": "feishu",
@@ -105,11 +109,13 @@ def test_load_migrates_channels_rewritten_by_legacy_runtime(
     agent_config = load_agent_config("test_agent")
 
     assert agent_config.channels["feishu"].type == "feishu"
-    assert agent_config.channels["feishu"].settings["app_id"] == ("legacy-app")
+    assert agent_config.channels["feishu"].settings["app_id"] == (
+        "primary-app"
+    )
     assert agent_config.channels["feishu-2f87b8f4"].type == "feishu"
     persisted = json.loads(agent_path.read_text(encoding="utf-8"))
-    assert persisted["channel_schema_version"] == 5
-    assert persisted["channels"]["feishu"]["type"] == "feishu"
+    assert "channel_schema_version" not in persisted
+    assert persisted["channels"] == data["channels"]
 
 
 def test_agent_model_config_can_be_set(
