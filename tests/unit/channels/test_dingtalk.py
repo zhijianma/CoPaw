@@ -36,7 +36,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 from qwenpaw.exceptions import ChannelError
 from tests.fixtures.channels.mock_http import MockAiohttpSession
@@ -545,7 +545,10 @@ class TestDingTalkTokenCache:
         assert token == "new_token_123"
         assert dingtalk_channel._token_value == "new_token_123"
         # Token expires in the future (uses loop time + TTL)
-        assert dingtalk_channel._token_expires_at > asyncio.get_running_loop().time()
+        assert (
+            dingtalk_channel._token_expires_at
+            > asyncio.get_running_loop().time()
+        )
         assert dingtalk_channel._token_expires_at <= (
             asyncio.get_running_loop().time() + DINGTALK_TOKEN_TTL_SECONDS
         )
@@ -2743,7 +2746,8 @@ class TestDingTalkSendMethodsExtended:
             )
 
         assert any(
-            "no sessionWebhook" in str(call) for call in mock_warning.call_args_list
+            "no sessionWebhook" in str(call)
+            for call in mock_warning.call_args_list
         )
 
     async def test_send_no_delivery_target_raises_for_api_send(

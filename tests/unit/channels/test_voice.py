@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 # =============================================================================
 # Fixtures
@@ -336,7 +336,9 @@ class TestVoiceChannelLifecycle:
         mock_twilio_manager.configure_voice_webhook.assert_called_once()
         call_args = mock_twilio_manager.configure_voice_webhook.call_args
         assert call_args[0][0] == "phone_123"  # phone_number_sid
-        assert "https://test-tunnel.example.com/voice/incoming" in call_args[0][1]
+        assert (
+            "https://test-tunnel.example.com/voice/incoming" in call_args[0][1]
+        )
 
     async def test_start_tunnel_failure(
         self,

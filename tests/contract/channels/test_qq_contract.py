@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 from tests.contract.channels import ChannelContractTest
 

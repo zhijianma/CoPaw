@@ -38,14 +38,14 @@ from qwenpaw.schemas import (
 
 from ....config.config import OneBotConfig as OneBotChannelConfig
 from ....utils.http import is_loopback_host, probe_host_for_bind_host
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     OnReplySent,
     OutgoingContentPart,
     ProcessHandler,
 )
-from ..utils import file_url_to_local_path, split_text
+from ....presentation.utils import file_url_to_local_path, split_text
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,8 @@ _DEFAULT_WS_HOST = "127.0.0.1"
 _AUTH_SCHEMES = frozenset({"bearer", "token"})
 _CODE_FENCE_RE = re.compile(r"^[ \t]{0,3}(?P<mark>`{3,}|~{3,})")
 _MARKDOWN_LINK_RE = re.compile(
-    r"\[(?P<label>[^\]\n]+)\]" r"\((?P<url>https?://(?:[^\s()]|\([^\s()]*\))+)\)",
+    r"\[(?P<label>[^\]\n]+)\]"
+    r"\((?P<url>https?://(?:[^\s()]|\([^\s()]*\))+)\)",
 )
 _WRAPPED_URL_RE = re.compile(
     r"(?P<mark>\*\*|__)(?P<url>https?://\S+?)(?P=mark)",
@@ -417,7 +418,8 @@ class OneBotChannel(BaseChannel):
             access_token=config.access_token or "",
             bot_prefix=config.bot_prefix or "",
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=config.dm_policy,
             group_policy=config.group_policy,
@@ -580,7 +582,8 @@ class OneBotChannel(BaseChannel):
                 break
             if not await self._is_server_healthy():
                 logger.warning(
-                    "onebot: watchdog detected server not healthy, " "restarting...",
+                    "onebot: watchdog detected server not healthy, "
+                    "restarting...",
                 )
                 try:
                     await self._stop_ws_server()
@@ -1131,7 +1134,9 @@ class OneBotChannel(BaseChannel):
 
         data = result.get("data") if isinstance(result, dict) else None
         message = data.get("message") if isinstance(data, dict) else None
-        raw_message = data.get("raw_message") if isinstance(data, dict) else None
+        raw_message = (
+            data.get("raw_message") if isinstance(data, dict) else None
+        )
         segments = self._normalize_onebot_segments(message)
         raw_segments = self._normalize_onebot_segments(raw_message)
         if (
@@ -1190,7 +1195,9 @@ class OneBotChannel(BaseChannel):
             file_segment_index += 1
             source_data = source_segment.get("data", {})
             file_id = (
-                source_data.get("file_id", "") if isinstance(source_data, dict) else ""
+                source_data.get("file_id", "")
+                if isinstance(source_data, dict)
+                else ""
             )
             file_url = getattr(part, "file_url", "") or ""
             # Already a valid URL — keep as-is
@@ -1426,7 +1433,8 @@ class OneBotChannel(BaseChannel):
             target_id = int(target)
         except (TypeError, ValueError):
             logger.warning(
-                "onebot: invalid target %r (to_handle=%r), " "dropping message",
+                "onebot: invalid target %r (to_handle=%r), "
+                "dropping message",
                 target,
                 to_handle,
             )

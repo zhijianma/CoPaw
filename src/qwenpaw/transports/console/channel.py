@@ -19,38 +19,54 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from collections.abc import AsyncIterator, Callable
+from typing import Any, AsyncGenerator, Dict, List, Optional, TypeAlias, Union
 
 from qwenpaw.schemas import (
-    MessageType,
-    Message,
-    RunStatus,
-)
-
-from ...app.channels.base import (
-    BaseChannel,
     AudioContent,
-    ContentType,
     FileContent,
     ImageContent,
-    OnReplySent,
-    OutgoingContentPart,
-    ProcessHandler,
-    VideoContent,
+    Message,
+    MessageType,
+    RunStatus,
     TextContent,
+    VideoContent,
 )
-from ...app.channels.renderer import ChannelDisplayConfig
-from ...app.channels.utils import file_url_to_local_path
+
+from ...app.inbound_debounce import apply_no_text_debounce
+from ...app.turn_lifecycle import (
+    clear_session_turn_usage,
+    commit_turn_usage,
+    finish_response_cycle,
+    response_error_message,
+)
+from ...presentation.renderer import (
+    ChannelDisplayConfig,
+    MessageRenderer,
+    RenderStyle,
+)
+from ...schemas import (
+    ContentType,
+)
+from ...presentation.utils import file_url_to_local_path
 from ...app.console_push_store import append as push_store_append
 from ...config.config import ConsoleTransportConfig
+from ...config.utils import load_config
 from ...constant import DEFAULT_MEDIA_DIR
+from ...domain.turns.events import RuntimeEvent
 from ...domain.turns.models import TurnRequest
 from ...exceptions import ModelQuotaExceededException
-from ...protocols.console import ConsoleEventPresenter, ConsoleTurnIngress
+from ...protocols.builtins import get_protocol_registry
 from ...protocols.ports import PresentationContext
 from .sse import ConsoleSseEncoder
 
 logger = logging.getLogger(__name__)
+
+ProcessHandler = Callable[[TurnRequest], AsyncIterator[RuntimeEvent]]
+OnReplySent = Callable[[str, str, str], None] | None
+OutgoingContentPart: TypeAlias = (
+    TextContent | ImageContent | VideoContent | AudioContent | FileContent
+)
 
 # ANSI colour helpers (degrade gracefully if not a tty)
 _USE_COLOR = hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
@@ -66,8 +82,8 @@ def _ts() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
-class ConsoleTransport(BaseChannel):
-    """Console Channel: prints agent responses to stdout.
+class ConsoleTransport:
+    """Console transport: presents agent responses to HTTP/SSE clients.
 
     Input is handled by ``POST /api/console/chat``; this channel only
     takes care of output (printing to the terminal).
@@ -96,6 +112,7 @@ class ConsoleTransport(BaseChannel):
         workspace_dir: Optional[Union[str, Path]] = None,
         media_dir: Optional[str] = None,
         agent_id: str = "default",
+        no_text_debounce: bool = True,
     ):
         """Initialize ConsoleTransport.
 
@@ -109,14 +126,30 @@ class ConsoleTransport(BaseChannel):
                 file names (media_dir = workspace_dir / "media").
             media_dir: Agent workspace directory for resolving uploads.
         """
-        super().__init__(
-            process,
-            on_reply_sent=on_reply_sent,
-            display_config=display_config,
+        self._process = process
+        self._on_reply_sent = on_reply_sent
+        self._workspace = None
+        self._no_text_debounce = no_text_debounce
+        self._pending_content_by_session: dict[str, list[Any]] = {}
+        self._display_config = display_config or ChannelDisplayConfig()
+        config = load_config()
+        internal_tools = frozenset(
+            name
+            for name, tool in config.tools.builtin_tools.items()
+            if not tool.display_to_user
         )
+        self._render_style = RenderStyle(
+            display_config=self._display_config,
+            internal_tools=internal_tools,
+        )
+        self._renderer = MessageRenderer(self._render_style)
         self.enabled = enabled
         self.bot_prefix = bot_prefix
-        self._ingress = ConsoleTurnIngress(default_agent_id=agent_id)
+        self._protocol_registry = get_protocol_registry()
+        self._ingress = self._protocol_registry.create_ingress(
+            "console",
+            default_agent_id=agent_id,
+        )
         self._workspace_dir = (
             Path(workspace_dir).expanduser() if workspace_dir else None
         )
@@ -140,6 +173,60 @@ class ConsoleTransport(BaseChannel):
                     "Failed to reconfigure stdout encoding on Windows: %s",
                     e,
                 )
+
+    def set_workspace(
+        self,
+        workspace: Any,
+        command_registry: Any = None,
+    ) -> None:
+        """Bind application services without joining ChannelManager."""
+        del command_registry
+        self._workspace = workspace
+
+    def _apply_no_text_debounce(
+        self,
+        session_id: str,
+        content_parts: list[Any],
+    ) -> tuple[bool, list[Any]]:
+        return apply_no_text_debounce(
+            session_id=session_id,
+            content_parts=content_parts,
+            enabled=self._no_text_debounce,
+            pending_by_session=self._pending_content_by_session,
+        )
+
+    def _message_to_content_parts(
+        self,
+        message: Any,
+    ) -> list[OutgoingContentPart]:
+        return self._renderer.message_to_parts(message)
+
+    @staticmethod
+    def _get_response_error_message(response: Any) -> str | None:
+        return response_error_message(response)
+
+    @staticmethod
+    def _clear_session_turn_usage(session_id: str) -> None:
+        clear_session_turn_usage(session_id)
+
+    async def _commit_turn_usage(
+        self,
+        request: TurnRequest,
+        session_id: str,
+        *,
+        emit_sse: bool = True,
+    ) -> list[str]:
+        return await commit_turn_usage(
+            workspace=self._workspace,
+            request=request,
+            session_id=session_id,
+            default_channel=self.channel,
+            on_ready=self._on_turn_usage_ready,
+            emit_sse=emit_sse,
+        )
+
+    async def _finish_response_cycle(self, session_id: str) -> None:
+        await finish_response_cycle(self._workspace, session_id)
 
     @property
     def media_dir(self) -> Path:
@@ -193,6 +280,7 @@ class ConsoleTransport(BaseChannel):
             workspace_dir=workspace_dir,
             media_dir=config.media_dir or "",
             agent_id=agent_id,
+            no_text_debounce=no_text_debounce,
         )
 
     def resolve_session_id(
@@ -327,8 +415,8 @@ class ConsoleTransport(BaseChannel):
     ) -> None:
         """Print a one-line terminal summary when per-turn usage is staged.
 
-        The shared SSE block is built by ``BaseChannel`` — the console only
-        adds the terminal status line on top of it.
+        The shared usage service builds the SSE block; Console only adds the
+        terminal status line.
         """
         if turn and ctx:
             self._print_status_line(turn, ctx)
@@ -436,11 +524,13 @@ class ConsoleTransport(BaseChannel):
             last_response = None
             event_count = 0
             sse_encoder = ConsoleSseEncoder()
-            presenter = ConsoleEventPresenter(session_id=session_id)
             presentation_context = PresentationContext(
                 protocol="console",
                 conversation_id=session_id,
                 turn_id=request.turn_id,
+            )
+            presenter = self._protocol_registry.create_presenter(
+                presentation_context,
             )
 
             async def _presented_events() -> AsyncGenerator[Any, None]:
@@ -722,6 +812,7 @@ class ConsoleTransport(BaseChannel):
         """
         Send content parts — prints to stdout and pushes to frontend store.
         """
+        del to_handle
         self._print_parts(parts)
         sid = (meta or {}).get("session_id")
         if sid and not (meta or {}).get("suppress_console_push"):

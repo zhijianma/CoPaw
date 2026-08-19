@@ -23,7 +23,7 @@ async def create_console_transport(ws: "Workspace", _service):
         return None
 
     from ...transports.console.channel import ConsoleTransport
-    from ..channels.renderer import ChannelDisplayConfig
+    from ...presentation.renderer import ChannelDisplayConfig
 
     transport = ConsoleTransport.from_config(
         process=ws.stream_events,

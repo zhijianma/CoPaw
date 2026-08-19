@@ -21,6 +21,7 @@ class ReplyTarget:
 
     channel_type: str
     conversation_id: str
+    recipient_id: str | None = None
     thread_id: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 

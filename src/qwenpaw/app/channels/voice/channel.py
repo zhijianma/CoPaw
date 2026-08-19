@@ -8,7 +8,7 @@ import logging
 import secrets
 from typing import Any, AsyncIterator, Dict, Optional
 
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import BaseChannel, OnReplySent, ProcessHandler
 from .session import CallSessionManager
 from .twilio_manager import TwilioManager
@@ -62,7 +62,8 @@ class VoiceChannel(BaseChannel):
         instance = cls(
             process,
             on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
         )
         instance._config = config

@@ -40,7 +40,7 @@ def _context() -> ControlContext:
     return ControlContext(
         workspace=SimpleNamespace(),
         payload=None,
-        channel=None,
+        channel_type="console",
         session_id="root-session",
         user_id="u1",
         agent_id="agent-a",

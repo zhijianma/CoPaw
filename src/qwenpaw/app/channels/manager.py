@@ -17,13 +17,16 @@ from typing import (
     TYPE_CHECKING,
 )
 
-from .base import BaseChannel, ContentType, ProcessHandler, TextContent
-from .renderer import ChannelDisplayConfig
+from .base import BaseChannel, ContentType, ProcessHandler
+from ...presentation.renderer import ChannelDisplayConfig
 from .command_registry import CommandRegistry
 from .registry import get_channel_registry
 from .unified_queue_manager import UnifiedQueueManager
 from ...config import get_available_channels
 from ...domain.channels.identity import ChannelIdentity
+from ...domain.channels.ports import ReplyEvent, ReplyEventType
+from ...domain.turns.events import RuntimeFailure
+from ...schemas import Message, MessageType, Role, RunStatus, TextContent
 
 if TYPE_CHECKING:
     from ...config.config import AgentProfileConfig, Config
@@ -136,7 +139,7 @@ class ChannelManager:
         on_last_dispatch: called when a user send+reply was sent.
         """
         available = get_available_channels()
-        registry = get_channel_registry(surface="channel")
+        registry = get_channel_registry()
         channels: list[BaseChannel] = [
             ch_cls.from_env(process, on_reply_sent=on_last_dispatch)
             for key, ch_cls in registry.items()
@@ -168,7 +171,7 @@ class ChannelManager:
             raise ValueError("Agent configuration is required")
         show_tool_details = getattr(config, "show_tool_details", True)
         channels: list[BaseChannel] = []
-        registry = get_channel_registry(surface="channel")
+        registry = get_channel_registry()
         for instance_id, channel_config in agent_config.channels.items():
             channel_type = channel_config.type
             identity = ChannelIdentity(instance_id, channel_type)
@@ -792,25 +795,23 @@ class ChannelManager:
                         f"Failed to stop old channel: {old_channel.channel}",
                     )
 
-    async def send_event(
-        self,
-        *,
-        channel: str,
-        user_id: str,
-        session_id: str,
-        event: Any,
-        meta: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        ch = await self.get_channel(channel)
+    async def deliver_reply(self, event: ReplyEvent) -> None:
+        """Deliver one canonical reply to its Channel instance."""
+        if not isinstance(event, ReplyEvent):
+            raise TypeError("ChannelManager delivers ReplyEvent objects")
+
+        target = event.target
+        ch = await self.get_channel(target.channel_type)
         if not ch:
-            raise KeyError(f"channel not found: {channel}")
+            raise KeyError(f"channel not found: {target.channel_type}")
         identity = getattr(ch, "_channel_identity", None)
         platform_session_id = (
-            identity.platform_session_id(session_id)
+            identity.platform_session_id(target.conversation_id)
             if isinstance(identity, ChannelIdentity)
-            else session_id
+            else target.conversation_id
         )
-        merged_meta = dict(meta or {})
+        user_id = target.recipient_id or ""
+        merged_meta = dict(target.metadata)
         merged_meta["session_id"] = platform_session_id
         merged_meta["user_id"] = user_id
         bot_prefix = getattr(ch, "bot_prefix", None) or getattr(
@@ -820,12 +821,34 @@ class ChannelManager:
         )
         if bot_prefix and "bot_prefix" not in merged_meta:
             merged_meta["bot_prefix"] = bot_prefix
-        await ch.send_event(
+
+        payload = event.payload
+        if event.type is ReplyEventType.FAILED and isinstance(
+            payload,
+            RuntimeFailure,
+        ):
+            payload = Message(
+                type=MessageType.MESSAGE,
+                role=Role.ASSISTANT,
+                status=RunStatus.Completed,
+                content=[TextContent(text=payload.error_text)],
+            )
+            payload.object = "message"
+        if (
+            event.type
+            not in {
+                ReplyEventType.MESSAGE,
+                ReplyEventType.FAILED,
+            }
+            or getattr(payload, "status", None) != RunStatus.Completed
+        ):
+            return
+
+        to_handle = ch.to_handle_from_target(
             user_id=user_id,
             session_id=platform_session_id,
-            event=event,
-            meta=merged_meta,
         )
+        await ch.send_message_content(to_handle, payload, merged_meta)
 
     async def send_text(
         self,

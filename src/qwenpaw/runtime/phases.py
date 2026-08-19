@@ -9,7 +9,7 @@ Eight phase points covering the full request lifecycle::
     POST_AGENT_BUILD  — agent constructed; inject mode context
     PRE_EXECUTE       — bootstrap / prompt refresh / env stack push
     POST_RESPONSE     — session.save / cron trigger writeback
-    ON_ERROR          — exception normalization, cancel envelope
+    ON_ERROR          — exception normalization and cancellation handling
     FINALLY           — idempotent cleanup (close mcp, reset ContextVars)
 
 Phase points are fixed; the slash-command registry and ``AgentBuilder.build``

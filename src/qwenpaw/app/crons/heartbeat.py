@@ -265,18 +265,13 @@ async def run_heartbeat_once(
                 presenter = ChannelOutboundPresenter(
                     channel_type=ld.channel,
                     conversation_id=ld.session_id,
+                    recipient_id=ld.user_id,
                 )
                 async for runtime_event in workspace.stream_events(
                     turn_request,
                 ):
                     for event in presenter.present(runtime_event):
-                        await channel_manager.send_event(
-                            channel=ld.channel,
-                            user_id=ld.user_id,
-                            session_id=ld.session_id,
-                            event=event,
-                            meta={},
-                        )
+                        await channel_manager.deliver_reply(event)
 
             try:
                 await asyncio.wait_for(

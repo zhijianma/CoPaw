@@ -22,9 +22,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
-from qwenpaw.app.channels.console.channel import ConsoleChannel
+from qwenpaw.transports.console.channel import (
+    ConsoleTransport as ConsoleChannel,
+)
 from qwenpaw.domain.turns.events import RuntimeEvent, RuntimeEventType
 
 
@@ -111,7 +113,9 @@ class TestConsoleChannelUnit:
 
     def test_init_stores_enabled_flag(self, mock_process):
         """Constructor should store the enabled flag."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         ch = ConsoleChannel(
             process=mock_process,
@@ -295,7 +299,9 @@ class TestConsoleChannelUnit:
     @pytest.mark.asyncio
     async def test_send_disabled_does_nothing(self, mock_process, capsys):
         """send() should do nothing when disabled."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         ch = ConsoleChannel(
             process=mock_process,
@@ -311,7 +317,9 @@ class TestConsoleChannelUnit:
     @pytest.mark.asyncio
     async def test_send_includes_prefix(self, mock_process, capsys):
         """send() should include bot_prefix before message."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         ch = ConsoleChannel(
             process=mock_process,
@@ -335,7 +343,9 @@ class TestConsoleChannelUnit:
     @pytest.mark.asyncio
     async def test_start_when_disabled(self, mock_process):
         """start() should handle disabled channel gracefully."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         ch = ConsoleChannel(
             process=mock_process,
@@ -356,7 +366,9 @@ class TestConsoleChannelUnit:
     @pytest.mark.asyncio
     async def test_stop_when_disabled(self, mock_process):
         """stop() should handle disabled channel gracefully."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         ch = ConsoleChannel(
             process=mock_process,
@@ -403,7 +415,9 @@ class TestConsoleChannelFromEnv:
 
     def test_from_env_reads_enabled(self, mock_process, monkeypatch):
         """from_env should read CONSOLE_CHANNEL_ENABLED from environment."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         monkeypatch.setenv("CONSOLE_CHANNEL_ENABLED", "0")
 
@@ -413,7 +427,9 @@ class TestConsoleChannelFromEnv:
 
     def test_from_env_reads_bot_prefix(self, mock_process, monkeypatch):
         """from_env should read CONSOLE_BOT_PREFIX from environment."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         monkeypatch.setenv("CONSOLE_BOT_PREFIX", "[TEST] ")
 
@@ -423,7 +439,9 @@ class TestConsoleChannelFromEnv:
 
     def test_from_env_defaults(self, mock_process, monkeypatch):
         """from_env should use sensible defaults."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         # Clear environment
         monkeypatch.delenv("CONSOLE_CHANNEL_ENABLED", raising=False)
@@ -445,7 +463,9 @@ class TestConsoleChannelFromConfig:
 
     def test_from_config_uses_config_values(self, mock_process):
         """from_config should use values from config object."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
         from qwenpaw.config.config import ConsoleTransportConfig
 
         config = ConsoleTransportConfig(
@@ -477,7 +497,9 @@ class TestConsolePrinting:
     @pytest.fixture
     def channel_for_print(self):
         """Create channel for testing print methods."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         return ConsoleChannel(
             process=AsyncMock(),
@@ -628,7 +650,9 @@ class TestConsoleStreaming:
     @pytest.fixture
     def stream_channel(self):
         """Create channel for stream testing."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         return ConsoleChannel(
             process=AsyncMock(),
@@ -843,9 +867,10 @@ class TestConsoleStreaming:
         }
 
         events = []
-        with patch(
-            "qwenpaw.transports.console.channel.ConsoleEventPresenter",
-            _BrokenPresenter,
+        with patch.object(
+            stream_channel._protocol_registry,
+            "create_presenter",
+            return_value=_BrokenPresenter(),
         ):
             async for event in stream_channel.stream_one(payload):
                 events.append(event)
@@ -884,7 +909,9 @@ class TestConsoleMediaHandling:
     @pytest.fixture
     def media_channel(self):
         """Create channel for media testing."""
-        from qwenpaw.app.channels.console.channel import ConsoleChannel
+        from qwenpaw.transports.console.channel import (
+            ConsoleTransport as ConsoleChannel,
+        )
 
         return ConsoleChannel(
             process=AsyncMock(),

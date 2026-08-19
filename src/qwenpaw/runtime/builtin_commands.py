@@ -192,18 +192,9 @@ def _make_control_adapter(
                 ],
             )
 
-        channel = None
-        channel_mgr = getattr(workspace, "channel_manager", None)
-        if channel_mgr is not None:
-            channel_id = request.source.channel_type or "console"
-            try:
-                channel = await channel_mgr.get_channel(
-                    channel_id,
-                )
-            except Exception:
-                pass
-
-        full_query = f"/{command_name} {args}".strip() if args else f"/{command_name}"
+        full_query = (
+            f"/{command_name} {args}".strip() if args else f"/{command_name}"
+        )
         parsed_args = parse_args(
             full_query,
             f"/{command_name}",
@@ -212,7 +203,10 @@ def _make_control_adapter(
         ctrl_ctx = ControlContext(
             workspace=workspace,
             payload=request,
-            channel=channel,
+            channel_type=(
+                getattr(getattr(request, "source", None), "channel_type", None)
+                or "console"
+            ),
             session_id=getattr(ctx, "session_id", "") or "",
             user_id=(getattr(request, "user_id", "") if request else "") or "",
             agent_id=getattr(ctx, "agent_id", "") or "",
@@ -618,7 +612,11 @@ async def _skill_fallback_handler(
 
     skills_dir = get_workspace_skills_dir(Path(workspace_dir))
     skill_dir = next(
-        (skills_dir / sn for sn in effective_skills if sn.lower() == skill_name),
+        (
+            skills_dir / sn
+            for sn in effective_skills
+            if sn.lower() == skill_name
+        ),
         None,
     )
     if skill_dir is None or not skill_dir.exists():

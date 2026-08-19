@@ -37,7 +37,11 @@ from qwenpaw.schemas import (
     MessageType,
 )
 
-from .renderer import ChannelDisplayConfig, MessageRenderer, RenderStyle
+from ...presentation.renderer import (
+    ChannelDisplayConfig,
+    MessageRenderer,
+    RenderStyle,
+)
 from .schema import ChannelType
 from .access_control import get_access_control_store
 from ...config.utils import load_config
@@ -46,6 +50,17 @@ from ...domain.channels.ports import ReplyEventType
 from .reply_delivery import ChannelReplyDelivery
 from .event_projector import ChannelEventProjector
 from .turn import ChannelTurn
+from ..inbound_debounce import (
+    apply_no_text_debounce,
+    content_has_audio,
+    content_has_text,
+)
+from ..turn_lifecycle import (
+    clear_session_turn_usage,
+    commit_turn_usage,
+    finish_response_cycle,
+    response_error_message,
+)
 
 # Optional callback to enqueue payload (set by manager)
 EnqueueCallback = Optional[Callable[[Any], None]]
@@ -81,9 +96,7 @@ OutgoingContentPart = Union[
 
 
 class BaseChannel(ABC):
-    """Base for all channels. Queue lives in ChannelManager; channel defines
-    how to consume via consume_one().
-    """
+    """Base implementation for platform Channel adapters."""
 
     channel: ChannelType
 
@@ -309,28 +322,11 @@ class BaseChannel(ABC):
 
     def _content_has_text(self, contents: List[Any]) -> bool:
         """True if contents has at least one TEXT or REFUSAL with non-empty."""
-        if not contents:
-            return False
-        for c in contents:
-            t = getattr(c, "type", None)
-            if (
-                t == ContentType.TEXT
-                and (getattr(c, "text", None) or "").strip()
-            ):
-                return True
-            if (
-                t == ContentType.REFUSAL
-                and (getattr(c, "refusal", None) or "").strip()
-            ):
-                return True
-        return False
+        return content_has_text(contents)
 
     def _content_has_audio(self, contents: List[Any]) -> bool:
         """True if contents has at least one AUDIO block."""
-        return any(
-            getattr(c, "type", None) == ContentType.AUDIO
-            for c in (contents or [])
-        )
+        return content_has_audio(contents)
 
     def _apply_no_text_debounce(
         self,
@@ -343,31 +339,12 @@ class BaseChannel(ABC):
         Audio-only messages bypass debounce and are processed immediately
         (voice messages are standalone user input, not partial uploads).
         """
-        if not self._no_text_debounce:
-            pending = self._pending_content_by_session.pop(session_id, [])
-            return (True, pending + list(content_parts))
-        if not self._content_has_text(content_parts):
-            if self._content_has_audio(content_parts):
-                # Audio-only messages (e.g. voice messages) should be
-                # processed immediately — they are complete user input.
-                pending = self._pending_content_by_session.pop(
-                    session_id,
-                    [],
-                )
-                merged = pending + list(content_parts)
-                return (True, merged)
-            self._pending_content_by_session.setdefault(
-                session_id,
-                [],
-            ).extend(content_parts)
-            logger.debug(
-                "channel debounce: no text, buffered session_id=%s",
-                session_id[:24] if session_id else "",
-            )
-            return (False, [])
-        pending = self._pending_content_by_session.pop(session_id, [])
-        merged = pending + list(content_parts)
-        return (True, merged)
+        return apply_no_text_debounce(
+            session_id=session_id,
+            content_parts=content_parts,
+            enabled=self._no_text_debounce,
+            pending_by_session=self._pending_content_by_session,
+        )
 
     # ── Access-control i18n messages ───────────────────────────────────
 
@@ -1459,24 +1436,7 @@ class BaseChannel(ABC):
 
     def _get_response_error_message(self, last_response: Any) -> Optional[str]:
         """Extract an error message from a canonical runtime failure."""
-        if not last_response:
-            return None
-        error_text = getattr(last_response, "error_text", None)
-        if error_text:
-            return str(error_text)
-        resp = last_response
-        if getattr(last_response, "data", None) is not None:
-            resp = last_response.data
-        elif getattr(last_response, "response", None) is not None:
-            resp = last_response.response
-        err = getattr(resp, "error", None)
-        if not err:
-            return None
-        if hasattr(err, "message"):
-            return getattr(err, "message", None) or str(err)
-        if isinstance(err, dict):
-            return err.get("message") or str(err)
-        return str(err)
+        return response_error_message(last_response)
 
     async def _before_consume_process(self, request: "ChannelTurn") -> None:
         """
@@ -1640,36 +1600,12 @@ class BaseChannel(ABC):
 
     async def _finish_response_cycle(self, session_id: str) -> None:
         """Run best-effort browser cleanup after one channel response cycle."""
-        if not session_id or self._workspace is None:
-            return
-        workspace_dir = getattr(self._workspace, "workspace_dir", None)
-        if workspace_dir is None:
-            return
-        try:
-            from ...browser.execution.kernel import get_default_kernel_manager
-            from ...browser.tool_entrypoint import derive_workspace_id
-
-            await get_default_kernel_manager().on_response_cycle_end(
-                derive_workspace_id(Path(workspace_dir)),
-                session_id,
-            )
-        # Intentional boundary: provider cleanup cannot fail a channel reply.
-        except Exception:
-            logger.warning(
-                "browser response-cycle cleanup failed for session=%s",
-                session_id[:30],
-                exc_info=True,
-            )
+        await finish_response_cycle(self._workspace, session_id)
 
     @staticmethod
     def _clear_session_turn_usage(session_id: str) -> None:
         """Drop any staged per-session usage (turn start / cancel / error)."""
-        if not session_id:
-            return
-        import importlib
-
-        mod = importlib.import_module("qwenpaw.token_usage.model_wrapper")
-        mod.TokenRecordingModelWrapper.pop_usage_for_session(session_id)
+        clear_session_turn_usage(session_id)
 
     async def _commit_turn_usage(
         self,
@@ -1679,80 +1615,14 @@ class BaseChannel(ABC):
         emit_sse: bool = True,
     ) -> List[str]:
         """Resolve, persist, and optionally emit a ``turn_usage`` SSE."""
-        if not session_id:
-            return []
-        try:
-            import importlib
-
-            turn_usage = importlib.import_module(
-                "qwenpaw.token_usage.turn_usage",
-            )
-            token_usage = importlib.import_module("qwenpaw.token_usage")
-
-            workspace = self._workspace
-            session = (
-                getattr(workspace, "session", None)
-                if workspace is not None
-                else None
-            )
-            agent_id = (
-                getattr(workspace, "agent_id", "default")
-                if workspace is not None
-                else "default"
-            )
-            user_id = (
-                getattr(request, "sender_id", "")
-                or getattr(request, "user_id", "")
-                or ""
-            )
-            source = getattr(request, "source", None)
-            channel = (
-                getattr(request, "channel_type", "")
-                or getattr(source, "channel_type", "")
-                or self.channel
-            )
-            turn, ctx, agent_state = await turn_usage.resolve_turn_usage(
-                session_id=session_id,
-                agent_id=agent_id,
-                session=session,
-                user_id=user_id,
-                channel=channel,
-            )
-            if turn is None and ctx is None:
-                return []
-            self._on_turn_usage_ready(turn, ctx)
-            if turn:
-                logger.info("Usage for session %s: %s", session_id, turn)
-            if session is not None:
-                try:
-                    await token_usage.persist_turn_usage(
-                        session=session,
-                        session_id=session_id,
-                        user_id=user_id,
-                        channel=channel,
-                        turn=turn,
-                        ctx=ctx,
-                        agent_state=agent_state,
-                    )
-                except Exception:
-                    logger.warning(
-                        "turn usage persist skipped",
-                        exc_info=True,
-                    )
-            if not emit_sse:
-                return []
-            payload: Dict[str, Any] = {
-                "type": "turn_usage",
-                "session_id": session_id,
-                "usage": turn,
-                "context_usage": ctx,
-            }
-            return [
-                f"data: {json.dumps(payload, ensure_ascii=False)}\n\n",
-            ]
-        except Exception:
-            logger.warning("turn usage commit skipped", exc_info=True)
-            return []
+        return await commit_turn_usage(
+            workspace=self._workspace,
+            request=request,
+            session_id=session_id,
+            default_channel=self.channel,
+            on_ready=self._on_turn_usage_ready,
+            emit_sse=emit_sse,
+        )
 
     def _on_turn_usage_ready(
         self,
@@ -1995,33 +1865,6 @@ class BaseChannel(ABC):
          meta['user_id'] anyway.
         """
         return user_id
-
-    async def send_event(
-        self,
-        *,
-        user_id: str,
-        session_id: str,
-        event: Any,
-        meta: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """Send a presented message to this channel (non-stream).
-
-        We only send when event is a completed message, then reuse
-        send_message_content().
-        """
-        # Delay import to avoid hard dependency at module import time
-
-        obj = getattr(event, "object", None)
-        status = getattr(event, "status", None)
-
-        if obj != "message" or status != RunStatus.Completed:
-            return
-
-        to_handle = self.to_handle_from_target(
-            user_id=user_id,
-            session_id=session_id,
-        )
-        await self.send_message_content(to_handle, event, meta)
 
     async def send_approval_notification(
         self,

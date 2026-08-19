@@ -31,7 +31,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 from tests.fixtures.channels.mock_http import MockAiohttpSession
 
@@ -268,7 +268,9 @@ class TestQQChannelFromConfig:
         from qwenpaw.app.channels.qq.channel import QQChannel
 
         class MockConfig:
-            enabled = False  # Use False instead of None to match actual behavior
+            enabled = (
+                False  # Use False instead of None to match actual behavior
+            )
             app_id = ""
             client_secret = ""
             bot_prefix = ""
@@ -286,7 +288,9 @@ class TestQQChannelFromConfig:
         assert channel.client_secret == ""
         assert channel.bot_prefix == ""
         # markdown_enabled may be None in implementation when config has None
-        assert channel._markdown_enabled is not False  # Should not be explicitly False
+        assert (
+            channel._markdown_enabled is not False
+        )  # Should not be explicitly False
 
 
 # =============================================================================
@@ -486,7 +490,10 @@ class TestShouldPlaintextFallbackFromMarkdown:
             _should_plaintext_fallback_from_markdown,
         )
 
-        assert _should_plaintext_fallback_from_markdown(ValueError("test")) is False
+        assert (
+            _should_plaintext_fallback_from_markdown(ValueError("test"))
+            is False
+        )
 
 
 class TestGetNextMsgSeq:
@@ -738,18 +745,34 @@ class TestResolveAttachmentType:
 
     def test_resolve_by_mime_type(self, qq_channel):
         """Should resolve type by MIME type."""
-        assert qq_channel._resolve_attachment_type("image/jpeg", "file") == "image"
-        assert qq_channel._resolve_attachment_type("video/mp4", "file") == "video"
-        assert qq_channel._resolve_attachment_type("audio/mpeg", "file") == "audio"
+        assert (
+            qq_channel._resolve_attachment_type("image/jpeg", "file")
+            == "image"
+        )
+        assert (
+            qq_channel._resolve_attachment_type("video/mp4", "file") == "video"
+        )
+        assert (
+            qq_channel._resolve_attachment_type("audio/mpeg", "file")
+            == "audio"
+        )
 
     def test_resolve_voice_type(self, qq_channel):
         """Should resolve voice as audio."""
-        assert qq_channel._resolve_attachment_type("voice", "audio.silk") == "audio"
+        assert (
+            qq_channel._resolve_attachment_type("voice", "audio.silk")
+            == "audio"
+        )
 
     def test_resolve_default_to_file(self, qq_channel):
         """Should default to file type."""
-        assert qq_channel._resolve_attachment_type("", "document.pdf") == "file"
-        assert qq_channel._resolve_attachment_type("application/pdf", "doc") == "file"
+        assert (
+            qq_channel._resolve_attachment_type("", "document.pdf") == "file"
+        )
+        assert (
+            qq_channel._resolve_attachment_type("application/pdf", "doc")
+            == "file"
+        )
 
 
 class TestMakeContentPart:
@@ -1734,7 +1757,9 @@ class TestWSConnectOnce:
         ) as mock_get_url:
             qq_channel._ws_connect_once(state, mock_websocket)
 
-            assert state.should_refresh_token is False  # Token cache was cleared
+            assert (
+                state.should_refresh_token is False
+            )  # Token cache was cleared
             mock_get_url.assert_called_once_with("token123")
             mock_ws.close.assert_called_once()
 

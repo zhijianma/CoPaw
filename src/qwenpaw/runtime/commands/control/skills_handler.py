@@ -54,7 +54,7 @@ class SkillsCommandHandler(BaseControlCommandHandler):
         if workspace_dir is None:
             return "**Error**: Workspace not initialized."
 
-        channel_id = context.channel.channel
+        channel_id = context.channel_type
         manifest = reconcile_workspace_manifest(workspace_dir)
         skills_dir = get_workspace_skills_dir(workspace_dir)
 

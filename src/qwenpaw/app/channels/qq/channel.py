@@ -38,14 +38,14 @@ from ....config.config import QQConfig as QQChannelConfig
 from ....constant import WORKING_DIR
 from ....exceptions import ChannelError, QQApiError
 
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     OnReplySent,
     OutgoingContentPart,
     ProcessHandler,
 )
-from ..utils import file_url_to_local_path, split_text
+from ....presentation.utils import file_url_to_local_path, split_text
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -829,7 +829,8 @@ class QQChannel(BaseChannel):
             bot_prefix=config.bot_prefix or "",
             markdown_enabled=getattr(config, "markdown_enabled", True),
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             media_dir=getattr(config, "media_dir", ""),
             workspace_dir=workspace_dir,
@@ -973,7 +974,8 @@ class QQChannel(BaseChannel):
         fallback_text, had_url = _sanitize_qq_text(text)
         if had_url:
             logger.info(
-                "qq send fallback: stripped URL content " "for API compatibility",
+                "qq send fallback: stripped URL content "
+                "for API compatibility",
             )
         try:
             await self._dispatch_text(
@@ -1018,7 +1020,8 @@ class QQChannel(BaseChannel):
             logger.exception("send text failed")
             return False
         logger.warning(
-            "send text failed due to URL content; " "trying aggressive URL stripping",
+            "send text failed due to URL content; "
+            "trying aggressive URL stripping",
         )
         aggressive_text, _ = _aggressive_sanitize_qq_text(
             original_text,
@@ -1687,7 +1690,9 @@ class QQChannel(BaseChannel):
     def _compute_reconnect_delay(self, state: _WSState) -> float:
         """Compute delay before next reconnect, updating state counters."""
         elapsed = (
-            time.time() - state.last_connect_time if state.last_connect_time else None
+            time.time() - state.last_connect_time
+            if state.last_connect_time
+            else None
         )
         if elapsed is not None and elapsed < QUICK_DISCONNECT_THRESHOLD:
             state.quick_disconnect_count += 1
@@ -1841,7 +1846,9 @@ class QQChannel(BaseChannel):
                 "detail": "QQ channel is disabled.",
             }
         issues = []
-        ws_thread_alive = self._ws_thread is not None and self._ws_thread.is_alive()
+        ws_thread_alive = (
+            self._ws_thread is not None and self._ws_thread.is_alive()
+        )
         if not ws_thread_alive:
             issues.append("WebSocket thread is not running")
         if self._http is None or self._http.closed:
@@ -2179,7 +2186,8 @@ class QQChannel(BaseChannel):
         # Group does not support file_type=4 (file)
         if message_type == "group" and media_type == _MEDIA_TYPE_FILE:
             logger.warning(
-                "qq: group does not support sending files (file_type=4), " "skipping",
+                "qq: group does not support sending files (file_type=4), "
+                "skipping",
             )
             return
 

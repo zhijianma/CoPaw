@@ -26,7 +26,7 @@ from qwenpaw.schemas import (
 )
 from qwenpaw.app.channels.turn import ChannelTurn
 from qwenpaw.app.channels.matrix.channel import MatrixChannel
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 from qwenpaw.config.config import MatrixConfig
 
 
@@ -654,7 +654,9 @@ class TestMatrixChannelMediaCallback:
         matrix_channel._enqueue.assert_called_once()
         payload = matrix_channel._enqueue.call_args[0][0]
         parts = payload["content_parts"]
-        assert any(getattr(p, "type", None) == ContentType.IMAGE for p in parts)
+        assert any(
+            getattr(p, "type", None) == ContentType.IMAGE for p in parts
+        )
 
     async def test_media_callback_video(
         self,
@@ -685,7 +687,9 @@ class TestMatrixChannelMediaCallback:
         matrix_channel._enqueue.assert_called_once()
         payload = matrix_channel._enqueue.call_args[0][0]
         parts = payload["content_parts"]
-        assert any(getattr(p, "type", None) == ContentType.VIDEO for p in parts)
+        assert any(
+            getattr(p, "type", None) == ContentType.VIDEO for p in parts
+        )
 
     async def test_media_callback_audio(
         self,
@@ -716,7 +720,9 @@ class TestMatrixChannelMediaCallback:
         matrix_channel._enqueue.assert_called_once()
         payload = matrix_channel._enqueue.call_args[0][0]
         parts = payload["content_parts"]
-        assert any(getattr(p, "type", None) == ContentType.AUDIO for p in parts)
+        assert any(
+            getattr(p, "type", None) == ContentType.AUDIO for p in parts
+        )
 
     async def test_media_callback_file(
         self,

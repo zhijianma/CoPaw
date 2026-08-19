@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for qwenpaw.app.channels.console.channel.ConsoleChannel.
+"""Unit tests for qwenpaw.transports.console.channel.ConsoleTransport.
 
-Focuses on the *local* ConsoleChannel helpers (start/stop/send, session
+Focuses on the ConsoleTransport helpers (start/stop/send, session
 resolution, parts rendering). Heavy streaming pipeline behavior is covered
 elsewhere; here we exercise pure helpers and async lifecycle methods.
 """
@@ -31,7 +31,9 @@ from qwenpaw.schemas import (
 
 @pytest.fixture
 def console_channel(tmp_path: Path):
-    from qwenpaw.app.channels.console.channel import ConsoleChannel
+    from qwenpaw.transports.console.channel import (
+        ConsoleTransport as ConsoleChannel,
+    )
 
     return ConsoleChannel(
         process=MagicMock(),
@@ -43,7 +45,9 @@ def console_channel(tmp_path: Path):
 
 @pytest.fixture
 def disabled_console_channel(tmp_path: Path):
-    from qwenpaw.app.channels.console.channel import ConsoleChannel
+    from qwenpaw.transports.console.channel import (
+        ConsoleTransport as ConsoleChannel,
+    )
 
     return ConsoleChannel(
         process=MagicMock(),

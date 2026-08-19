@@ -37,7 +37,7 @@ from ..turn import ChannelTurn
 
 from ....constant import DEFAULT_MEDIA_DIR
 from ....exceptions import ChannelError
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     ContentType,
@@ -47,7 +47,7 @@ from ..base import (
 )
 from .cards import WecomCardHandler
 from .utils import compress_image_for_wecom, format_markdown_tables
-from ..utils import file_url_to_local_path, split_text
+from ....presentation.utils import file_url_to_local_path, split_text
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +271,8 @@ class WecomChannel(BaseChannel):
             ),
             workspace_dir=workspace_dir,
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=getattr(config, "dm_policy", "open") or "open",
             group_policy=getattr(config, "group_policy", "open") or "open",
@@ -622,7 +623,9 @@ class WecomChannel(BaseChannel):
                     q_type = q_item.get("msgtype") or ""
                     if q_type == "text":
                         quoted_text = (
-                            (q_item.get("text") or {}).get("content", "").strip()
+                            (q_item.get("text") or {})
+                            .get("content", "")
+                            .strip()
                         )
                         if quoted_text:
                             text_parts.insert(
@@ -639,7 +642,11 @@ class WecomChannel(BaseChannel):
                         q_data = q_item.get(q_type) or {}
                         q_url = q_data.get("url") or ""
                         q_aes_key = q_data.get("aeskey") or ""
-                        hint = hint_default or q_data.get("filename") or "file.bin"
+                        hint = (
+                            hint_default
+                            or q_data.get("filename")
+                            or "file.bin"
+                        )
                         if q_url:
                             q_path = await self._download_media(
                                 q_url,
@@ -690,7 +697,9 @@ class WecomChannel(BaseChannel):
                 "sender_id": sender_id,
                 "acl_sender_id": sender_id,
                 "user_id": (
-                    "group" if (is_group and self.share_session_in_group) else sender_id
+                    "group"
+                    if (is_group and self.share_session_in_group)
+                    else sender_id
                 ),
                 "session_id": session_id,
                 "content_parts": content_parts,
@@ -937,10 +946,16 @@ class WecomChannel(BaseChannel):
             media_type = "image"
         elif pt == ContentType.AUDIO:
             # AudioContent stores path/URL in .data (not .file_url)
-            raw_path = getattr(part, "data", "") or getattr(part, "file_url", "") or ""
+            raw_path = (
+                getattr(part, "data", "")
+                or getattr(part, "file_url", "")
+                or ""
+            )
             # WeCom voice only supports AMR; send other formats as file.
             _local = file_url_to_local_path(raw_path) or raw_path
-            media_type = "voice" if Path(_local).suffix.lower() == ".amr" else "file"
+            media_type = (
+                "voice" if Path(_local).suffix.lower() == ".amr" else "file"
+            )
         elif pt == ContentType.VIDEO:
             raw_path = getattr(part, "video_url", "") or ""
             media_type = "video"
@@ -1303,7 +1318,9 @@ class WecomChannel(BaseChannel):
         m = meta or {}
         frame = m.get("wecom_frame")
         chatid = (
-            m.get("wecom_chatid") or self._parse_chatid_from_handle(to_handle) or ""
+            m.get("wecom_chatid")
+            or self._parse_chatid_from_handle(to_handle)
+            or ""
         )
 
         prefix = m.get("bot_prefix", "") or self.bot_prefix or ""
@@ -1400,7 +1417,9 @@ class WecomChannel(BaseChannel):
             return
         m = meta or {}
         chatid = (
-            m.get("wecom_chatid") or self._parse_chatid_from_handle(to_handle) or ""
+            m.get("wecom_chatid")
+            or self._parse_chatid_from_handle(to_handle)
+            or ""
         )
         frame = m.get("wecom_frame")
         prefix = m.get("bot_prefix", "") or self.bot_prefix or ""
@@ -1515,7 +1534,9 @@ class WecomChannel(BaseChannel):
         issues = []
         if self._client is None:
             issues.append("WeCom WebSocket client not initialized")
-        ws_thread_alive = self._ws_thread is not None and self._ws_thread.is_alive()
+        ws_thread_alive = (
+            self._ws_thread is not None and self._ws_thread.is_alive()
+        )
         if not ws_thread_alive:
             issues.append("WebSocket thread is not running")
         if issues:
@@ -1646,7 +1667,11 @@ class WecomChannel(BaseChannel):
         # disconnect() uses asyncio.ensure_future() internally which
         # binds to the current loop; schedule it on _ws_loop so the
         # ws is operated on its own loop (issue #2757).
-        if self._client and self._ws_loop is not None and self._ws_loop.is_running():
+        if (
+            self._client
+            and self._ws_loop is not None
+            and self._ws_loop.is_running()
+        ):
             try:
                 self._ws_loop.call_soon_threadsafe(self._client.disconnect)
             except Exception:

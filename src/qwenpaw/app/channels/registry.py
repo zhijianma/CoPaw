@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 
 from ...domain.channels.catalog import (
     BUILTIN_CHANNEL_CATALOG,
-    ChannelSurface,
 )
 from .base import BaseChannel
 
@@ -22,11 +21,14 @@ logger = logging.getLogger(__name__)
 _BUILTIN_SPECS: dict[str, tuple[str, str]] = {
     item.key: (item.module_name, item.class_name)
     for item in BUILTIN_CHANNEL_CATALOG
+    if item.surface == "channel"
 }
 
 # Required channels must load; failures are raised, not skipped.
 _REQUIRED_CHANNEL_KEYS = frozenset(
-    item.key for item in BUILTIN_CHANNEL_CATALOG if item.required
+    item.key
+    for item in BUILTIN_CHANNEL_CATALOG
+    if item.surface == "channel" and item.required
 )
 
 _BUILTIN_CHANNEL_CACHE: dict[str, type[BaseChannel]] | None = None
@@ -109,21 +111,12 @@ def _get_plugin_channels() -> dict[str, type[BaseChannel]]:
         return {}
 
 
-def get_channel_registry(
-    *,
-    surface: ChannelSurface | None = None,
-) -> dict[str, type[BaseChannel]]:
-    """Return built-ins for a surface plus channel plugins."""
+def get_channel_registry() -> dict[str, type[BaseChannel]]:
+    """Return platform Channel adapters.
+
+    Transports have their own lifecycle.
+    """
     out = _get_cached_builtin_channels()
-    if surface is not None:
-        allowed = {
-            item.key
-            for item in BUILTIN_CHANNEL_CATALOG
-            if item.surface == surface
-        }
-        out = {key: value for key, value in out.items() if key in allowed}
-    if surface == "web":
-        return out
     for key, ch_cls in _get_plugin_channels().items():
         if key in out:
             logger.warning(

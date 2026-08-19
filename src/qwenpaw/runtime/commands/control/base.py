@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict
 
 if TYPE_CHECKING:
-    from ....app.channels.base import BaseChannel
     from ....app.workspace import Workspace
 
 
@@ -23,7 +22,7 @@ class ControlContext:
     Attributes:
         workspace: Current workspace instance (for task_tracker, etc.)
         payload: Core turn request.
-        channel: Channel instance
+        channel_type: Protocol-neutral source channel identifier
         session_id: Normalized session ID (e.g. "console:user1")
         user_id: User ID from request
         agent_id: Agent ID for permission checks
@@ -32,7 +31,7 @@ class ControlContext:
 
     workspace: "Workspace"
     payload: Any
-    channel: "BaseChannel | None"
+    channel_type: str
     session_id: str
     user_id: str
     agent_id: str

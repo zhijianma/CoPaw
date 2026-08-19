@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 # Platform check for macOS-specific tests
 IS_DARWIN = sys.platform == "darwin"
@@ -457,15 +457,21 @@ class TestIMessageChannelUtilityMethods:
         from qwenpaw.schemas import ContentType
 
         assert (
-            imessage_channel._get_file_extension(ContentType.IMAGE, "photo") == ".jpg"
+            imessage_channel._get_file_extension(ContentType.IMAGE, "photo")
+            == ".jpg"
         )
         assert (
-            imessage_channel._get_file_extension(ContentType.AUDIO, "sound") == ".mp3"
+            imessage_channel._get_file_extension(ContentType.AUDIO, "sound")
+            == ".mp3"
         )
         assert (
-            imessage_channel._get_file_extension(ContentType.VIDEO, "movie") == ".mp4"
+            imessage_channel._get_file_extension(ContentType.VIDEO, "movie")
+            == ".mp4"
         )
-        assert imessage_channel._get_file_extension(ContentType.FILE, "doc") == ".bin"
+        assert (
+            imessage_channel._get_file_extension(ContentType.FILE, "doc")
+            == ".bin"
+        )
 
 
 class TestIMessageChannelAsyncLifecycle:

@@ -33,7 +33,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 from qwenpaw.schemas import (
     TextContent,
@@ -1318,7 +1318,9 @@ class TestTelegramResolveFileUrl:
             bot_token="my_bot_token",
         )
 
-        expected = "https://api.telegram.org/file/botmy_bot_token/photos/file_123.jpg"
+        expected = (
+            "https://api.telegram.org/file/botmy_bot_token/photos/file_123.jpg"
+        )
         assert result == expected
 
     async def test_resolve_api_url_with_custom_base_url(self):
@@ -1340,7 +1342,8 @@ class TestTelegramResolveFileUrl:
         )
 
         expected = (
-            "https://tg-api.example.com/file/" "botmy_bot_token/photos/file_123.jpg"
+            "https://tg-api.example.com/file/"
+            "botmy_bot_token/photos/file_123.jpg"
         )
         assert result == expected
 
@@ -1753,14 +1756,19 @@ class TestTelegramProxyUrl:
             mock_builder_class.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
             mock_builder.get_updates_read_timeout.return_value = mock_builder
-            mock_builder.get_updates_connect_timeout.return_value = mock_builder
+            mock_builder.get_updates_connect_timeout.return_value = (
+                mock_builder
+            )
             mock_builder.build.return_value = MagicMock()
 
             # Should complete without error
             telegram_channel._build_application()
 
             # No proxy methods should be called
-            assert not hasattr(mock_builder, "proxy") or not mock_builder.proxy.called
+            assert (
+                not hasattr(mock_builder, "proxy")
+                or not mock_builder.proxy.called
+            )
             assert not mock_builder.base_url.called
             assert not mock_builder.base_file_url.called
 
@@ -1776,7 +1784,9 @@ class TestTelegramProxyUrl:
             mock_builder.base_url.return_value = mock_builder
             mock_builder.base_file_url.return_value = mock_builder
             mock_builder.get_updates_read_timeout.return_value = mock_builder
-            mock_builder.get_updates_connect_timeout.return_value = mock_builder
+            mock_builder.get_updates_connect_timeout.return_value = (
+                mock_builder
+            )
             mock_builder.build.return_value = MagicMock()
 
             telegram_channel._build_application()
@@ -1798,7 +1808,9 @@ class TestTelegramProxyUrl:
             mock_builder_class.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
             mock_builder.get_updates_read_timeout.return_value = mock_builder
-            mock_builder.get_updates_connect_timeout.return_value = mock_builder
+            mock_builder.get_updates_connect_timeout.return_value = (
+                mock_builder
+            )
             mock_builder.proxy.return_value = mock_builder
             mock_builder.get_updates_proxy.return_value = mock_builder
             mock_builder.build.return_value = MagicMock()
@@ -1819,7 +1831,9 @@ class TestTelegramProxyUrl:
             mock_builder_class.return_value = mock_builder
             mock_builder.token.return_value = mock_builder
             mock_builder.get_updates_read_timeout.return_value = mock_builder
-            mock_builder.get_updates_connect_timeout.return_value = mock_builder
+            mock_builder.get_updates_connect_timeout.return_value = (
+                mock_builder
+            )
             mock_builder.proxy.return_value = mock_builder
             mock_builder.get_updates_proxy.return_value = mock_builder
             mock_builder.build.return_value = MagicMock()

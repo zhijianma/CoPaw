@@ -16,7 +16,8 @@ from .models import CronJobSpec
 from ..channels.outbound import ChannelOutboundPresenter
 from ..turn_factory import create_turn_request
 from ...security.tool_guard.execution_level import ToolExecutionLevel
-from ...schemas import Message, RunStatus
+from ...domain.channels.ports import ReplyEvent, ReplyEventType
+from ...schemas import RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class CronExecutor:
         - task_type text: send fixed text to channel
         - task_type agent + mode stream (default): ask agent with prompt,
             forward every event to channel in real time
-            (stream_query + send_event)
+            (stream_events + canonical ReplyEvent delivery)
         - task_type agent + mode final: consume the full stream, then
             deliver only the last completed message event
         - silent agent task: consume the full agent stream without channel
@@ -92,7 +93,8 @@ class CronExecutor:
             }
         # agent: run request as the dispatch target user so context matches
         logger.info(
-            "cron agent: job_id=%s channel=%s stream_query then send_event",
+            "cron agent: job_id=%s channel=%s "
+            "stream_events then deliver_reply",
             job.id,
             job.dispatch.channel,
         )
@@ -201,21 +203,16 @@ class CronExecutor:
         async def _run() -> None:
             nonlocal delivery_error, final_no_content
             presenter = ChannelOutboundPresenter(
-                channel_type=storage_channel,
+                channel_type=target_channel,
                 conversation_id=target_session_id or req["session_id"],
+                recipient_id=target_user_id,
                 metadata=dispatch_meta,
             )
 
             async def _deliver(event: Any) -> None:
                 nonlocal delivery_error
                 try:
-                    await self._channel_manager.send_event(
-                        channel=target_channel,
-                        user_id=target_user_id,
-                        session_id=target_session_id,
-                        event=event,
-                        meta=dispatch_meta,
-                    )
+                    await self._channel_manager.deliver_reply(event)
                 except Exception as e:  # pylint: disable=broad-except
                     if delivery_error is None:
                         delivery_error = repr(e)
@@ -227,7 +224,7 @@ class CronExecutor:
                             delivery_error,
                         )
 
-            final_event: Any | None = None
+            final_event: ReplyEvent | None = None
             async for runtime_event in self._workspace.stream_events(
                 turn_request,
             ):
@@ -236,8 +233,8 @@ class CronExecutor:
                 for event in presenter.present(runtime_event):
                     if job.dispatch.mode == "final":
                         if (
-                            isinstance(event, Message)
-                            and getattr(event, "status", None)
+                            event.type is ReplyEventType.MESSAGE
+                            and getattr(event.payload, "status", None)
                             == RunStatus.Completed
                         ):
                             final_event = event

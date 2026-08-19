@@ -23,7 +23,7 @@ from typing import (
 from qwenpaw.config.config import SIPChannelConfig
 
 from ._audioop_compat import audioop  # noqa: F401  # must be first
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import BaseChannel, OnReplySent, ProcessHandler
 from .backend import SipBackend
 from .session import SIPCallSessionManager
@@ -85,7 +85,8 @@ class SIPChannel(BaseChannel):
         instance = cls(
             process,
             on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
         )
         instance._config = config
@@ -518,7 +519,8 @@ class SIPChannel(BaseChannel):
                     consecutive_errors += 1
                     if consecutive_errors >= max_consecutive:
                         logger.warning(
-                            "feed_audio: %d consecutive errors, " "stopping STT for %s",
+                            "feed_audio: %d consecutive errors, "
+                            "stopping STT for %s",
                             consecutive_errors,
                             call_id,
                         )
@@ -610,7 +612,8 @@ class SIPChannel(BaseChannel):
                     event = reply.payload
                     if (
                         reply.type is not ReplyEventType.MESSAGE
-                        or getattr(event, "status", None) != RunStatus.Completed
+                        or getattr(event, "status", None)
+                        != RunStatus.Completed
                     ):
                         continue
                     text = _extract_text(event)
@@ -662,7 +665,9 @@ def _extract_text(event: Any) -> str:
     if hasattr(event, "get_text_content"):
         parts = event.get_text_content()
         if parts:
-            text = " ".join(p.text for p in parts if hasattr(p, "text") and p.text)
+            text = " ".join(
+                p.text for p in parts if hasattr(p, "text") and p.text
+            )
             if text:
                 return text
     content = getattr(event, "content", None) or []

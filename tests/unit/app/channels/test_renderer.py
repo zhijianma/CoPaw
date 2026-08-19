@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for qwenpaw.app.channels.renderer + streaming chunk splitting.
+"""Unit tests for qwenpaw.presentation.renderer + streaming chunk splitting.
 
 Covers:
 - RenderStyle configuration & MessageRenderer.message_to_parts
@@ -7,7 +7,7 @@ Covers:
 - Streaming chunk splitting behavior (historical issue:
   multi-segment streaming merged → fixed via content_index split in
   BaseChannel._on_stream_content_delta). The streaming logic lives in
-  BaseChannel, exercised here through ConsoleChannel which inherits it.
+  BaseChannel, exercised through a dedicated test Channel.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from qwenpaw.app.channels.renderer import (
+from qwenpaw.presentation.renderer import (
     MessageRenderer,
     RenderStyle,
     ChannelDisplayConfig,
@@ -455,16 +455,18 @@ class TestPartsToText:
 # Streaming chunk splitting (historical: multi-segment streaming merged)
 # ---------------------------------------------------------------------------
 
-# We spawn ConsoleChannel with a tmp work dir; streaming logic is on
-# BaseChannel and inherited. Override async hooks to capture segment
-# boundaries.
+# Use a dedicated BaseChannel subclass and override async hooks to capture
+# segment boundaries.
 
 
 @pytest.fixture
 def streaming_channel(tmp_path):
-    from qwenpaw.app.channels.console.channel import ConsoleChannel
+    del tmp_path
+    from qwenpaw.app.channels.base import BaseChannel
 
-    class SpyChannel(ConsoleChannel):
+    class SpyChannel(BaseChannel):
+        channel = "test"
+
         def __init__(self, *a, **kw):
             super().__init__(*a, **kw)
             self.start_calls: list[tuple[str, str]] = []
@@ -506,9 +508,6 @@ def streaming_channel(tmp_path):
 
     ch = SpyChannel(
         process=MagicMock(),
-        enabled=True,
-        bot_prefix="",
-        media_dir=str(tmp_path),
     )
     # Disable flush throttle so logic-path runs instantly in tests
     ch._STREAM_DELTA_MIN_INTERVAL_S = 999.0

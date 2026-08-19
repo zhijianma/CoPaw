@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-return-statements
-"""
-Bridge between channels and agent processing: factory to build
-ProcessHandler from runner. Shared helpers for channels (e.g. file URL).
-"""
+"""Shared text splitting and file URL presentation helpers."""
 from __future__ import annotations
 
 import os

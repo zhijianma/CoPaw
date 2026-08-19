@@ -43,7 +43,8 @@ Console、飞书、钉钉、A2A、AG-UI 都能复用同一执行链路。新增�
 2. Channel 是平台账号/机器人实例；Console 是 Protocol + Transport，不是 Channel。
 3. Runtime 和所有 Engine 只接受 `TurnRequest`、只输出 `RuntimeEvent`。
 4. Protocol 负责语义转换；Transport 只负责连接、帧和字节编码。
-5. Channel 在自己的边界把 `RuntimeEvent` 投影成 `ReplyEvent` 并调用平台 SDK。
+5. Channel 在自己的边界把 `RuntimeEvent` 投影成 `ReplyEvent` 并调用平台 SDK；主动
+   推送也必须携带完整 `ReplyTarget`，禁止退化为裸 payload + 旁路寻址参数。
 6. `AgentRequest/AgentResponse` 只属于现有 Console 公共 API，不进入 Channel 或 Runtime。
 7. 首实例保持历史 ID；新增实例使用带随机后缀的 ID。
 8. 只迁移发布前最原始的 flat `channels` dict，不兼容开发阶段中间格式。
@@ -116,6 +117,8 @@ Platform SDK -> ChannelTurn -> TurnRequest <- Protocol Ingress
 - `app/channels` 不出现 `AgentRequest`、`AgentResponse`。
 - Console Envelope 只存在于 `protocols/console`，Transport 单向依赖 Protocol，且没有
   Runtime 兼容 re-export。
+- ConsoleTransport 不继承 `BaseChannel`，也不从 `app/channels` 反向取得实现；两者只
+  组合 `app/inbound_debounce`、`app/turn_lifecycle` 与 `presentation` 公共服务。
 - 以上规则由架构测试直接读取源码和文件存在性约束。
 
 ### 3.3 Workspace 是纯执行端口
@@ -265,8 +268,25 @@ Harness Session 持久化直接消费 `TurnRequest + HarnessEvent`，不依赖 C
 Cron、Heartbeat、PawApp、ACP 和 Task CLI 不再构造 `AgentRequest`。它们通过共享的
 `create_turn_request/create_text_turn` 工厂生成 canonical command，并为 `source`
 填写各自协议名。Cron/Heartbeat 的主动推送通过 `ChannelOutboundPresenter` 把
-`RuntimeEvent` 投影为 Channel 可发送的 `Message/Content`；ACP 则直接把同一事件流
+`RuntimeEvent` 投影为带完整目标的 `ReplyEvent`，再由
+`ChannelManager.deliver_reply(ReplyEvent)` 投递；不再剥离成 `Message/Content` 后通过
+`channel/user_id/session_id/meta` 五组旁路参数重新拼装目标。ACP 则直接把同一事件流
 映射成 ACP update。内部来源不再伪装成 Console 客户端。
+
+```mermaid
+sequenceDiagram
+    participant J as Cron / Heartbeat
+    participant W as Workspace
+    participant P as ChannelOutboundPresenter
+    participant M as ChannelManager
+    participant C as Channel Adapter
+
+    J->>W: TurnRequest
+    W-->>P: RuntimeEvent
+    P-->>M: ReplyEvent(target + payload)
+    M->>M: resolve instance / platform session
+    M-->>C: send_message_content
+```
 
 Session、ContextVar、Skill 环境和可观测性 Hook 也已统一读取
 `TurnRequest.context` 与 `TurnRequest.source.channel_type`，不会再访问已删除的
@@ -286,6 +306,26 @@ Session、ContextVar、Skill 环境和可观测性 Hook 也已统一读取
 - 将来 WebSocket、A2A、AG-UI 可复用同一重放数据。
 
 因此不存在新的替代 Encoder；编码职责被移回真正需要它的 Transport。
+
+## 6.1 胶水代码审计与收敛
+
+本轮再次按完整调用链检查了“为了让两套模型勉强连通”的中间层，删除或改造如下：
+
+| 胶水/问题 | 根因 | 最终处理 |
+|---|---|---|
+| `ControlContext.channel: BaseChannel` | Runtime 命令只需来源类型，却持有平台对象；Console 不在 ChannelManager 后会得到 `None` | 改为值对象 `channel_type`，`/stop`、`/skills` 不再反查 Channel |
+| Runtime `_normalize(Any)` | Workspace 已完成 `TurnRequest` 门禁，Runtime 再包一层只隐藏类型 | `stream_events(TurnRequest)` 直接校验，删除空转 normalizer |
+| `app/channels/console.ConsoleChannel` alias | Console 已是 Transport，兼容别名让类型关系继续失真 | 删除 alias 包与错误的 Channel contract |
+| Console 继承 2000 行 Channel 基类 | 为复用 debounce、usage、renderer 而继承整个平台生命周期 | ConsoleTransport 改为独立类；公共能力提取为组合服务 |
+| `RuntimeEvent -> ReplyEvent -> payload -> send_event(...)` | Presenter 丢失 target，Manager 再靠旁路参数重建 | `ReplyEvent` 端到端进入 `deliver_reply`，删除两级 `send_event` |
+| Protocol Registry 仅供测试 | 生产 Console 直接 new ingress/presenter，扩展点是空壳 | ConsoleTransport 通过 registry 创建 ingress/presenter，删除 `create_default_presenter` |
+| renderer/utils 位于 `app/channels` | Transport 与 Agent 为通用能力反向依赖 Channel 包 | 移到 `qwenpaw.presentation`，Channel 与 Transport 同向依赖 |
+| Channel Registry 同时装载 ConsoleTransport | Registry 的类型约束与 Transport 生命周期冲突 | Registry 只装载 `surface=channel`；Console 由 Workspace service factory 管理 |
+
+审计后的保留项不是胶水：`AgentScopeEventNormalizer` 是 Engine anti-corruption layer，
+`ChannelEventProjector` 是 Channel Presenter，`ConsoleEventPresenter` 是 Console Protocol
+Presenter，`ConsoleSseEncoder` 是 Transport 编码器。它们各自完成一次明确的边界映射，
+没有把一种外部协议先转换成另一种外部协议。
 
 ## 7. Channel 配置、归属和实例身份
 
@@ -387,6 +427,9 @@ registry.register(
 Harness、任何 Channel 或 Console。A2A 任务状态、AG-UI 前端事件等协议特性在各自
 Presenter 内表达，必要时通过 `custom` 事件扩展，不反向污染 Core 类型。
 
+`ProtocolRegistry` 已是 ConsoleTransport 的生产组合根，不再是只被单元测试调用的
+预留类；新增协议可复用相同的 factory contract。
+
 ## 11. 已删除的过期组件
 
 - `runtime/channel_request_bridge.py`
@@ -400,6 +443,11 @@ Presenter 内表达，必要时通过 `custom` 事件扩展，不反向污染 Co
 - Harness AgentResponse 反向 Normalizer
 - `RequestSource.kind` alias
 - ChannelTurn 动态私有属性
+- `app/channels/console` 兼容 alias
+- `MessageEndpointBase` 伪共享基类
+- `ChannelManager.send_event` / `BaseChannel.send_event` 裸 payload 投递
+- `protocols.builtins.create_default_presenter`
+- Channel Registry 的 web/Transport surface 分支
 
 ## 12. 验收状态
 
@@ -417,5 +465,8 @@ Presenter 内表达，必要时通过 `custom` 事件扩展，不反向污染 Co
 - [x] Cron/Heartbeat/PawApp/ACP/Task CLI 全部使用 canonical Turn Factory
 - [x] Session/ContextVar/Skill/Observability Hook 全部读取 canonical 字段
 - [x] pre-commit：AST、mypy、Black、flake8、pylint 全部通过
-- [x] 架构与高风险链路定向回归：1997 passed，1 skipped
+- [x] ConsoleTransport 零 BaseChannel 继承、零 `app.channels.base` 依赖
+- [x] 主动推送使用带 ReplyTarget 的 canonical ReplyEvent 端到端投递
+- [x] Protocol Registry 已接入生产 Console ingress/presenter 创建链路
+- [x] 架构与高风险链路定向回归：2148 passed，2 skipped
 - [x] 按要求未执行 `npm run build`

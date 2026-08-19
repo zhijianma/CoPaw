@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Platform-side delivery strategy for the compatibility event stream."""
+"""Platform-side delivery strategy for canonical Channel reply events."""
 
 from __future__ import annotations
 

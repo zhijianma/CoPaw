@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 from qwenpaw.schemas import (
     AudioContent,
@@ -346,7 +346,10 @@ class TestDetectFileType:
     def test_unknown_extension(self):
         from qwenpaw.app.channels.slack.utils import detect_file_type
 
-        assert detect_file_type("file.unknownext123") == "application/octet-stream"
+        assert (
+            detect_file_type("file.unknownext123")
+            == "application/octet-stream"
+        )
 
 
 class TestIsSlackHost:
@@ -518,7 +521,9 @@ class TestProxyResolution:
     def test_host_matches_no_proxy_dot_prefix(self):
         from qwenpaw.app.channels.slack.utils import _host_matches_no_proxy
 
-        assert _host_matches_no_proxy("files.slack.com", [".slack.com"]) is True
+        assert (
+            _host_matches_no_proxy("files.slack.com", [".slack.com"]) is True
+        )
 
     def test_host_matches_no_proxy_parent_domain(self):
         from qwenpaw.app.channels.slack.utils import _host_matches_no_proxy
@@ -827,10 +832,14 @@ class TestSlackEventHandlerDedup:
 
     @pytest.mark.asyncio
     async def test_dedup_expires(self, slack_event_handler):
-        _target = "qwenpaw.app.channels.slack.handler.SLACK_DEDUP_WINDOW_SECONDS"
+        _target = (
+            "qwenpaw.app.channels.slack.handler.SLACK_DEDUP_WINDOW_SECONDS"
+        )
         with patch(_target, 0):
             # Insert a key with a very old timestamp
-            slack_event_handler._dedup_map["expired_key"] = time.monotonic() - 100
+            slack_event_handler._dedup_map["expired_key"] = (
+                time.monotonic() - 100
+            )
             # Call _is_duplicate: should remove expired key and return False
             result = await slack_event_handler._is_duplicate("expired_key")
             assert result is False
@@ -2421,7 +2430,8 @@ class TestSlackEventHandlerSlashCommand:
         assert native["content_parts"][0].text == "/help something"
         assert native["meta"]["slack_is_slash_command"] is True
         assert (
-            native["meta"]["slack_response_url"] == "https://hooks.slack.com/response"
+            native["meta"]["slack_response_url"]
+            == "https://hooks.slack.com/response"
         )
 
     @pytest.mark.asyncio

@@ -38,7 +38,7 @@ from ....schemas import (
 
 from ....config.config import XiaoYiConfig as XiaoYiChannelConfig
 from ....constant import DEFAULT_MEDIA_DIR
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     OnReplySent,
@@ -80,7 +80,9 @@ _IP_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}$")
 
 def _is_ip_address(host: str) -> bool:
     """Return True if *host* looks like an IPv4 address."""
-    return bool(_IP_RE.match(host)) and all(0 <= int(p) <= 255 for p in host.split("."))
+    return bool(_IP_RE.match(host)) and all(
+        0 <= int(p) <= 255 for p in host.split(".")
+    )
 
 
 def _get_ssl_for_url(url: str) -> Any:
@@ -481,7 +483,8 @@ class XiaoYiChannel(BaseChannel):
             ws_url=getattr(config, "ws_url", "") or "",
             task_timeout_ms=config.task_timeout_ms,
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             bot_prefix=config.bot_prefix,
             media_dir=getattr(config, "media_dir", ""),
@@ -635,7 +638,9 @@ class XiaoYiChannel(BaseChannel):
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        any_connected = any(r is True for r in results if not isinstance(r, Exception))
+        any_connected = any(
+            r is True for r in results if not isinstance(r, Exception)
+        )
         if any_connected:
             self._connected = True
             self._reconnect_attempts = 0
@@ -667,7 +672,8 @@ class XiaoYiChannel(BaseChannel):
         if existing is not None and existing is not self:
             # pylint: disable=protected-access
             logger.info(
-                "XiaoYi: Stopping old connection for " f"agent_id={self.agent_id}",
+                "XiaoYi: Stopping old connection for "
+                f"agent_id={self.agent_id}",
             )
             try:
                 existing._stopping = True
@@ -698,7 +704,8 @@ class XiaoYiChannel(BaseChannel):
             if _active_connections.get(self.agent_id) is self:
                 _active_connections.pop(self.agent_id, None)
                 logger.debug(
-                    "XiaoYi: Unregistered connection for " f"agent_id={self.agent_id}",
+                    "XiaoYi: Unregistered connection for "
+                    f"agent_id={self.agent_id}",
                 )
 
     @staticmethod
@@ -1031,7 +1038,8 @@ class XiaoYiChannel(BaseChannel):
         self._reconnect_attempts += 1
 
         logger.info(
-            "XiaoYi: Reconnecting in " f"{delay}s (attempt {self._reconnect_attempts})",
+            "XiaoYi: Reconnecting in "
+            f"{delay}s (attempt {self._reconnect_attempts})",
         )
 
         async def reconnect():
@@ -1136,7 +1144,9 @@ class XiaoYiChannel(BaseChannel):
                     chunks.append(line[i : i + TEXT_CHUNK_LIMIT])
             else:
                 # Check if adding this line would exceed limit
-                test_chunk = current_chunk + "\n" + line if current_chunk else line
+                test_chunk = (
+                    current_chunk + "\n" + line if current_chunk else line
+                )
                 if len(test_chunk) > TEXT_CHUNK_LIMIT:
                     if current_chunk:
                         chunks.append(current_chunk)
@@ -1423,7 +1433,10 @@ class XiaoYiChannel(BaseChannel):
                 if isinstance(data, dict):
                     # Check for thinking content in blocks
                     blocks = data.get("blocks", [])
-                    if isinstance(blocks, list) and self._display_config.show_thinking:
+                    if (
+                        isinstance(blocks, list)
+                        and self._display_config.show_thinking
+                    ):
                         for block in blocks:
                             if (
                                 isinstance(block, dict)
@@ -1437,7 +1450,8 @@ class XiaoYiChannel(BaseChannel):
                                     parts.append(
                                         {
                                             "kind": "reasoningText",
-                                            "reasoningText": thinking_text + "\n",
+                                            "reasoningText": thinking_text
+                                            + "\n",
                                         },
                                     )
 
@@ -1522,7 +1536,8 @@ class XiaoYiChannel(BaseChannel):
 
         # Check if any part exceeds chunk limit
         max_part_len = max(
-            len(p.get("text", "") or p.get("reasoningText", "")) for p in artifact_parts
+            len(p.get("text", "") or p.get("reasoningText", ""))
+            for p in artifact_parts
         )
 
         if max_part_len > TEXT_CHUNK_LIMIT:

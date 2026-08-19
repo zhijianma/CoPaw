@@ -10,7 +10,7 @@ from typing import Any, Callable, Mapping
 from .ports import PresentationContext, TurnEventPresenter, TurnIngress
 
 PresenterFactory = Callable[[PresentationContext], TurnEventPresenter]
-IngressFactory = Callable[[], TurnIngress]
+IngressFactory = Callable[..., TurnIngress]
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,12 +64,12 @@ class ProtocolRegistry:
         """Create a presenter scoped to one conversation."""
         return self.get(context.protocol).presenter_factory(context)
 
-    def create_ingress(self, key: str) -> TurnIngress:
+    def create_ingress(self, key: str, **kwargs: Any) -> TurnIngress:
         """Create the configured ingress decoder for a protocol."""
         registration = self.get(key)
         if registration.ingress_factory is None:
             raise ValueError(f"Protocol has no ingress: {registration.key}")
-        return registration.ingress_factory()
+        return registration.ingress_factory(**kwargs)
 
 
 __all__ = ["ProtocolRegistration", "ProtocolRegistry"]

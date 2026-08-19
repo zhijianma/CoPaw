@@ -53,13 +53,13 @@ from alibabacloud_dingtalk.card_1_0 import (
 from alibabacloud_tea_util import models as tea_util_models
 from Tea.exceptions import TeaException
 
-from ..utils import file_url_to_local_path
+from ....presentation.utils import file_url_to_local_path
 from ....config.config import DingTalkConfig as DingTalkChannelConfig
 from ....config.utils import get_config_path
 from ....constant import DEFAULT_MEDIA_DIR
 from ....exceptions import ChannelError
 
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     ContentType,
@@ -95,8 +95,12 @@ if TYPE_CHECKING:
     from ..turn import ChannelTurn
 
 # Short aliases for long SDK model names (≤79 chars)
-_GroupDeliverModel = dingtalk_card_models.DeliverCardRequestImGroupOpenDeliverModel
-_RobotDeliverModel = dingtalk_card_models.DeliverCardRequestImRobotOpenDeliverModel
+_GroupDeliverModel = (
+    dingtalk_card_models.DeliverCardRequestImGroupOpenDeliverModel
+)
+_RobotDeliverModel = (
+    dingtalk_card_models.DeliverCardRequestImRobotOpenDeliverModel
+)
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +157,8 @@ class DingTalkChannel(BaseChannel):
         # For markdown mode, force streaming_enabled=False so base class
         # does not dispatch to streaming hooks (which would swallow events).
         effective_streaming = (
-            streaming_enabled and (message_type or "markdown").strip().lower() == "card"
+            streaming_enabled
+            and (message_type or "markdown").strip().lower() == "card"
         )
         logger.info(
             "dingtalk init: streaming_enabled=%s message_type=%s "
@@ -181,7 +186,9 @@ class DingTalkChannel(BaseChannel):
         self.client_secret = client_secret
         self.bot_prefix = bot_prefix
         self.message_type = (message_type or "markdown").strip().lower()
-        self.cron_message_type = (cron_message_type or "markdown").strip().lower()
+        self.cron_message_type = (
+            (cron_message_type or "markdown").strip().lower()
+        )
         self.card_template_id = card_template_id or ""
         self.card_template_key = card_template_key or "content"
         self.robot_code = robot_code or self.client_id
@@ -273,7 +280,8 @@ class DingTalkChannel(BaseChannel):
             allow_from=allow_from,
             deny_message=os.getenv("DINGTALK_DENY_MESSAGE", ""),
             require_mention=os.getenv("DINGTALK_REQUIRE_MENTION", "0") == "1",
-            card_auto_layout=os.getenv("DINGTALK_CARD_AUTO_LAYOUT", "0") == "1",
+            card_auto_layout=os.getenv("DINGTALK_CARD_AUTO_LAYOUT", "0")
+            == "1",
             at_sender_on_reply=os.getenv(
                 "DINGTALK_AT_SENDER_ON_REPLY",
                 "0",
@@ -311,11 +319,14 @@ class DingTalkChannel(BaseChannel):
             ),
             card_template_id=getattr(config, "card_template_id", ""),
             card_template_key=getattr(config, "card_template_key", "content"),
-            robot_code=(getattr(config, "robot_code", "") or config.client_id or ""),
+            robot_code=(
+                getattr(config, "robot_code", "") or config.client_id or ""
+            ),
             media_dir=config.media_dir or "",
             workspace_dir=workspace_dir,
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=config.dm_policy or "open",
             group_policy=config.group_policy or "open",
@@ -392,7 +403,9 @@ class DingTalkChannel(BaseChannel):
         )
         # Set serializable channel_meta (exclude non-JSON-serializable objects)
         serializable_meta = {
-            k: v for k, v in meta.items() if k not in self._NON_SERIALIZABLE_META_KEYS
+            k: v
+            for k, v in meta.items()
+            if k not in self._NON_SERIALIZABLE_META_KEYS
         }
         request.metadata = serializable_meta
         return request
@@ -650,7 +663,8 @@ class DingTalkChannel(BaseChannel):
             if not entry.get("webhook"):
                 return
             logger.info(
-                "dingtalk _invalidate_session_webhook: " "clearing webhook for key=%s",
+                "dingtalk _invalidate_session_webhook: "
+                "clearing webhook for key=%s",
                 actual_key,
             )
             entry["webhook"] = ""
@@ -747,13 +761,16 @@ class DingTalkChannel(BaseChannel):
         entry = webhook_entry or {}
         return {
             "conversation_id": (
-                meta.get("conversation_id", "") or entry.get("conversation_id", "")
+                meta.get("conversation_id", "")
+                or entry.get("conversation_id", "")
             ),
             "conversation_type": (
-                meta.get("conversation_type", "") or entry.get("conversation_type", "")
+                meta.get("conversation_type", "")
+                or entry.get("conversation_type", "")
             ),
             "sender_staff_id": (
-                meta.get("sender_staff_id", "") or entry.get("sender_staff_id", "")
+                meta.get("sender_staff_id", "")
+                or entry.get("sender_staff_id", "")
             ),
         }
 
@@ -768,7 +785,8 @@ class DingTalkChannel(BaseChannel):
         with self._processing_message_ids_lock:
             if msg_id and msg_id in self._processing_message_ids:
                 logger.info(
-                    "dingtalk dedup reject: msg_id already in progress " "msg_id=%r",
+                    "dingtalk dedup reject: msg_id already in progress "
+                    "msg_id=%r",
                     msg_id,
                 )
                 return False
@@ -1025,7 +1043,9 @@ class DingTalkChannel(BaseChannel):
                     if fallback_key:
                         raw = self._session_webhook_store.get(fallback_key)
                 if raw is not None:
-                    webhook_entry = raw if isinstance(raw, dict) else {"webhook": raw}
+                    webhook_entry = (
+                        raw if isinstance(raw, dict) else {"webhook": raw}
+                    )
 
         params = self._resolve_open_api_params(m, webhook_entry)
 
@@ -1115,7 +1135,11 @@ class DingTalkChannel(BaseChannel):
         # Load bytes from base64 or URL
         data: Optional[bytes] = None
         raw_b64 = None
-        if isinstance(url, str) and url.startswith("data:") and "base64," in url:
+        if (
+            isinstance(url, str)
+            and url.startswith("data:")
+            and "base64," in url
+        ):
             raw_b64 = url
             url = ""
         if not raw_b64:
@@ -1150,7 +1174,8 @@ class DingTalkChannel(BaseChannel):
         )
         if not media_id:
             logger.warning(
-                "dingtalk _send_media_part_via_open_api: upload failed, " "type=%s",
+                "dingtalk _send_media_part_via_open_api: upload failed, "
+                "type=%s",
                 ptype,
             )
             return False
@@ -1225,7 +1250,8 @@ class DingTalkChannel(BaseChannel):
             else:
                 if not sender_staff_id:
                     logger.warning(
-                        "dingtalk %s: no sender_staff_id for DM, " "cannot send",
+                        "dingtalk %s: no sender_staff_id for DM, "
+                        "cannot send",
                         caller,
                     )
                     return False
@@ -1278,7 +1304,10 @@ class DingTalkChannel(BaseChannel):
         # Doc:
         # https://open.dingtalk.com/document/development/upload-media-files
         oapi_base = self.endpoint or "https://oapi.dingtalk.com"
-        url = f"{oapi_base}/media/upload" f"?access_token={token}&type={media_type}"
+        url = (
+            f"{oapi_base}/media/upload"
+            f"?access_token={token}&type={media_type}"
+        )
         ext = "jpg" if media_type == "image" else "bin"
         name = filename or f"upload.{ext}"
         logger.info(f"dingtalk upload_media: name={name}")
@@ -1296,7 +1325,8 @@ class DingTalkChannel(BaseChannel):
                 result = await resp.json(content_type=None)
                 if resp.status >= 400:
                     logger.warning(
-                        "dingtalk upload_media failed: type=%s status=%s " "body=%s",
+                        "dingtalk upload_media failed: type=%s status=%s "
+                        "body=%s",
                         media_type,
                         resp.status,
                         result,
@@ -1318,7 +1348,9 @@ class DingTalkChannel(BaseChannel):
                 )
                 if media_id:
                     mid_preview = (
-                        media_id[:32] + "..." if len(media_id) > 32 else media_id
+                        media_id[:32] + "..."
+                        if len(media_id) > 32
+                        else media_id
                     )
                     logger.info(
                         "dingtalk upload_media ok: type=%s media_id=%s",
@@ -1662,7 +1694,11 @@ class DingTalkChannel(BaseChannel):
                 url = data_attr
         url = (url or "").strip() if isinstance(url, str) else ""
         raw_b64 = None
-        if isinstance(url, str) and url.startswith("data:") and "base64," in url:
+        if (
+            isinstance(url, str)
+            and url.startswith("data:")
+            and "base64," in url
+        ):
             raw_b64 = url
             url = ""
         if not raw_b64:
@@ -1687,13 +1723,16 @@ class DingTalkChannel(BaseChannel):
                     getattr(part, "mime_type", None) or ""
                 ).strip()
         else:
-            content_type_for_upload = (getattr(part, "mime_type", None) or "").strip()
+            content_type_for_upload = (
+                getattr(part, "mime_type", None) or ""
+            ).strip()
         if not data and url:
             data = await self._fetch_bytes_from_url(url)
 
         if not data:
             logger.warning(
-                "dingtalk media part: no data to upload (empty file?), " "type=%s",
+                "dingtalk media part: no data to upload (empty file?), "
+                "type=%s",
                 ptype,
             )
             return False
@@ -1761,7 +1800,9 @@ class DingTalkChannel(BaseChannel):
             ).strip()
             if not pic_media_id:
                 # Auto-generate placeholder cover image
-                pic_media_id = (await self._generate_video_cover_media_id()) or ""
+                pic_media_id = (
+                    await self._generate_video_cover_media_id()
+                ) or ""
             if pic_media_id:
                 duration = getattr(part, "duration", None)
                 if duration is None:
@@ -1856,7 +1897,8 @@ class DingTalkChannel(BaseChannel):
             body = prefix + "  " + body
         if not body.strip() and not media_parts:
             logger.info(
-                "dingtalk send_content_parts: skip empty content " "to_handle=%s",
+                "dingtalk send_content_parts: skip empty content "
+                "to_handle=%s",
                 to_handle[:40] if to_handle else "",
             )
             return
@@ -1952,11 +1994,13 @@ class DingTalkChannel(BaseChannel):
                     return
                 self._raise_delivery_error_if_api_send(
                     api_send,
-                    "DingTalk send failed via sessionWebhook and " "Open API fallback",
+                    "DingTalk send failed via sessionWebhook and "
+                    "Open API fallback",
                 )
             for i, part in enumerate(media_parts):
                 logger.info(
-                    "dingtalk send_content_parts: " "sending media part %s/%s type=%s",
+                    "dingtalk send_content_parts: "
+                    "sending media part %s/%s type=%s",
                     i + 1,
                     len(media_parts),
                     getattr(part, "type", None),
@@ -2009,11 +2053,13 @@ class DingTalkChannel(BaseChannel):
                     )
                     if not text_ok:
                         logger.warning(
-                            "dingtalk send_content_parts: Open API text " "send failed",
+                            "dingtalk send_content_parts: Open API text "
+                            "send failed",
                         )
                         self._raise_delivery_error_if_api_send(
                             api_send,
-                            "DingTalk send failed: Open API text " "send failed",
+                            "DingTalk send failed: Open API text "
+                            "send failed",
                         )
                 for i, part in enumerate(media_parts):
                     logger.info(
@@ -2212,7 +2258,8 @@ class DingTalkChannel(BaseChannel):
                 }
         except Exception:
             logger.exception(
-                "dingtalk on_streaming_start: card creation failed " "stream_type=%s",
+                "dingtalk on_streaming_start: card creation failed "
+                "stream_type=%s",
                 stream_type,
             )
             state["cards"].pop(stream_type, None)
@@ -2243,7 +2290,8 @@ class DingTalkChannel(BaseChannel):
             await self._stream_ai_card(card, display_text, finalize=False)
         except Exception:
             logger.debug(
-                "dingtalk on_streaming_delta: card update failed " "stream_type=%s",
+                "dingtalk on_streaming_delta: card update failed "
+                "stream_type=%s",
                 stream_type,
             )
 
@@ -2273,7 +2321,8 @@ class DingTalkChannel(BaseChannel):
             await self._stream_ai_card(card, final_text, finalize=True)
         except Exception:
             logger.exception(
-                "dingtalk on_streaming_end: card finalize failed " "stream_type=%s",
+                "dingtalk on_streaming_end: card finalize failed "
+                "stream_type=%s",
                 stream_type,
             )
             await self._mark_card_failed(
@@ -2731,7 +2780,8 @@ class DingTalkChannel(BaseChannel):
                 if card and card.state not in (FINISHED, FAILED):
                     await self._stream_ai_card(
                         card,
-                        card.last_streamed_content or AI_CARD_RECOVERY_FINAL_TEXT,
+                        card.last_streamed_content
+                        or AI_CARD_RECOVERY_FINAL_TEXT,
                         finalize=True,
                     )
             except Exception:
@@ -2763,7 +2813,8 @@ class DingTalkChannel(BaseChannel):
             card = state.get("nonstream_card")
             if card:
                 card_text = (
-                    state.get("card_full_text") or self._build_ai_card_initial_text()
+                    state.get("card_full_text")
+                    or self._build_ai_card_initial_text()
                 )
                 card_at = state.get("card_at_prefix") or ""
                 try:
@@ -2774,7 +2825,8 @@ class DingTalkChannel(BaseChannel):
                     )
                 except Exception:
                     logger.exception(
-                        "dingtalk _on_process_completed: " "card finalize failed",
+                        "dingtalk _on_process_completed: "
+                        "card finalize failed",
                     )
                     await self._mark_card_failed(conversation_id)
                 state.pop("nonstream_card", None)
@@ -2791,7 +2843,8 @@ class DingTalkChannel(BaseChannel):
                 )
             except Exception:
                 logger.debug(
-                    "dingtalk _on_process_completed: " "unused card finalize failed",
+                    "dingtalk _on_process_completed: "
+                    "unused card finalize failed",
                     exc_info=True,
                 )
 
@@ -2860,13 +2913,13 @@ class DingTalkChannel(BaseChannel):
             }
             runtime = tea_util_models.RuntimeOptions()
             if recall:
-                emotion_kwargs["text_emotion"] = (
-                    dingtalk_robot_models.RobotRecallEmotionRequestTextEmotion(
-                        emotion_id="2659900",
-                        emotion_name=emoji_name,
-                        text=emoji_name,
-                        background_id="im_bg_1",
-                    )
+                emotion_kwargs[
+                    "text_emotion"
+                ] = dingtalk_robot_models.RobotRecallEmotionRequestTextEmotion(
+                    emotion_id="2659900",
+                    emotion_name=emoji_name,
+                    text=emoji_name,
+                    background_id="im_bg_1",
                 )
                 request = dingtalk_robot_models.RobotRecallEmotionRequest(
                     **emotion_kwargs,
@@ -2880,13 +2933,13 @@ class DingTalkChannel(BaseChannel):
                     runtime,
                 )
             else:
-                emotion_kwargs["text_emotion"] = (
-                    dingtalk_robot_models.RobotReplyEmotionRequestTextEmotion(
-                        emotion_id="2659900",
-                        emotion_name=emoji_name,
-                        text=emoji_name,
-                        background_id="im_bg_1",
-                    )
+                emotion_kwargs[
+                    "text_emotion"
+                ] = dingtalk_robot_models.RobotReplyEmotionRequestTextEmotion(
+                    emotion_id="2659900",
+                    emotion_name=emoji_name,
+                    text=emoji_name,
+                    background_id="im_bg_1",
                 )
                 request = dingtalk_robot_models.RobotReplyEmotionRequest(
                     **emotion_kwargs,
@@ -2935,7 +2988,9 @@ class DingTalkChannel(BaseChannel):
         inbound: bool = True,
         force: bool = False,
     ) -> Optional[ActiveAICard]:
-        if self._card_sdk is None or (not force and not self._ai_card_enabled()):
+        if self._card_sdk is None or (
+            not force and not self._ai_card_enabled()
+        ):
             logger.warning(
                 "dingtalk create ai card skipped: enabled=%s sdk_ready=%s "
                 "message_type=%s has_template=%s has_robot=%s force=%s",
@@ -3029,7 +3084,8 @@ class DingTalkChannel(BaseChannel):
                 raise ChannelError(
                     channel_name="dingtalk",
                     message=(
-                        "create ai card failed: " "missing sender_staff_id for IM_ROBOT"
+                        "create ai card failed: "
+                        "missing sender_staff_id for IM_ROBOT"
                     ),
                 )
             open_space_id = f"dtv1.card//IM_ROBOT.{sender_staff_id}"
@@ -3053,10 +3109,12 @@ class DingTalkChannel(BaseChannel):
             open_space_id,
         )
         try:
-            deliver_response = await self._card_sdk.deliver_card_with_options_async(
-                deliver_request,
-                deliver_headers,
-                runtime,
+            deliver_response = (
+                await self._card_sdk.deliver_card_with_options_async(
+                    deliver_request,
+                    deliver_headers,
+                    runtime,
+                )
             )
         except Exception as exc:
             raise ChannelError(
@@ -3100,7 +3158,8 @@ class DingTalkChannel(BaseChannel):
                     )
 
         logger.info(
-            "dingtalk create ai card ok:" " conversation_id=%s card_instance_id=%s",
+            "dingtalk create ai card ok:"
+            " conversation_id=%s card_instance_id=%s",
             conversation_id,
             card_instance_id,
         )
@@ -3141,7 +3200,9 @@ class DingTalkChannel(BaseChannel):
             if content == (card.last_streamed_content or "").strip():
                 return False
 
-        if (now_ms - card.created_at) > AI_CARD_TOKEN_PREEMPTIVE_REFRESH_SECONDS * 1000:
+        if (
+            now_ms - card.created_at
+        ) > AI_CARD_TOKEN_PREEMPTIVE_REFRESH_SECONDS * 1000:
             card.access_token = await self._get_access_token()
 
         request = dingtalk_card_models.StreamingUpdateRequest(
@@ -3202,7 +3263,8 @@ class DingTalkChannel(BaseChannel):
                 raise ChannelError(
                     channel_name="dingtalk",
                     message=(
-                        "dingtalk ai card unknownError: " "card_template_key mismatch?"
+                        "dingtalk ai card unknownError: "
+                        "card_template_key mismatch?"
                     ),
                 ) from first_exc
             else:
@@ -3443,7 +3505,11 @@ class DingTalkChannel(BaseChannel):
                     message=f"get accessToken failed: {exc}",
                 ) from exc
 
-            token = response.body.access_token if response and response.body else None
+            token = (
+                response.body.access_token
+                if response and response.body
+                else None
+            )
             if not token:
                 raise ChannelError(
                     channel_name="dingtalk",
@@ -3478,7 +3544,9 @@ class DingTalkChannel(BaseChannel):
         )
         runtime = tea_util_models.RuntimeOptions()
         try:
-            _download = self._robot_sdk.robot_message_file_download_with_options_async
+            _download = (
+                self._robot_sdk.robot_message_file_download_with_options_async
+            )
             response = await _download(
                 request,
                 sdk_headers,
@@ -3526,7 +3594,9 @@ class DingTalkChannel(BaseChannel):
                 )
             filename = filename_hint
             if "filename=" in disposition:
-                part = disposition.split("filename=", 1)[-1].strip().strip("'\"")
+                part = (
+                    disposition.split("filename=", 1)[-1].strip().strip("'\"")
+                )
                 if part:
                     filename = part
             suffix = ".file"
@@ -3596,7 +3666,10 @@ class DingTalkChannel(BaseChannel):
             audio_url = (
                 data_attr
                 if isinstance(data_attr, str)
-                and (data_attr.startswith("http") or data_attr.startswith("file:"))
+                and (
+                    data_attr.startswith("http")
+                    or data_attr.startswith("file:")
+                )
                 else None
             )
             url = (
@@ -3636,7 +3709,9 @@ class DingTalkChannel(BaseChannel):
                     ext = guess.lstrip(".").lower()
 
         if not ext:
-            ext = default.rsplit(".", 1)[-1].lower() if "." in default else "bin"
+            ext = (
+                default.rsplit(".", 1)[-1].lower() if "." in default else "bin"
+            )
 
         # normalize common cases
         if ext == "jpeg":

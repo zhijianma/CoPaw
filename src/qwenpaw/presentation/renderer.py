@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=too-many-branches,too-many-statements
-"""
-Pluggable message renderer: Message -> sendable parts (runtime Content).
-Style/capabilities control markdown, emoji, code fence.
+"""Message rendering shared by Channels and Transports.
+
+Style and capabilities control markdown, emoji, and code fences.
 """
 from __future__ import annotations
 

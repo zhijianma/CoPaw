@@ -26,7 +26,7 @@ from ....schemas import (
 
 from ....config.config import YuanbaoConfig as YuanbaoChannelConfig
 from ....constant import DEFAULT_MEDIA_DIR
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     OnReplySent,
@@ -68,7 +68,7 @@ from .constants import (
     SEND_TIMEOUT,
     SESSION_ID_SUFFIX_LEN,
 )
-from ..utils import split_text
+from ....presentation.utils import split_text
 from .media import (
     build_file_msg_body,
     build_image_msg_body,
@@ -117,7 +117,9 @@ def _sender_display(nickname: str, raw_sender_id: str) -> str:
     """Build human-readable sender display: nickname#last4."""
     nick = (nickname or "").strip() or "unknown"
     suffix = (
-        raw_sender_id[-4:] if len(raw_sender_id) >= 4 else (raw_sender_id or "????")
+        raw_sender_id[-4:]
+        if len(raw_sender_id) >= 4
+        else (raw_sender_id or "????")
     )
     return f"{nick}#{suffix}"
 
@@ -318,7 +320,8 @@ class YuanbaoChannel(BaseChannel):
             bot_prefix=config.bot_prefix,
             media_dir=getattr(config, "media_dir", "") or "",
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             workspace_dir=workspace_dir,
             dm_policy=getattr(config, "dm_policy", "open"),
@@ -573,9 +576,13 @@ class YuanbaoChannel(BaseChannel):
                         self._heartbeat_timeout_count,
                         HEARTBEAT_TIMEOUT_THRESHOLD,
                     )
-                    if self._heartbeat_timeout_count >= HEARTBEAT_TIMEOUT_THRESHOLD:
+                    if (
+                        self._heartbeat_timeout_count
+                        >= HEARTBEAT_TIMEOUT_THRESHOLD
+                    ):
                         logger.error(
-                            "yuanbao: heartbeat threshold " "reached, reconnecting",
+                            "yuanbao: heartbeat threshold "
+                            "reached, reconnecting",
                         )
                         await self._force_close_ws()
                         break
@@ -1600,7 +1607,11 @@ class YuanbaoChannel(BaseChannel):
         if part_type == ContentType.IMAGE:
             return getattr(part, "image_url", "") or ""
         if part_type == ContentType.FILE:
-            return getattr(part, "file_url", "") or getattr(part, "file_id", "") or ""
+            return (
+                getattr(part, "file_url", "")
+                or getattr(part, "file_id", "")
+                or ""
+            )
         if part_type == ContentType.VIDEO:
             return getattr(part, "video_url", "") or ""
         if part_type == ContentType.AUDIO:

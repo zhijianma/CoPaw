@@ -35,7 +35,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 from qwenpaw.exceptions import ChannelError
 
@@ -673,7 +673,10 @@ class TestWecomChannelDeduplication:
             wecom_channel._is_duplicate(f"msg_{i}")
 
         # Check that limit is respected
-        assert len(wecom_channel._processed_message_ids) <= _WECOM_PROCESSED_IDS_MAX
+        assert (
+            len(wecom_channel._processed_message_ids)
+            <= _WECOM_PROCESSED_IDS_MAX
+        )
 
 
 # =============================================================================
@@ -1387,7 +1390,8 @@ class TestWecomChannelEdgeCases:
         assert len(enqueued_items) == 1
         # Check content_parts contains the unknown type marker
         assert any(
-            "unknown_type" in str(part) for part in enqueued_items[0]["content_parts"]
+            "unknown_type" in str(part)
+            for part in enqueued_items[0]["content_parts"]
         )
 
     @pytest.mark.asyncio
@@ -1419,7 +1423,8 @@ class TestWecomChannelEdgeCases:
         assert len(enqueued_items) == 1
         # Should have placeholder text
         assert any(
-            "no url" in str(part).lower() for part in enqueued_items[0]["content_parts"]
+            "no url" in str(part).lower()
+            for part in enqueued_items[0]["content_parts"]
         )
 
     @pytest.mark.asyncio

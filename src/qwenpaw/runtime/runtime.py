@@ -49,10 +49,14 @@ class Runtime:
     async def stream_events(  # pylint: disable=too-many-branches
         # pylint: disable=too-many-statements
         self,
-        request: Any,
+        request: TurnRequest,
     ) -> AsyncGenerator[RuntimeEvent, None]:
         """Run the eight lifecycle phases and emit runtime events."""
-        request = self._normalize(request)
+        if not isinstance(request, TurnRequest):
+            raise TypeError(
+                "Runtime accepts TurnRequest; "
+                "decode protocol input at ingress",
+            )
         ctx = self._build_context(request)
         hooks = self.workspace.plugins.hook_registry
 
@@ -164,10 +168,8 @@ class Runtime:
             ctx.error = e
             # The Task's _must_cancel flag may still be True after
             # catching CancelledError, causing the next await to raise
-            # CancelledError again.  Wrap ON_ERROR hooks so that
-            # cancel_envelope is always yielded — the frontend SDK
-            # needs the {object:response, status:completed} event to
-            # exit loading state.
+            # CancelledError again. Wrap ON_ERROR hooks so a canonical
+            # cancellation event can always terminate the client stream.
             try:
                 await hooks.run(Phase.ON_ERROR, ctx)
             except asyncio.CancelledError:
@@ -270,8 +272,7 @@ class Runtime:
          skipped on /stop.  A future improvement should unify the
          cancel and normal paths — e.g. via a dedicated ``ON_CANCEL``
          phase with per-hook shield execution — so plugins can
-         participate in the cancel lifecycle.  ``ctx._envelope`` should
-         also be promoted to a first-class ``HookContext`` field.
+         participate in the cancel lifecycle.
         """
         agent = getattr(ctx, "agent", None)
         if agent is None:
@@ -346,7 +347,9 @@ class Runtime:
             if partial:
                 agent_state = getattr(agent, "state", None)
                 ctx_list = (
-                    getattr(agent_state, "context", None) if agent_state else None
+                    getattr(agent_state, "context", None)
+                    if agent_state
+                    else None
                 )
                 existing_texts: set[str] = set()
                 if ctx_list and len(ctx_list) > 0:
@@ -468,24 +471,19 @@ class Runtime:
 
         return closed
 
-    @staticmethod
-    def _normalize(request: Any) -> TurnRequest:
-        """Enforce the core request contract at the runtime boundary."""
-        if isinstance(request, TurnRequest):
-            return request
-        raise TypeError(
-            "Runtime accepts TurnRequest; decode protocol input at ingress",
-        )
-
-    def _build_context(self, request: Any) -> HookContext:
+    def _build_context(self, request: TurnRequest) -> HookContext:
         workspace_dir = getattr(self.workspace, "workspace_dir", None)
         # Prefer the workspace's resolved agent id over a bare "default", so an
         # agent selected by header (no body agent_id) loads its own config.
         agent_id = (
-            request.agent_id or getattr(self.workspace, "agent_id", None) or "default"
+            request.agent_id
+            or getattr(self.workspace, "agent_id", None)
+            or "default"
         )
         session_id = request.session_id
-        root_session_id = str(request.context.get("root_session_id") or session_id)
+        root_session_id = str(
+            request.context.get("root_session_id") or session_id,
+        )
         root_agent_id = str(request.context.get("root_agent_id") or agent_id)
 
         return HookContext(

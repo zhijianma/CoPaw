@@ -23,14 +23,14 @@ from qwenpaw.schemas import (
 
 from ....config.config import MattermostConfig as MattermostChannelConfig
 from ....constant import WORKING_DIR
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     OnReplySent,
     OutgoingContentPart,
     ProcessHandler,
 )
-from ..utils import file_url_to_local_path
+from ....presentation.utils import file_url_to_local_path
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +250,8 @@ class MattermostChannel(BaseChannel):
                 c.get("thread_follow_without_mention", False),
             ),
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=c.get("dm_policy") or "open",
             group_policy=c.get("group_policy") or "open",
@@ -495,7 +496,8 @@ class MattermostChannel(BaseChannel):
                     _SEEN_SESSIONS_MAX,
                 )
                 logger.info(
-                    "mattermost: first DM contact on %s — " "fetching channel history",
+                    "mattermost: first DM contact on %s — "
+                    "fetching channel history",
                     session_id,
                 )
                 return await self._fetch_channel_history(mm_channel_id)
@@ -531,7 +533,9 @@ class MattermostChannel(BaseChannel):
         metadata = post.get("metadata") or {}
         file_infos: list[dict] = metadata.get("files") or []
         hint_map: dict[str, str] = {
-            fi.get("id", ""): fi.get("name", "") for fi in file_infos if fi.get("id")
+            fi.get("id", ""): fi.get("name", "")
+            for fi in file_infos
+            if fi.get("id")
         }
         for fid in file_ids:
             local_path = await self._download_file(
@@ -585,7 +589,9 @@ class MattermostChannel(BaseChannel):
         # Channel: each thread is its own session.
         #      A flat @mention seeds a new thread (root_id = post_id).
         if is_dm:
-            target_root_id = original_root_id  # "" for flat DM, non-empty for thread
+            target_root_id = (
+                original_root_id  # "" for flat DM, non-empty for thread
+            )
             session_id = f"mattermost_dm:{mm_channel_id}"
         else:
             target_root_id = original_root_id if original_root_id else post_id
@@ -837,7 +843,9 @@ class MattermostChannel(BaseChannel):
                 lines = [f"[Recent {per_page} DM context messages]"]
                 for pid in order:
                     p = posts.get(pid, {})
-                    role = "Bot" if p.get("user_id") == self._bot_id else "User"
+                    role = (
+                        "Bot" if p.get("user_id") == self._bot_id else "User"
+                    )
                     msg = p.get("message", "").strip()
                     if msg:
                         lines.append(f"{role}: {msg}")

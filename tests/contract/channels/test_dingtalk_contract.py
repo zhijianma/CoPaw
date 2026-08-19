@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 from tests.contract.channels import ChannelContractTest
 

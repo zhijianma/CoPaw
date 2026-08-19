@@ -50,7 +50,7 @@ class StopCommandHandler(BaseControlCommandHandler):
         )
 
         workspace = context.workspace
-        channel_id = context.channel.channel
+        channel_id = context.channel_type
 
         # Scope the lookup to the requesting user so users sharing the same
         # session_id (group members, or DM users whose conversation_id suffix

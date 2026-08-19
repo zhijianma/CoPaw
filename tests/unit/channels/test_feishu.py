@@ -34,7 +34,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 from qwenpaw.app.channels.base import ContentType, OutgoingContentPart
 
 # =============================================================================
@@ -2399,7 +2399,9 @@ class TestFeishuChannelSendMessage:
 
         mock_request_builder = MagicMock()
         mock_request = MagicMock()
-        mock_request_builder.receive_id_type.return_value = mock_request_builder
+        mock_request_builder.receive_id_type.return_value = (
+            mock_request_builder
+        )
         mock_request_builder.request_body.return_value = mock_request_builder
         mock_request_builder.build.return_value = mock_request
 
@@ -2433,7 +2435,9 @@ class TestFeishuChannelSendMessage:
         )
         feishu_channel._client = mock_client
 
-        content = '{"zh_cn": {"content": [[{"tag": "text", "text": "Hello"}]]}}'
+        content = (
+            '{"zh_cn": {"content": [[{"tag": "text", "text": "Hello"}]]}}'
+        )
         result = await feishu_channel._send_message(
             "open_id",
             "user_open_id",

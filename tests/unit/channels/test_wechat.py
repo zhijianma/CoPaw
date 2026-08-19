@@ -36,7 +36,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from qwenpaw.app.channels.renderer import ChannelDisplayConfig
+from qwenpaw.presentation.renderer import ChannelDisplayConfig
 
 from tests.fixtures.channels.mock_http import MockAiohttpSession
 
@@ -284,7 +284,9 @@ class TestWeChatChannelFromEnv:
 
         channel = WeChatChannel.from_env(mock_process_handler)
 
-        assert channel._bot_token_file == Path("/env/token/file.txt").expanduser()
+        assert (
+            channel._bot_token_file == Path("/env/token/file.txt").expanduser()
+        )
         assert channel._media_dir == Path("/env/media").expanduser()
         assert channel.dm_policy == "allowlist"
         assert channel.group_policy == "allowlist"
@@ -1250,7 +1252,9 @@ class TestWeChatOnMessage:
 
         call_args = wechat_channel._enqueue.call_args[0][0]
         content_parts = call_args["content_parts"]
-        assert any("Voice transcription" in str(part) for part in content_parts)
+        assert any(
+            "Voice transcription" in str(part) for part in content_parts
+        )
 
     async def test_on_message_image(
         self,

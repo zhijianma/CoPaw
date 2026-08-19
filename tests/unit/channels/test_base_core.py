@@ -26,8 +26,14 @@ import pytest
 
 # Import BaseChannel directly for internal logic testing
 from qwenpaw.app.channels.base import BaseChannel, ProcessHandler
-from qwenpaw.app.channels.console.channel import ConsoleChannel
 from qwenpaw.domain.channels.identity import ChannelIdentity
+
+
+class _TestChannel(BaseChannel):
+    """Concrete identity for exercising BaseChannel behavior."""
+
+    channel = "console"
+
 
 # =============================================================================
 # Test Fixtures (Shared Infrastructure)
@@ -69,16 +75,8 @@ def mock_process() -> ProcessHandler:
 
 @pytest.fixture
 def base_channel(mock_process) -> BaseChannel:
-    """
-    Use ConsoleChannel as a testable instance of BaseChannel.
-    ConsoleChannel is the simplest implementation,
-    suitable for testing base class logic.
-    """
-    return ConsoleChannel(
-        process=mock_process,
-        enabled=True,
-        bot_prefix="[TEST] ",
-    )
+    """Construct BaseChannel directly to test its shared implementation."""
+    return _TestChannel(process=mock_process)
 
 
 @pytest.fixture
@@ -363,11 +361,7 @@ class TestNoTextDebounceBuffering:
     ):
         """When no_text_debounce=False, media-only content is processed
         immediately without buffering."""
-        channel = ConsoleChannel(
-            process=mock_process,
-            enabled=True,
-            bot_prefix="[TEST] ",
-        )
+        channel = _TestChannel(process=mock_process)
         channel._no_text_debounce = False
         parts = [content_builder.image("http://a.jpg")]
 
@@ -388,11 +382,7 @@ class TestNoTextDebounceBuffering:
     ):
         """When no_text_debounce=False, any previously buffered content is
         released and merged with the current content."""
-        channel = ConsoleChannel(
-            process=mock_process,
-            enabled=True,
-            bot_prefix="[TEST] ",
-        )
+        channel = _TestChannel(process=mock_process)
         channel._no_text_debounce = False
         # Simulate pre-existing buffered content
         channel._pending_content_by_session["session_disabled"] = [

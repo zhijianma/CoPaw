@@ -23,10 +23,10 @@ from qwenpaw.schemas import (
 from ....exceptions import ChannelError
 from ....config.config import IMessageChannelConfig
 from ....constant import DEFAULT_MEDIA_DIR
-from ..utils import file_url_to_local_path
+from ....presentation.utils import file_url_to_local_path
 from ....agents.utils.file_handling import download_file_from_url
 
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     OnReplySent,
@@ -135,7 +135,9 @@ class IMessageChannel(BaseChannel):
             ),
             allow_from=allow_from,
             deny_message=os.getenv("IMESSAGE_DENY_MESSAGE", ""),
-            require_mention=(os.getenv("IMESSAGE_REQUIRE_MENTION", "0") == "1"),
+            require_mention=(
+                os.getenv("IMESSAGE_REQUIRE_MENTION", "0") == "1"
+            ),
         )
 
     @classmethod
@@ -158,7 +160,8 @@ class IMessageChannel(BaseChannel):
             workspace_dir=workspace_dir,
             max_decoded_size=config.max_decoded_size,
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=config.dm_policy,
             group_policy=config.group_policy,
@@ -433,7 +436,8 @@ ORDER BY m.ROWID ASC
             except Exception as exc:
                 # Fallback: send a textual placeholder if media delivery fails
                 logger.warning(
-                    "imessage send_content_parts: " "send_media failed for %s: %s",
+                    "imessage send_content_parts: "
+                    "send_media failed for %s: %s",
                     getattr(media_part, "type", None),
                     exc,
                 )
@@ -454,7 +458,9 @@ ORDER BY m.ROWID ASC
                         "value",
                         getattr(media_part, "type", None),
                     )
-                    fallback_text = f"[File could not be sent ({content_type})]"
+                    fallback_text = (
+                        f"[File could not be sent ({content_type})]"
+                    )
                 await self.send(to_handle, fallback_text, meta)
 
     def _extract_url_and_filename(self, part: OutgoingContentPart):
@@ -678,7 +684,8 @@ ORDER BY m.ROWID ASC
 
         if not url:
             logger.warning(
-                "imessage send_media: no URL found for media " f"type {content_type}",
+                "imessage send_media: no URL found for media "
+                f"type {content_type}",
             )
             return
 
@@ -706,5 +713,6 @@ ORDER BY m.ROWID ASC
             await self.send(to_handle, "", meta, local_path)
         else:
             logger.warning(
-                "imessage send_media: could not resolve valid file " f"path for {url}",
+                "imessage send_media: could not resolve valid file "
+                f"path for {url}",
             )

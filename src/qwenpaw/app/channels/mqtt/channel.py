@@ -18,7 +18,7 @@ from qwenpaw.schemas import (
 )
 
 from ....config.config import MQTTConfig as MQTTChannelConfig
-from ..renderer import ChannelDisplayConfig
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     OnReplySent,
@@ -198,7 +198,8 @@ class MQTTChannel(BaseChannel):
             tls_certfile=getattr(config, "tls_certfile", None),
             tls_keyfile=getattr(config, "tls_keyfile", None),
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             access_control_dm=bool(
                 getattr(config, "access_control_dm", False),
@@ -269,7 +270,8 @@ class MQTTChannel(BaseChannel):
             if not client_id:
                 client_id = "unknown-client"
                 logger.warning(
-                    f"MQTT: No client_id found in topic or payload: " f"{msg.topic}",
+                    f"MQTT: No client_id found in topic or payload: "
+                    f"{msg.topic}",
                 )
 
             logger.info(f"MQTT [{client_id}] >> {content}")

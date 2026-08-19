@@ -292,9 +292,9 @@ class ChannelContractTest(BaseContractTest):
                 f"accept meta parameter: {e}",
             )
 
-    def test_get_to_handle_from_request_exists(self, instance):
-        """Contract: get_to_handle_from_request method must exist."""
-        assert hasattr(instance, "get_to_handle_from_request")
+    def test_get_to_handle_from_turn_exists(self, instance):
+        """Contract: canonical ChannelTurn target resolver must exist."""
+        assert hasattr(instance, "get_to_handle_from_turn")
 
     # =========================================================================
     # Contract: Policy Attributes

@@ -15,6 +15,9 @@ from qwenpaw.app.channels.manager import ChannelManager
 from qwenpaw.app.channels.manager import _bind_dispatch_callback
 from qwenpaw.config.config import AgentProfileConfig, Config, TelegramConfig
 from qwenpaw.domain.channels.identity import ChannelIdentity
+from qwenpaw.domain.channels.models import ReplyTarget
+from qwenpaw.domain.channels.ports import ReplyEvent, ReplyEventType
+from qwenpaw.schemas import Message, RunStatus
 
 
 class _FakeTelegramChannel:
@@ -231,7 +234,6 @@ def test_secondary_channel_state_path_is_isolated(tmp_path) -> None:
         "telegram-backup",
         "telegram",
     )
-
     path = channel.channel_state_path(tmp_path, "state.json")
 
     assert path.parent.parent == tmp_path / ".channel_instances"
@@ -255,21 +257,31 @@ def test_secondary_dispatch_callback_persists_runtime_identity() -> None:
 
 
 @pytest.mark.asyncio
-async def test_secondary_send_event_restores_platform_session() -> None:
+async def test_secondary_reply_delivery_restores_platform_session() -> None:
     channel = MagicMock(channel="telegram")
     channel._channel_identity = ChannelIdentity(
         "telegram-backup",
         "telegram",
     )
-    channel.send_event = AsyncMock()
+    channel.to_handle_from_target.return_value = "user"
+    channel.send_message_content = AsyncMock()
     manager = ChannelManager([channel])
-
-    await manager.send_event(
-        channel="telegram-backup",
-        user_id="user",
-        session_id="telegram-backup:conversation",
-        event=MagicMock(),
+    message = MagicMock(spec=Message)
+    message.status = RunStatus.Completed
+    reply = ReplyEvent(
+        turn_id="turn-1",
+        type=ReplyEventType.MESSAGE,
+        target=ReplyTarget(
+            channel_type="telegram-backup",
+            conversation_id="telegram-backup:conversation",
+            recipient_id="user",
+        ),
+        payload=message,
     )
 
-    assert channel.send_event.call_args.kwargs["session_id"] == "conversation"
-    assert channel.send_event.call_args.kwargs["meta"]["session_id"] == ("conversation")
+    await manager.deliver_reply(reply)
+
+    args = channel.send_message_content.call_args.args
+    assert args[0] == "user"
+    assert args[1] is message
+    assert args[2]["session_id"] == "conversation"

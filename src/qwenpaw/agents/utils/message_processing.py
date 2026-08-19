@@ -15,7 +15,7 @@ from typing import Optional
 
 from agentscope.message import Msg, TextBlock, URLSource
 
-from ...app.channels.utils import file_url_to_local_path
+from ...presentation.utils import file_url_to_local_path
 from ...config import load_config
 from .file_handling import download_file_from_base64, download_file_from_url
 from .image_freezing import freeze_local_images_async

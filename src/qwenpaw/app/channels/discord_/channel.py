@@ -27,8 +27,8 @@ from ....exceptions import ChannelError
 from ....constant import DEFAULT_MEDIA_DIR
 from ....config.config import DiscordConfig as DiscordChannelConfig
 
-from ..utils import file_url_to_local_path
-from ..renderer import ChannelDisplayConfig
+from ....presentation.utils import file_url_to_local_path
+from ....presentation.renderer import ChannelDisplayConfig
 from ..base import (
     BaseChannel,
     OnReplySent,
@@ -153,7 +153,10 @@ class DiscordChannel(BaseChannel):
                         msg_id,
                     )
                     return
-                if len(self._processed_message_ids) >= self._MAX_CACHED_MESSAGE_IDS:
+                if (
+                    len(self._processed_message_ids)
+                    >= self._MAX_CACHED_MESSAGE_IDS
+                ):
                     oldest = self._processed_message_id_queue.popleft()
                     self._processed_message_ids.discard(oldest)
                 self._processed_message_ids.add(msg_id)
@@ -240,7 +243,8 @@ class DiscordChannel(BaseChannel):
                 is_group = message.guild is not None
                 _is_thread = isinstance(message.channel, discord.Thread)
                 _thread_started = (
-                    not _is_thread and getattr(message, "thread", None) is not None
+                    not _is_thread
+                    and getattr(message, "thread", None) is not None
                 )
                 # Race-condition: thread created simultaneously
                 # with the first message. on_thread_create may
@@ -266,7 +270,9 @@ class DiscordChannel(BaseChannel):
                 meta = {
                     "user_id": str(message.author.id),
                     "channel_id": _effective_channel_id,
-                    "guild_id": (str(message.guild.id) if message.guild else None),
+                    "guild_id": (
+                        str(message.guild.id) if message.guild else None
+                    ),
                     "message_id": str(message.id),
                     "is_dm": not is_group,
                     "is_group": is_group,
@@ -314,7 +320,8 @@ class DiscordChannel(BaseChannel):
                     key = str(starter.id)
                     self._recent_thread_starts[key] = str(thread.id)
                     logger.info(
-                        "discord thread_create: thread=%s " "starter_msg=%s parent=%s",
+                        "discord thread_create: thread=%s "
+                        "starter_msg=%s parent=%s",
                         thread.id,
                         starter.id,
                         thread.parent_id,
@@ -388,7 +395,8 @@ class DiscordChannel(BaseChannel):
             http_proxy_auth=config.http_proxy_auth or "",
             bot_prefix=config.bot_prefix or "",
             on_reply_sent=on_reply_sent,
-            display_config=display_config or ChannelDisplayConfig.from_config(config),
+            display_config=display_config
+            or ChannelDisplayConfig.from_config(config),
             no_text_debounce=no_text_debounce,
             dm_policy=config.dm_policy or "open",
             group_policy=config.group_policy or "open",
@@ -445,7 +453,9 @@ class DiscordChannel(BaseChannel):
             self._media_dir.mkdir(parents=True, exist_ok=True)
             safe_name = (
                 "".join(
-                    c for c in (attachment.filename or "") if c.isalnum() or c in "-_."
+                    c
+                    for c in (attachment.filename or "")
+                    if c.isalnum() or c in "-_."
                 )
                 or "file"
             )
@@ -529,7 +539,10 @@ class DiscordChannel(BaseChannel):
             # When inside a code fence, reserve space for the closing
             # suffix that _flush() appends.
             reserved = fence_close_len if fence_open else 0
-            if current and current_len + len(line_with_nl) + reserved > max_len:
+            if (
+                current
+                and current_len + len(line_with_nl) + reserved > max_len
+            ):
                 saved_fence = fence_open
                 _flush()
                 current_len = 0
@@ -609,7 +622,9 @@ class DiscordChannel(BaseChannel):
             ContentType.FILE,
         }
         text_parts = [
-            p for p in (parts or []) if getattr(p, "type", None) not in media_types
+            p
+            for p in (parts or [])
+            if getattr(p, "type", None) not in media_types
         ]
         media_parts = [
             p for p in (parts or []) if getattr(p, "type", None) in media_types
@@ -715,7 +730,9 @@ class DiscordChannel(BaseChannel):
             return {
                 "channel": self.channel,
                 "status": "unhealthy",
-                "detail": ("Discord client is not ready" " (gateway not connected)."),
+                "detail": (
+                    "Discord client is not ready" " (gateway not connected)."
+                ),
             }
         task_alive = self._task is not None and not self._task.done()
         if not task_alive:

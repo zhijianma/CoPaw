@@ -60,6 +60,30 @@ def test_runtime_hooks_read_only_canonical_request_fields() -> None:
     assert 'getattr(ctx.request, "channel"' not in sources
 
 
+def test_runtime_control_commands_do_not_depend_on_channel_objects() -> None:
+    base = _source("src/qwenpaw/runtime/commands/control/base.py")
+    composition = _source("src/qwenpaw/runtime/builtin_commands.py")
+    handlers = "\n".join(
+        _source(path)
+        for path in (
+            "src/qwenpaw/runtime/commands/control/stop_handler.py",
+            "src/qwenpaw/runtime/commands/control/skills_handler.py",
+        )
+    )
+
+    assert "app.channels" not in base
+    assert 'channel: "BaseChannel' not in base
+    assert "get_channel(" not in composition
+    assert "context.channel.channel" not in handlers
+
+
+def test_runtime_has_no_redundant_request_normalizer() -> None:
+    source = _source("src/qwenpaw/runtime/runtime.py")
+
+    assert "def _normalize(" not in source
+    assert "ctx._envelope" not in source
+
+
 def test_turn_domain_has_no_agentscope_dependency() -> None:
     source = "\n".join(
         [
@@ -83,6 +107,26 @@ def test_protocol_ports_and_console_presenter_have_no_engine_dependency() -> (
     )
 
     assert "agentscope" not in source.lower()
+
+
+def test_console_transport_resolves_protocol_components_from_registry() -> (
+    None
+):
+    source = _source("src/qwenpaw/transports/console/channel.py")
+    builtins = _source("src/qwenpaw/protocols/builtins.py")
+
+    assert "get_protocol_registry" in source
+    assert "ConsoleTurnIngress" not in source
+    assert "ConsoleEventPresenter" not in source
+    assert "create_default_presenter" not in builtins
+
+
+def test_console_transport_does_not_inherit_channel_implementation() -> None:
+    source = _source("src/qwenpaw/transports/console/channel.py")
+
+    assert "app.channels.base" not in source
+    assert "MessageEndpointBase" not in source
+    assert "BaseChannel" not in source
 
 
 def test_console_protocol_state_machine_has_no_engine_dependency() -> None:
@@ -128,6 +172,7 @@ def test_legacy_runtime_bridges_are_deleted() -> None:
     assert not Path("src/qwenpaw/runtime/reply_projector.py").exists()
     assert not Path("src/qwenpaw/transports/console/envelope.py").exists()
     assert not Path("src/qwenpaw/transports/console/presenter.py").exists()
+    assert not Path("src/qwenpaw/app/channels/console/channel.py").exists()
 
 
 def test_harness_engine_emits_canonical_events_only() -> None:
