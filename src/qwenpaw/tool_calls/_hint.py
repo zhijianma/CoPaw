@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from agentscope.message import Msg, TextBlock
+from agentscope.message import HintBlock, Msg, TextBlock
+
+from ..agents.hints import HINT_SOURCE_BACKGROUND_TOOL
 
 
 def make_offload_hint_msg(entry: Any) -> Any:
@@ -29,8 +31,12 @@ def make_offload_hint_msg(entry: Any) -> Any:
         ),
     )
     result_blocks = list(entry.final_response.content or [])
+    hint = HintBlock(
+        hint=[notification] + result_blocks,
+        source=HINT_SOURCE_BACKGROUND_TOOL,
+    )
     return Msg(
         name="system",
         role="assistant",
-        content=[notification] + result_blocks,
+        content=[hint],
     )

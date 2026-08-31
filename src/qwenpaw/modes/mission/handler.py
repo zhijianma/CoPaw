@@ -11,6 +11,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from agentscope.message import HintBlock, Msg, TextBlock
+
 from .prompts import build_master_prompt
 from .state import (
     create_loop_dir,
@@ -35,6 +37,51 @@ MISSION_HELP_TEXT = (
 _DEFAULT_MAX_ITERATIONS = 20
 _MIN_MAX_ITERATIONS = 1
 _MAX_MAX_ITERATIONS = 100
+
+
+def build_mission_hint_parts(
+    legacy_prompt: str,
+    task_text: str,
+) -> list[TextBlock]:
+    """Split a legacy Mission prompt around its single task insertion."""
+    marker = f"> {task_text}\n\n"
+    prefix, separator, suffix = legacy_prompt.partition(marker)
+    if not separator:
+        raise ValueError("Mission prompt does not contain its task marker")
+    return [TextBlock(text=prefix), TextBlock(text=suffix)]
+
+
+def render_legacy_mission_content(
+    target: Msg,
+    block: HintBlock,
+    entry: dict[str, Any],
+) -> list[TextBlock]:
+    """Reconstruct the exact pre-migration Mission user prompt."""
+    if entry.get("renderer_version") != 1:
+        raise ValueError("Unsupported Mission hint renderer version")
+    if not isinstance(block.hint, list) or len(block.hint) != 2:
+        raise ValueError("Mission hint must contain prefix and suffix blocks")
+    prefix, suffix = block.hint
+    if not isinstance(prefix, TextBlock) or not isinstance(suffix, TextBlock):
+        raise ValueError("Mission hint parts must be text blocks")
+    task_text = target.get_text_content() or ""
+    current = next(
+        (item for item in target.content if isinstance(item, TextBlock)),
+        None,
+    )
+    kwargs: dict[str, Any] = {}
+    if current is not None:
+        kwargs = {
+            "id": current.id,
+            "created_at": current.created_at,
+            "finished_at": current.finished_at,
+        }
+    return [
+        TextBlock(
+            text=f"{prefix.text}> {task_text}\n\n{suffix.text}",
+            **kwargs,
+        ),
+    ]
 
 
 def _snapshot_project_dirs() -> list[dict[str, Any]]:

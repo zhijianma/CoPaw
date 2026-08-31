@@ -19,6 +19,7 @@ import logging
 import uuid
 from typing import Any, AsyncGenerator
 
+from ..agents.hints import HINT_SOURCE_CONTEXT, make_hint_carrier
 from ..exceptions import ConfigurationException
 from .builder import AgentBuilder
 from .envelope import Envelope
@@ -504,10 +505,10 @@ class Runtime:
 
     @staticmethod
     def _apply_context_injections(ctx: HookContext) -> None:
-        """Merge context_injections into input_msgs as a system hint.
+        """Merge context_injections into input_msgs as a private hint.
 
         Sorts injections by priority (ascending) and prepends a
-        single system-role message so the agent sees the dynamic
+        single assistant message so the agent sees the dynamic
         context in its current turn.
         """
         injections = ctx.context_injections
@@ -521,17 +522,9 @@ class Runtime:
         if not parts:
             return
         try:
-            from agentscope.message import Msg, TextBlock
-
-            hint_msg = Msg(
-                name="system",
-                role="user",
-                content=[
-                    TextBlock(
-                        type="text",
-                        text="\n\n".join(parts),
-                    ),
-                ],
+            hint_msg = make_hint_carrier(
+                hint="\n\n".join(parts),
+                source=HINT_SOURCE_CONTEXT,
             )
             ctx.input_msgs.insert(0, hint_msg)
         except Exception:

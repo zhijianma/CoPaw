@@ -18,6 +18,11 @@ from typing import TYPE_CHECKING, Optional
 
 from agentscope.message import Msg, TextBlock
 
+from ...agents.hints import (
+    HINT_POSITION_REPLACE_CONTENT,
+    HINT_SOURCE_MISSION,
+    make_hint_carrier,
+)
 from ..base import AgentMode, find_active_explicit_mode
 from ...runtime.hooks import HookBase, HookContext
 from ...runtime.slash_command_registry import CommandSpec
@@ -163,6 +168,7 @@ class MissionMode(AgentMode):
         so the agent processes the rewritten message.
         """
         from .handler import (
+            build_mission_hint_parts,
             format_help,
             format_list,
             format_status,
@@ -237,7 +243,21 @@ class MissionMode(AgentMode):
             "phase": "prd_generation",
         }
 
-        _rewrite_user_msg(ctx, prompt)
+        target = _rewrite_user_msg(ctx, task_text)
+        if target is not None:
+            ctx.input_msgs.append(
+                make_hint_carrier(
+                    hint=build_mission_hint_parts(prompt, task_text),
+                    source=HINT_SOURCE_MISSION,
+                    target_msg_id=target.id,
+                    position=HINT_POSITION_REPLACE_CONTENT,
+                    renderer_version=1,
+                    renderer_context={
+                        "mission_name": loop_dir.name,
+                        "loop_dir": str(loop_dir),
+                    },
+                ),
+            )
         logger.info(
             f"Mission started session={session_id}" f" loop_dir={loop_dir}",
         )
@@ -260,15 +280,16 @@ def _info_msg(text: str) -> Msg:
     )
 
 
-def _rewrite_user_msg(ctx: "Any", text: str) -> None:
+def _rewrite_user_msg(ctx: "Any", text: str) -> Msg | None:
     """Replace the last user message with *text*."""
     msgs = getattr(ctx, "input_msgs", None)
     if not msgs:
-        return
+        return None
     last = msgs[-1]
     if not isinstance(last, Msg):
-        return
+        return None
     last.content = [TextBlock(type="text", text=text)]
+    return last
 
 
 __all__ = ["MissionMode"]

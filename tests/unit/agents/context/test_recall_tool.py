@@ -27,6 +27,10 @@ from qwenpaw.agents.context.scroll.recall_tool import (
     make_recall_history,
 )
 from qwenpaw.agents.context.types import LogEntry
+from qwenpaw.agents.hints import (
+    HINT_SOURCE_BACKGROUND_TOOL,
+    HINT_SOURCE_LOOP_CONTINUATION,
+)
 
 
 @pytest.fixture
@@ -83,6 +87,39 @@ def history_db(tmp_path: Path) -> Path:
     )
     h.close()
     return tmp_path / "history.db"
+
+
+def test_expand_renders_durable_hint_but_not_ephemeral_control() -> None:
+    rows = [
+        {
+            "seq": 1,
+            "role": "assistant",
+            "content": "",
+            "blocks": [
+                {
+                    "type": "hint",
+                    "source": HINT_SOURCE_BACKGROUND_TOOL,
+                    "hint": "background result",
+                },
+                {
+                    "type": "hint",
+                    "source": HINT_SOURCE_LOOP_CONTINUATION,
+                    "hint": "continue internally",
+                },
+            ],
+        },
+    ]
+
+    rendered, _page = _render_page(
+        rows,
+        label="expand [1, 1]",
+        cursor=None,
+        max_bytes=4000,
+        request_fingerprint="request",
+    )
+
+    assert "background result" in rendered
+    assert "continue internally" not in rendered
 
 
 @pytest.fixture

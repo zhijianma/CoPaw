@@ -29,6 +29,7 @@ from .tools.utils import (
     DEFAULT_MAX_BYTES,
     ToolResultPruner,
 )
+from .memory.hint_projection import project_messages_for_memory
 from ..constant import (
     EXTERNAL_USER_QUERY_MESSAGE_TAG,
     QWENPAW_MESSAGE_TAG_KEY,
@@ -330,8 +331,9 @@ class MemoryMiddleware(MiddlewareBase):
             return
 
         try:
+            memory_messages = project_messages_for_memory(messages)
             await self._memory_manager.auto_memory(
-                messages,
+                memory_messages,
                 session_id=self._agent_session_id(agent),
             )
         except Exception:

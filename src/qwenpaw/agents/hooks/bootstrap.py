@@ -9,9 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from ..prompt import build_bootstrap_guidance
+from ..hints import (
+    HINT_POSITION_BEFORE_FIRST_TEXT,
+    HINT_SOURCE_BOOTSTRAP,
+    make_hint_carrier,
+)
 from ..utils import (
     is_first_user_interaction,
-    prepend_to_message_content,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,10 +88,17 @@ class BootstrapHook:
             )
             for msg in messages[system_prompt_count:]:
                 if msg.role == "user":
-                    prepend_to_message_content(msg, bootstrap_guidance)
+                    agent.state.context.append(
+                        make_hint_carrier(
+                            hint=f"{bootstrap_guidance}\n\n",
+                            source=HINT_SOURCE_BOOTSTRAP,
+                            target_msg_id=msg.id,
+                            position=HINT_POSITION_BEFORE_FIRST_TEXT,
+                        ),
+                    )
                     break
 
-            logger.debug("Bootstrap guidance prepended to first user message")
+            logger.debug("Bootstrap HintBlock appended after first user")
 
             # Create completion flag to prevent repeated triggering
             bootstrap_completed_flag.touch()

@@ -14,6 +14,11 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ..agents.hints import (
+    HINT_POSITION_APPEND_TEXT,
+    HINT_SOURCE_SKILL,
+    make_hint_carrier,
+)
 from ._state_utils import StateProxy
 from .slash_command_registry import CommandSpec, FallbackHandler
 
@@ -538,8 +543,23 @@ def _build_skill_injection(
     command stays at the head, so the user's request is not duplicated
     inside the block.
     """
+    return original_text + _build_skill_hint(
+        display_name,
+        description,
+        skill_dir,
+        skill_body,
+    )
+
+
+def _build_skill_hint(
+    display_name: str,
+    description: str,
+    skill_dir: "Path",
+    skill_body: str,
+) -> str:
+    """Build the hidden suffix used by direct slash-skill invocation."""
     return (
-        f"{original_text}\n\n"
+        f"\n\n"
         f"<skill>\n"
         f"<name>{display_name}</name>\n"
         f"<description>{description}</description>\n"
@@ -664,43 +684,26 @@ async def _skill_fallback_handler(
             ],
         )
 
-    # Append the skill body as a trailing <skill> block; typed text stays.
+    # Keep the typed command in the user message and place the private body
+    # in an assistant HintBlock. Memory projection reconstructs the exact
+    # legacy user text before ReMe/ADBPG consume it.
     msgs = getattr(ctx, "input_msgs", None)
     if msgs:
         last = msgs[-1]
-        content = getattr(last, "content", None)
-        if isinstance(content, list):
-            for i, block in enumerate(content):
-                btype = (
-                    block.get("type")
-                    if isinstance(block, dict)
-                    else getattr(block, "type", None)
-                )
-                if btype == "text":
-                    merged = _build_skill_injection(
-                        _extract_block_text(block),
-                        display_name,
-                        description,
-                        skill_dir,
-                        post.content,
-                    )
-                    content[i] = TextBlock(type="text", text=merged)
-                    return None
-            merged = _build_skill_injection(
-                "",
+        if getattr(last, "role", None) == "user":
+            hint = _build_skill_hint(
                 display_name,
                 description,
                 skill_dir,
                 post.content,
             )
-            content.insert(0, TextBlock(type="text", text=merged))
-        elif isinstance(content, str):
-            last.content = _build_skill_injection(
-                content,
-                display_name,
-                description,
-                skill_dir,
-                post.content,
+            msgs.append(
+                make_hint_carrier(
+                    hint=hint,
+                    source=HINT_SOURCE_SKILL,
+                    target_msg_id=last.id,
+                    position=HINT_POSITION_APPEND_TEXT,
+                ),
             )
     return None
 

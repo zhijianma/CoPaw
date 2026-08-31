@@ -13,6 +13,7 @@ import pytest
 from agentscope.message import (
     Base64Source,
     DataBlock,
+    HintBlock,
     Msg,
     TextBlock,
     URLSource,
@@ -20,6 +21,9 @@ from agentscope.message import (
 from PIL import Image
 
 from qwenpaw.agents.utils import message_processing
+from qwenpaw.agents.memory.hint_projection import (
+    project_messages_for_memory,
+)
 from qwenpaw.agents.utils.message_processing import (
     _process_audio_block,
     is_first_user_interaction,
@@ -239,15 +243,17 @@ class TestProcessAudioDataBlock:
     ):
         audio_path = tmp_path / "voice.opus"
         msg, _ = _audio_message(audio_path)
+        messages = [msg]
 
         with _mock_transcription():
-            await process_file_and_media_blocks_in_message(msg)
+            await process_file_and_media_blocks_in_message(messages)
 
-        assert len(msg.content) == 2
+        assert len(msg.content) == 1
         assert isinstance(msg.content[0], TextBlock)
         assert msg.content[0].text == "[Voice message]: (audio file received)"
-        assert isinstance(msg.content[1], TextBlock)
-        assert str(audio_path.resolve()) in msg.content[1].text
+        assert isinstance(messages[1].content[0], HintBlock)
+        projected = project_messages_for_memory(messages)
+        assert str(audio_path.resolve()) in projected[0].content[1].text
 
     @pytest.mark.asyncio
     async def test_native_audio_remains_data_block(
@@ -342,11 +348,14 @@ class TestProcessFileAndMediaBlocks:
     ):
         local_path = tmp_path / "884ff39f590c4472f__.docx"
         msg = _data_file_msg(local_path, "项目方案.docx")
+        messages = [msg]
         _set_language(monkeypatch, "zh")
 
-        await process_file_and_media_blocks_in_message(msg)
+        await process_file_and_media_blocks_in_message(messages)
 
-        assert msg.content[1].text == (
+        assert isinstance(messages[1].content[0], HintBlock)
+        projected = project_messages_for_memory(messages)
+        assert projected[0].content[1].text == (
             f'用户上传文件 "项目方案.docx"，已经下载到 {local_path}'
         )
 
@@ -361,11 +370,13 @@ class TestProcessFileAndMediaBlocks:
             local_path,
             "..\\..\\会议\n记\u0085录\u2028划\u2029.docx",
         )
+        messages = [msg]
         _set_language(monkeypatch, "en")
 
-        await process_file_and_media_blocks_in_message(msg)
+        await process_file_and_media_blocks_in_message(messages)
 
-        assert msg.content[1].text == (
+        projected = project_messages_for_memory(messages)
+        assert projected[0].content[1].text == (
             "User uploaded a file "
             '"会议\\n记\\u0085录\\u2028划\\u2029.docx", '
             f"downloaded to {local_path}"
@@ -379,12 +390,14 @@ class TestProcessFileAndMediaBlocks:
     ):
         local_path = tmp_path / "stored.bin"
         msg = _data_file_msg(local_path, f"{'a' * 250}.txt")
+        messages = [msg]
         _set_language(monkeypatch, "en")
 
-        await process_file_and_media_blocks_in_message(msg)
+        await process_file_and_media_blocks_in_message(messages)
 
         expected_name = "a" * 200
-        assert msg.content[1].text == (
+        projected = project_messages_for_memory(messages)
+        assert projected[0].content[1].text == (
             f'User uploaded a file "{expected_name}", '
             f"downloaded to {local_path}"
         )
@@ -397,10 +410,12 @@ class TestProcessFileAndMediaBlocks:
     ):
         local_path = tmp_path / "stored.bin"
         msg = _data_file_msg(local_path)
+        messages = [msg]
         _set_language(monkeypatch, "en")
 
-        await process_file_and_media_blocks_in_message(msg)
+        await process_file_and_media_blocks_in_message(messages)
 
-        assert msg.content[1].text == (
+        projected = project_messages_for_memory(messages)
+        assert projected[0].content[1].text == (
             f"User uploaded a file, downloaded to {local_path}"
         )

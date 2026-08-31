@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 
 import pytest
-from agentscope.message import Msg, TextBlock
+from agentscope.message import HintBlock, Msg, TextBlock
 from agentscope.state import AgentState
 
 from qwenpaw.agents.context.scroll.continuation_summary import (
@@ -172,7 +172,10 @@ def test_resume_removes_summary_whose_history_was_purged(store):
     QwenPawAgent.load_state_dict(agent2, snapshot, strict=True)
 
     assert mgr2.describe_summary() == ""
-    rendered = agent2.state.context[0].get_text_content()
+    hint = agent2.state.context[0].content[0]
+    assert isinstance(hint, HintBlock)
+    assert isinstance(hint.hint, str)
+    rendered = hint.hint
     assert "Expired task" not in rendered
     assert "sequence range 1–2" not in rendered
     assert agent2.state.context[-1].get_text_content() == "current request"

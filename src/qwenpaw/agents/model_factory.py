@@ -1338,7 +1338,7 @@ def _fixup_media_list(items: list) -> None:
       the upstream OpenAI path silently drops the whole message when
       nothing else survives.
     - Handles both dict blocks (1.x) and Pydantic block objects (2.0).
-    - Recurses into ``tool_result`` output lists.
+    - Recurses into ``tool_result`` outputs and ``HintBlock`` contents.
     """
     for i, block in enumerate(items):
         btype = (
@@ -1444,6 +1444,41 @@ def _fixup_media_list(items: list) -> None:
             )
             if isinstance(output, list):
                 _fixup_media_list(output)
+        elif btype == "hint":
+            hint = (
+                block.get("hint")
+                if isinstance(block, dict)
+                else getattr(block, "hint", None)
+            )
+            if isinstance(hint, list):
+                _fixup_media_list(hint)
+
+
+def _fallback_openai_hint_videos(items: list) -> None:
+    """Replace unsupported videos nested in HintBlocks with text."""
+    for block in items:
+        block_type = (
+            block.get("type")
+            if isinstance(block, dict)
+            else getattr(block, "type", None)
+        )
+        if block_type != "hint":
+            continue
+        hint = (
+            block.get("hint")
+            if isinstance(block, dict)
+            else getattr(block, "hint", None)
+        )
+        if not isinstance(hint, list):
+            continue
+        for index, nested in enumerate(hint):
+            if _media_kind(nested) == "video":
+                hint[index] = TextBlock(
+                    text=(
+                        "[Video unavailable to model: this provider does "
+                        "not support video in private context]"
+                    ),
+                )
 
 
 # pylint: disable-next=too-many-statements
@@ -1615,6 +1650,14 @@ def _create_file_block_support_formatter(
                 ),
             )
             await _resize_request_images(normalized_msgs)
+
+            if issubclass(
+                base_formatter_class,
+                (OpenAIChatFormatter, OpenAIResponseFormatter),
+            ):
+                for msg in normalized_msgs:
+                    if isinstance(msg.content, list):
+                        _fallback_openai_hint_videos(msg.content)
 
             # Per-wire-request dedup scope — second occurrence of the
             # same media source becomes a text placeholder. Set this only

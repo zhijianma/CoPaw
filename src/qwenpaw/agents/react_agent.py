@@ -40,6 +40,10 @@ from ..constant import (
     QWENPAW_MESSAGE_TAG_KEY,
     WORKING_DIR,
 )
+from .hints import (
+    HINT_SOURCE_LOOP_CONTINUATION,
+    HINT_SOURCE_RUNTIME_STATE,
+)
 from ..loop.gates import StopAction, StopHandlerResult
 from ..providers.error_utils import extract_status_code
 from ..providers.fallback_chat_model import install_fallback_notice_sink
@@ -174,6 +178,7 @@ class QwenPawAgent(CodingModeMixin, Agent):
         context_manager: ContextManager | None = None,
         effective_skills: Optional[list[str]] = None,
         governor: Any = None,
+        runtime_timezone: str = "UTC",
     ):
         """Initialize QwenPawAgent.
 
@@ -203,7 +208,10 @@ class QwenPawAgent(CodingModeMixin, Agent):
             "toolkit": toolkit,
             "react_config": react_config,
             "injection_config": InjectionConfig(
-                inject_runtime_state=False,
+                inject_runtime_state=True,
+                timezone=runtime_timezone or "UTC",
+                injection_source=HINT_SOURCE_RUNTIME_STATE,
+                emit_hint_event=False,
             ),
             "middlewares": middlewares,
             "offloader": offloader,
@@ -928,12 +936,12 @@ class QwenPawAgent(CodingModeMixin, Agent):
             }
             self.state.context.append(
                 Msg(
-                    name="user",
-                    role="user",
+                    name=self.name,
+                    role="assistant",
                     content=[
-                        TextBlock(
-                            type="text",
-                            text=continuation,
+                        HintBlock(
+                            hint=continuation,
+                            source=HINT_SOURCE_LOOP_CONTINUATION,
                         ),
                     ],
                     metadata=continuation_metadata,

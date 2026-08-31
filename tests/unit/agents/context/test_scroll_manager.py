@@ -56,6 +56,14 @@ def user(text: str) -> Msg:
     )
 
 
+def private_context_text(msg: Msg) -> str:
+    """Return model-only text from a Scroll HintBlock carrier."""
+    block = msg.content[0]
+    assert isinstance(block, HintBlock)
+    assert isinstance(block.hint, str)
+    return block.hint
+
+
 def assistant(text: str, headline: str | None = None) -> Msg:
     if headline:
         text = f"{text}\n⟦ {headline} ⟧"
@@ -536,7 +544,7 @@ async def test_compress_evicts_middle_into_index(store: HistoryStore):
     assert "did-step" in mgr._index.render()
     assert (
         "[continuity checkpoint]"
-        not in agent.state.context[0].get_text_content()
+        not in private_context_text(agent.state.context[0])
     )
     assert mgr.last_compress["evicted"] == 2  # /compact reporting source
 
@@ -920,7 +928,7 @@ async def test_eviction_generates_plain_text_pointer_backed_summary(
     assert "## Active Task\nFix provider discovery." in summary
     # The model-visible summary stays clean; code retains the range internally.
     assert "[seq:" not in summary
-    placeholder = agent.state.context[0].get_text_content()
+    placeholder = private_context_text(agent.state.context[0])
     assert "[archived task state]" in placeholder
     assert "not a user message" in placeholder
     assert "sequence range 1–2" in placeholder
@@ -1237,7 +1245,7 @@ async def test_invalid_summary_update_preserves_previous_and_marks_stale(
     await mgr.compress(agent)
 
     assert mgr.describe_summary() == first
-    placeholder = agent.state.context[0].get_text_content()
+    placeholder = private_context_text(agent.state.context[0])
     assert "Summary status: stale" in placeholder
     assert "Fix provider discovery." in placeholder
     assert len(agent.model.summary_calls) == 3
@@ -1285,7 +1293,7 @@ async def test_summary_timeout_preserves_valid_previous_without_retry(
 
     assert hanging.summary_calls == 1
     assert mgr.describe_summary() == previous
-    assert "Summary status: stale" in agent.state.context[0].get_text_content()
+    assert "Summary status: stale" in private_context_text(agent.state.context[0])
 
 
 async def test_summary_provider_failure_preserves_previous_without_retry(
@@ -1317,7 +1325,7 @@ async def test_summary_provider_failure_preserves_previous_without_retry(
     assert failing.summary_calls == 1
     assert mgr.describe_summary() == previous
     assert "summary_retries" not in mgr.last_compress
-    assert "Summary status: stale" in agent.state.context[0].get_text_content()
+    assert "Summary status: stale" in private_context_text(agent.state.context[0])
 
 
 async def test_expired_summary_coverage_rebuilds_from_new_evidence(

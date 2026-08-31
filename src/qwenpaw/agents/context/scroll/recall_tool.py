@@ -36,6 +36,12 @@ from agentscope.tool import ToolChunk
 from ....runtime.tool_registry import ToolDescriptor
 from ....utils.io_utils import run_sync_io
 from ...tools.utils import DEFAULT_MAX_BYTES
+from ...hints import (
+    HINT_SOURCE_CONTEXT,
+    HINT_SOURCE_LOOP_CONTINUATION,
+    HINT_SOURCE_RUNTIME_STATE,
+    HINT_SOURCE_SCROLL_CONTEXT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -417,6 +423,33 @@ def _render_tool_result_output(output: Any) -> str:
     return "\n".join(parts)
 
 
+def _render_hint_block(block: dict[str, Any]) -> str:
+    """Render durable non-ephemeral hint content during explicit recall."""
+    if block.get("source") in {
+        HINT_SOURCE_CONTEXT,
+        HINT_SOURCE_LOOP_CONTINUATION,
+        HINT_SOURCE_RUNTIME_STATE,
+        HINT_SOURCE_SCROLL_CONTEXT,
+    }:
+        return ""
+    hint = block.get("hint")
+    if isinstance(hint, str):
+        return _bounded_structured_value(hint)
+    if not isinstance(hint, list):
+        return ""
+    parts: list[str] = []
+    for item in hint:
+        if not isinstance(item, dict):
+            continue
+        if item.get("type") == "text" and item.get("text"):
+            parts.append(_bounded_structured_value(item["text"]))
+            continue
+        media_ref = _safe_media_ref(item)
+        if media_ref:
+            parts.append(media_ref)
+    return "\n".join(parts)
+
+
 def _render_row_blocks(row: dict[str, Any], body: str) -> list[str]:
     """Render useful structured context omitted from flattened content."""
     rendered: list[str] = []
@@ -452,6 +485,11 @@ def _render_row_blocks(row: dict[str, Any], body: str) -> list[str]:
                 if output:
                     result += "\n" + output
             rendered.append(result)
+            continue
+        if block_type == "hint":
+            hint = _render_hint_block(block)
+            if hint:
+                rendered.append(hint)
             continue
         media_ref = _safe_media_ref(block)
         if media_ref and media_ref not in body:

@@ -1,0 +1,45 @@
+{
+  "environment": {
+    "python": "3.12.0",
+    "platform": "macOS-15.5-arm64-arm-64bit",
+    "samples": 300,
+    "warmups": 30
+  },
+  "scenarios": {
+    "no_hint": {
+      "p50_ms": 0.029125,
+      "p95_ms": 0.031125,
+      "peak_bytes": 9148,
+      "payload_bytes": 2693,
+      "token_estimate": 19
+    },
+    "typical_turn": {
+      "p50_ms": 0.039459,
+      "p95_ms": 0.039709,
+      "peak_bytes": 22560,
+      "payload_bytes": 10321,
+      "token_estimate": 2141
+    },
+    "batched_100": {
+      "p50_ms": 0.6445005,
+      "p95_ms": 0.845167,
+      "peak_bytes": 390528,
+      "payload_bytes": 175489,
+      "token_estimate": 36397
+    },
+    "proactive_1000": {
+      "p50_ms": 6.539125,
+      "p95_ms": 7.354292,
+      "peak_bytes": 3984096,
+      "payload_bytes": 1724557,
+      "token_estimate": 357547
+    },
+    "multimodal": {
+      "p50_ms": 0.2235,
+      "p95_ms": 0.253958,
+      "peak_bytes": 61536,
+      "payload_bytes": 16611,
+      "token_estimate": 43
+    }
+  }
+}

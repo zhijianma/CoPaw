@@ -120,7 +120,7 @@ class HookContext:
         """Append a dynamic context injection.
 
         Injections are collected during hook execution and later
-        assembled by the runtime into system-level reminders so the
+        assembled by the runtime into private HintBlocks so the
         agent sees them in the current turn.
 
         Args:

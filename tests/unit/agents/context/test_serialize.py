@@ -2,7 +2,10 @@
 """Headline extraction and display-cleanup regressions."""
 
 import pytest
+from agentscope.message import HintBlock, Msg
 
+from qwenpaw.agents.context.scroll.serialize import msg_to_entries
+from qwenpaw.agents.hints import HINT_SOURCE_BACKGROUND_TOOL
 from qwenpaw.agents.context.scroll.prompt import build_scroll_system_prompt
 from qwenpaw.agents.context.scroll.serialize import (
     HeadlineDeltaState,
@@ -29,6 +32,25 @@ def test_extract_headline_accepts_plain_and_legacy_fences(
     expected: str,
 ) -> None:
     assert extract_headline(text) == expected
+
+
+def test_hint_is_durable_but_not_searchable_content() -> None:
+    msg = Msg(
+        name="system",
+        role="assistant",
+        content=[
+            HintBlock(
+                hint="private background result",
+                source=HINT_SOURCE_BACKGROUND_TOOL,
+            ),
+        ],
+    )
+
+    (entry,) = msg_to_entries(msg)
+
+    assert entry.content == ""
+    assert entry.blocks[0]["type"] == "hint"
+    assert entry.blocks[0]["hint"] == "private background result"
 
 
 def test_strip_headline_removes_plain_fence() -> None:

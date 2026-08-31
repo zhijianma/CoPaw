@@ -4,10 +4,16 @@
 
 import threading
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
-from agentscope.message import Msg, TextBlock
+from agentscope.message import HintBlock, Msg, TextBlock
+from agentscope.state import AgentState
 
+from qwenpaw.agents.hints import HINT_SOURCE_BACKGROUND_TOOL
+from qwenpaw.agents.memory.proactive.proactive_utils import (
+    _process_session_memory,
+)
 from qwenpaw.agents.memory.proactive import proactive_responder
 from qwenpaw.agents.memory.proactive.proactive_responder import (
     _generate_final_message,
@@ -18,6 +24,43 @@ from qwenpaw.agents.memory.proactive.proactive_types import (
 from qwenpaw.agents.memory.reme_light_memory_manager import (
     ReMeLightMemoryManager,
 )
+
+
+@pytest.mark.asyncio
+async def test_proactive_projects_hint_before_text_cleanup() -> None:
+    """Proactive memory sees the same reminder text as ReMe."""
+    hint = HintBlock(
+        hint="<system-reminder>remember this</system-reminder>",
+        source=HINT_SOURCE_BACKGROUND_TOOL,
+    )
+    state = AgentState(session_id="session-1")
+    state.context = [
+        Msg(
+            name="system",
+            role="assistant",
+            content=[hint],
+        ),
+    ]
+    workspace = SimpleNamespace(
+        session=SimpleNamespace(
+            get_session_state_dict=AsyncMock(
+                return_value={
+                    "agent": {"state": state.model_dump(mode="json")},
+                },
+            ),
+        ),
+    )
+
+    processed = await _process_session_memory(
+        "session-1",
+        "user-1",
+        workspace,
+    )
+
+    assert len(processed) == 1
+    assert processed[0]["message"].get_text_content() == (
+        "<system-reminder>remember this</system-reminder>"
+    )
 
 
 @pytest.mark.asyncio

@@ -5,10 +5,20 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from agentscope.message import HintBlock, Msg, TextBlock
 from pydantic import ValidationError
 
+from qwenpaw.agents.hints import (
+    HINT_POSITION_REPLACE_CONTENT,
+    HINT_SOURCE_MISSION,
+    make_hint_carrier,
+)
+from qwenpaw.agents.memory.hint_projection import (
+    project_messages_for_memory,
+)
 from qwenpaw.config.config import MissionLoopModeConfig
 from qwenpaw.modes.mission.handler import (
+    build_mission_hint_parts,
     parse_mission_args,
     start_mission,
 )
@@ -27,6 +37,48 @@ def test_mission_config_defaults_and_bounds() -> None:
 
     with pytest.raises(ValidationError):
         MissionLoopModeConfig(max_retries_per_story=11)
+
+
+def test_mission_hint_projects_exact_legacy_prompt_without_duplication() -> (
+    None
+):
+    task = "Implement the approved feature"
+    legacy = (
+        "Starting Mission Mode: `mission-1`.\n\n"
+        "Task (saved in `/tmp/mission-1/task.md`):\n"
+        f"> {task}\n\n"
+        "Master instructions\n\nPhase 1"
+    )
+    user = Msg(
+        name="user",
+        role="user",
+        content=[TextBlock(text=task)],
+    )
+    carrier = make_hint_carrier(
+        hint=build_mission_hint_parts(legacy, task),
+        source=HINT_SOURCE_MISSION,
+        target_msg_id=user.id,
+        position=HINT_POSITION_REPLACE_CONTENT,
+        renderer_version=1,
+        renderer_context={
+            "mission_name": "mission-1",
+            "loop_dir": "/tmp/mission-1",
+        },
+    )
+
+    assert isinstance(carrier.content[0], HintBlock)
+    assert task not in str(carrier.metadata)
+    assert (
+        sum(
+            part.text.count(task)
+            for part in carrier.content[0].hint
+            if isinstance(part, TextBlock)
+        )
+        == 0
+    )
+    projected = project_messages_for_memory([user, carrier])
+    assert projected[0].get_text_content() == legacy
+    assert user.get_text_content() == task
 
 
 def test_mission_args_use_defaults_and_allow_command_override() -> None:

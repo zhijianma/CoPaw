@@ -64,7 +64,9 @@ def test_qwenpaw_agent_disables_runtime_state_injection() -> None:
         agent_config=SimpleNamespace(language="en-US"),
     )
 
-    assert agent.injection_config.inject_runtime_state is False
+    assert agent.injection_config.inject_runtime_state is True
+    assert agent.injection_config.emit_hint_event is False
+    assert agent.injection_config.injection_source == ("qwenpaw:runtime-state")
 
 
 class _ScrollManager:

@@ -23,6 +23,7 @@ from .adbpg_client import (
 )
 from .adbpg_prompts import ADBPG_MEMORY_GUIDANCE_EN, ADBPG_MEMORY_GUIDANCE_ZH
 from .base_memory_manager import BaseMemoryManager, memory_registry
+from .hint_projection import project_messages_for_memory
 from ...config.config import load_agent_config
 from ...exceptions import ConfigurationException as ConfigurationError
 from ...utils.io_utils import run_sync_io
@@ -165,6 +166,7 @@ class ADBPGMemoryManager(BaseMemoryManager):
         """Persist user messages to ADBPG via fire-and-forget."""
         if self._client is None:
             return ""
+        messages = project_messages_for_memory(messages)
         user_messages = self._filter_user_messages(messages)
         if not user_messages:
             return ""
@@ -241,6 +243,7 @@ class ADBPGMemoryManager(BaseMemoryManager):
         if self._client is None:
             return
 
+        all_messages = project_messages_for_memory(all_messages)
         all_messages = self._messages_without_auto_memory_search(all_messages)
 
         # Only persist messages not already sent

@@ -33,6 +33,7 @@ from ....constant import (
     SCROLL_MEMORY_MESSAGE_TAG,
     SYNTHETIC_USER_MESSAGE_TAGS,
 )
+from ...hints import HINT_SOURCE_SCROLL_CONTEXT, make_hint_carrier
 from . import _as_internals as as_internals
 from .continuation_summary import (
     ContinuationSummary,
@@ -1828,9 +1829,10 @@ class ScrollContextManager:
                 + render_live_turn_banner()
             )
             memory = f"<system-info>\n{body}\n</system-info>"
-        placeholder = UserMsg(
+        placeholder = make_hint_carrier(
             name="memory",
-            content=memory,
+            hint=memory,
+            source=HINT_SOURCE_SCROLL_CONTEXT,
             metadata={
                 QWENPAW_MESSAGE_TAG_KEY: SCROLL_MEMORY_MESSAGE_TAG,
             },

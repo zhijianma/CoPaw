@@ -25,6 +25,7 @@ from ...constant import (
 )
 from ...app.crons.contracts import ServiceCronJob
 from ..utils.registry import Registry
+from .hint_projection import project_messages_for_memory
 
 logger = logging.getLogger(__name__)
 MAX_QUERY_CHARS = 50
@@ -450,6 +451,8 @@ class BaseMemoryManager(ABC):
             messages: Messages to pass to ``summarize()``.
             **kwargs: Forwarded to ``summarize()``.
         """
+        messages = project_messages_for_memory(messages)
+
         # Ensure worker is running
         self._worker_stopping = False
         if self._worker_task is None or self._worker_task.done():

@@ -1637,11 +1637,11 @@ async def test_dashscope_hint_prepares_local_video_once(
 
 
 @pytest.mark.asyncio
-async def test_openai_hint_skips_local_video_preparation(
+async def test_openai_hint_uses_text_fallback_without_video_preparation(
     tmp_path,
     monkeypatch,
 ) -> None:
-    """OpenAI must not pre-read a HintBlock video it will discard."""
+    """OpenAI must not pre-read unsupported private-context video."""
     monkeypatch.setattr(
         model_factory,
         "_supports_multimodal_for_current_model",
@@ -1676,7 +1676,9 @@ async def test_openai_hint_skips_local_video_preparation(
 
     formatted = await formatter.format([msg])
 
-    assert formatted == []
+    assert len(formatted) == 1
+    assert formatted[0]["role"] == "user"
+    assert "does not support video" in formatted[0]["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -1728,6 +1730,35 @@ async def test_openai_hint_prepares_supported_local_media(
         "data:image/png;base64,",
     )
     assert len(reads) == 1
+
+
+@pytest.mark.asyncio
+async def test_deleted_hint_media_falls_back_without_mutating_live_state(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Nested HintBlock media normalization remains request-only."""
+    monkeypatch.setattr(
+        model_factory,
+        "_supports_multimodal_for_current_model",
+        lambda: True,
+    )
+    missing = tmp_path / "deleted.png"
+    data = _data_block("image/png", f"file://{missing}")
+    msg = Msg(
+        name="assistant",
+        role="assistant",
+        content=[HintBlock(hint=[data])],
+    )
+    formatter_class = model_factory._create_file_block_support_formatter(
+        _CappingOpenAIFormatter,
+    )
+
+    formatted = await formatter_class().format([msg])
+
+    assert "file deleted from disk" in formatted[0]["content"][0]["text"]
+    live_data = msg.content[0].hint[0]
+    assert str(live_data.source.url) == f"file://{missing}"
 
 
 @pytest.mark.asyncio

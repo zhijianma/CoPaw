@@ -8,13 +8,21 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 import pytest
-from agentscope.message import TextBlock, ToolResultBlock, ToolResultState
+from agentscope.message import (
+    HintBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolResultState,
+)
 from agentscope.tool import ToolChunk, ToolResponse
 
 from qwenpaw.tool_calls import ToolCoordinator, ToolCoordinatorMiddleware
 from qwenpaw.tool_calls._context import CancelReason, ToolCallContext
 from qwenpaw.tool_calls._entry import ToolCallEntry, ToolCallStatus
 from qwenpaw.tool_calls._stream import ToolStream
+from qwenpaw.agents.memory.hint_projection import (
+    project_messages_for_memory,
+)
 
 
 @dataclass
@@ -368,9 +376,11 @@ async def test_background_completion_emits_hint():
 
     assert events[-1].metadata["offloaded"] is True
     assert hint.role == "assistant"
+    assert isinstance(hint.content[0], HintBlock)
+    projected = project_messages_for_memory([hint])
     text_block = next(
         block
-        for block in hint.content
+        for block in projected[0].content
         if getattr(block, "type", None) == "text"
     )
     assert "slow_tool" in text_block.text

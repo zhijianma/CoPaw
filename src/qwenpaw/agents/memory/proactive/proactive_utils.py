@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, List, Optional, Any
 from agentscope.agent import Agent
 from agentscope.message import Msg, TextBlock
 
+from ..hint_projection import project_messages_for_memory
+
 if TYPE_CHECKING:
     from ....app.workspace import Workspace
 
@@ -153,6 +155,7 @@ async def _process_session_memory(
         if not messages:
             return []
 
+        messages = project_messages_for_memory(messages)
         processed_messages = []
         default_time = datetime.now(timezone.utc)
 

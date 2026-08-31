@@ -11,6 +11,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from ...agents.hints import (
+    HINT_POSITION_BEFORE_FIRST_TEXT,
+    HINT_SOURCE_BOOTSTRAP,
+    make_hint_carrier,
+)
 from ..base import LifecycleHook
 from ...runtime.hooks import HookContext, HookResult
 from ...runtime.phases import Phase
@@ -46,7 +51,6 @@ class BootstrapHook(LifecycleHook):
 
         try:
             from ...agents.prompt import build_bootstrap_guidance
-            from ...agents.utils import prepend_to_message_content
 
             language = "zh"
             agent_config = ctx.agent_config
@@ -57,11 +61,18 @@ class BootstrapHook(LifecycleHook):
 
             for msg in ctx.input_msgs:
                 if msg.role == "user":
-                    prepend_to_message_content(msg, bootstrap_guidance)
+                    ctx.input_msgs.append(
+                        make_hint_carrier(
+                            hint=f"{bootstrap_guidance}\n\n",
+                            source=HINT_SOURCE_BOOTSTRAP,
+                            target_msg_id=msg.id,
+                            position=HINT_POSITION_BEFORE_FIRST_TEXT,
+                        ),
+                    )
                     break
 
             bootstrap_completed_flag.touch()
-            logger.debug("Bootstrap guidance injected into input_msgs")
+            logger.debug("Bootstrap HintBlock injected into input_msgs")
         except Exception:
             logger.debug("bootstrap: injection failed", exc_info=True)
 

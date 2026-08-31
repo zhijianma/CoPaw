@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from agentscope.message import (
+    HintBlock,
     Msg,
     TextBlock,
     ToolCallBlock,
@@ -23,6 +24,7 @@ from qwenpaw.agents.middlewares import (
     MemoryMiddleware,
     auto_memory_turn_state,
 )
+from qwenpaw.agents.hints import HINT_SOURCE_BACKGROUND_TOOL
 from qwenpaw.constant import (
     EXTERNAL_USER_QUERY_MESSAGE_TAG,
     LOOP_CONTINUATION_MESSAGE_TAG,
@@ -794,6 +796,36 @@ class TestFlushAutoMemoryDefensiveGuard:
 
         mm.auto_memory.assert_awaited_once()
         assert not _turn_state(agent)["pending"]
+
+    @pytest.mark.asyncio
+    async def test_flush_projects_hint_for_memory_without_mutating_context(
+        self,
+    ):
+        """ReMe receives the old TextBlock view while live state keeps hint."""
+        mm = _make_memory_manager()
+        mw = MemoryMiddleware(memory_manager=mm)
+        agent = _make_agent(source="user")
+        query = _user_msg()
+        hint = HintBlock(
+            hint="<system-reminder>remember this</system-reminder>",
+            source=HINT_SOURCE_BACKGROUND_TOOL,
+        )
+        carrier = Msg(
+            name="system",
+            role="assistant",
+            content=[hint],
+        )
+        agent.state.context = [query, carrier]
+        _turn_state(agent)["pending"] = ["turn-1"]
+
+        await mw._flush_auto_memory(agent)
+
+        submitted = mm.auto_memory.await_args.args[0]
+        assert isinstance(submitted[1].content[0], TextBlock)
+        assert submitted[1].get_text_content() == (
+            "<system-reminder>remember this</system-reminder>"
+        )
+        assert isinstance(agent.state.context[1].content[0], HintBlock)
 
     @pytest.mark.asyncio
     async def test_failed_submission_keeps_pending_for_next_turn_retry(self):

@@ -1,0 +1,60 @@
+{
+  "environment": {
+    "python": "3.12.0",
+    "platform": "macOS-15.5-arm64-arm-64bit",
+    "samples": 300,
+    "warmups": 30
+  },
+  "scenarios": {
+    "no_hint": {
+      "p50_ms": 0.030458,
+      "p95_ms": 0.036875,
+      "peak_bytes": 9268,
+      "payload_bytes": 2693,
+      "token_estimate": 19,
+      "live_session_bytes": 2693,
+      "session_growth_pct": 0.0,
+      "payload_equal": true
+    },
+    "typical_turn": {
+      "p50_ms": 0.11375,
+      "p95_ms": 0.15,
+      "peak_bytes": 35286,
+      "payload_bytes": 10369,
+      "token_estimate": 2141,
+      "live_session_bytes": 11541,
+      "session_growth_pct": 11.820560023253561,
+      "payload_equal": true
+    },
+    "batched_100": {
+      "p50_ms": 1.914583,
+      "p95_ms": 2.600667,
+      "peak_bytes": 630510,
+      "payload_bytes": 176305,
+      "token_estimate": 36397,
+      "live_session_bytes": 196253,
+      "session_growth_pct": 11.8320806432312,
+      "payload_equal": true
+    },
+    "proactive_1000": {
+      "p50_ms": 19.6945835,
+      "p95_ms": 69.341208,
+      "peak_bytes": 6348010,
+      "payload_bytes": 1732573,
+      "token_estimate": 357547,
+      "live_session_bytes": 1928855,
+      "session_growth_pct": 11.84640461289479,
+      "payload_equal": true
+    },
+    "multimodal": {
+      "p50_ms": 0.776209,
+      "p95_ms": 0.906625,
+      "peak_bytes": 131304,
+      "payload_bytes": 16611,
+      "token_estimate": 43,
+      "live_session_bytes": 20311,
+      "session_growth_pct": 22.27439648425742,
+      "payload_equal": true
+    }
+  }
+}

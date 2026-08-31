@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
 from ..agents.acp.meta import ACP_PROJECT_DIR_META_KEY
+from ..config import load_config
 from ..utils.io_utils import run_sync_io
 from ..utils.logging import sanitize_log_value
 
@@ -475,6 +476,8 @@ class AgentBuilder:
 
         effective_max = resolve_max_iterations(running_config)
 
+        global_config = await run_sync_io(load_config)
+
         agent = QwenPawAgent(
             name=agent_config.name or "QwenPaw",
             model=model,
@@ -492,6 +495,7 @@ class AgentBuilder:
             ),
             effective_skills=effective_skills,
             governor=governor,
+            runtime_timezone=global_config.user_timezone or "UTC",
         )
 
         # Load session state if SessionLoadHook populated it.

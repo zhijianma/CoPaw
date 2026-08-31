@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import urllib.parse
+import uuid
 from pathlib import Path, PureWindowsPath
 from typing import Optional
 
@@ -18,6 +19,11 @@ from agentscope.message import Msg, TextBlock, URLSource
 
 from ...app.channels.utils import file_url_to_local_path
 from ...config import load_config
+from ..hints import (
+    HINT_POSITION_AFTER_BLOCK_ID,
+    HINT_SOURCE_UPLOADED_FILE,
+    make_hint_carrier,
+)
 from .file_handling import download_file_from_base64, download_file_from_url
 from .image_freezing import freeze_local_images_async
 
@@ -516,7 +522,8 @@ def _coerce_block_to_dict(
     return None
 
 
-async def process_file_and_media_blocks_in_message(msg) -> None:
+# pylint: disable=too-many-branches
+async def process_file_and_media_blocks_in_message(msg) -> list[Msg]:
     """Process file and media blocks (file, image, audio, video) in messages.
 
     Downloads to local and updates paths/URLs.  Handles both dict blocks
@@ -525,6 +532,7 @@ async def process_file_and_media_blocks_in_message(msg) -> None:
     messages = (
         [msg] if isinstance(msg, Msg) else msg if isinstance(msg, list) else []
     )
+    carriers_by_message: list[tuple[Msg, list[Msg]]] = []
 
     for message in messages:
         if not isinstance(message, Msg):
@@ -580,18 +588,41 @@ async def process_file_and_media_blocks_in_message(msg) -> None:
 
         if downloaded_files:
             lang = load_config().agents.language
-            for i, local_path, filename in reversed(downloaded_files):
+            carriers: list[Msg] = []
+            for i, local_path, filename in downloaded_files:
                 text = _format_uploaded_file_hint(
                     local_path,
                     filename,
                     lang,
                 )
-                message.content.insert(
-                    i + 1,
-                    TextBlock(type="text", text=text),
+                anchor = message.content[i]
+                anchor_id = getattr(anchor, "id", None)
+                if anchor_id is None and isinstance(anchor, dict):
+                    anchor_id = str(anchor.get("id") or uuid.uuid4().hex)
+                    anchor["id"] = anchor_id
+                carriers.append(
+                    make_hint_carrier(
+                        hint=text,
+                        source=HINT_SOURCE_UPLOADED_FILE,
+                        target_msg_id=message.id,
+                        position=HINT_POSITION_AFTER_BLOCK_ID,
+                        anchor_block_id=anchor_id,
+                    ),
                 )
+            carriers_by_message.append((message, carriers))
+
+    created_carriers = [
+        carrier
+        for _message, carriers in carriers_by_message
+        for carrier in carriers
+    ]
+    if isinstance(msg, list):
+        for target, carriers in reversed(carriers_by_message):
+            insert_at = msg.index(target) + 1
+            msg[insert_at:insert_at] = carriers
 
     await freeze_local_images_async(messages)
+    return created_carriers
 
 
 def is_first_user_interaction(messages: list) -> bool:

@@ -25,6 +25,7 @@ from .embedding_model import (
     embedding_vector_space_fingerprint,
     test_embedding_model,
 )
+from .hint_projection import project_messages_for_memory
 from .prompts import build_memory_guidance_prompt
 from .reme_config import get_reme_app_config
 from ..model_factory import create_model_and_formatter_async
@@ -1082,6 +1083,7 @@ class ReMeLightMemoryManager(BaseMemoryManager):
         **kwargs: Any,
     ) -> str:
         """Persist conversation messages through ReMe auto-memory."""
+        messages = project_messages_for_memory(messages)
         if not messages:
             return ""
 

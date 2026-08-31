@@ -11,10 +11,14 @@ Covers:
 # pylint: disable=redefined-outer-name
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
+from agentscope.message import HintBlock, Msg, TextBlock
 
+from qwenpaw.agents.memory.hint_projection import (
+    project_messages_for_memory,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -122,9 +126,11 @@ class TestBootstrapHookCallHappyPath:
     """P1: __call__ applies guidance and creates flag."""
 
     def _user_msg(self):
-        msg = MagicMock()
-        msg.role = "user"
-        return msg
+        return Msg(
+            name="user",
+            role="user",
+            content=[TextBlock(text="hello")],
+        )
 
     async def test_prepends_guidance_to_first_user_message(
         self,
@@ -141,14 +147,14 @@ class TestBootstrapHookCallHappyPath:
         ), patch(
             "qwenpaw.agents.hooks.bootstrap.build_bootstrap_guidance",
             return_value="guidance text",
-        ) as mock_build, patch(
-            "qwenpaw.agents.hooks.bootstrap.prepend_to_message_content",
-        ) as mock_prepend:
+        ) as mock_build:
             result = await hook(mock_agent, {})
 
         assert result is None
         mock_build.assert_called_once_with("zh")
-        mock_prepend.assert_called_once_with(user_msg, "guidance text")
+        assert isinstance(mock_agent.state.context[1].content[0], HintBlock)
+        projected = project_messages_for_memory(mock_agent.state.context)
+        assert projected[0].get_text_content() == "guidance text\n\nhello"
 
     async def test_creates_completed_flag_after_success(
         self,
@@ -165,8 +171,6 @@ class TestBootstrapHookCallHappyPath:
         ), patch(
             "qwenpaw.agents.hooks.bootstrap.build_bootstrap_guidance",
             return_value="guidance",
-        ), patch(
-            "qwenpaw.agents.hooks.bootstrap.prepend_to_message_content",
         ):
             await hook(mock_agent, {})
 
@@ -180,8 +184,11 @@ class TestBootstrapHookCallHappyPath:
     ):
         """System messages before first user msg are skipped."""
         (hook.working_dir / "BOOTSTRAP.md").write_text("# Bootstrap")
-        sys_msg = MagicMock()
-        sys_msg.role = "system"
+        sys_msg = Msg(
+            name="system",
+            role="system",
+            content=[TextBlock(text="system")],
+        )
         user_msg = self._user_msg()
         mock_agent.state.context = [sys_msg, user_msg]
 
@@ -191,22 +198,21 @@ class TestBootstrapHookCallHappyPath:
         ), patch(
             "qwenpaw.agents.hooks.bootstrap.build_bootstrap_guidance",
             return_value="guidance",
-        ), patch(
-            "qwenpaw.agents.hooks.bootstrap.prepend_to_message_content",
-        ) as mock_prepend:
+        ):
             await hook(mock_agent, {})
 
-        mock_prepend.assert_called_once_with(user_msg, "guidance")
+        assert mock_agent.state.context[-1].metadata[
+            "qwenpaw_hint_projection"
+        ]["blocks"]
 
     async def test_uses_hook_language_for_guidance(self, working_dir):
         from qwenpaw.agents.hooks.bootstrap import BootstrapHook
 
         hook_en = BootstrapHook(working_dir=working_dir, language="en")
         (working_dir / "BOOTSTRAP.md").write_text("# Bootstrap")
-        user_msg = MagicMock()
-        user_msg.role = "user"
+        user_msg = self._user_msg()
         agent = MagicMock()
-        agent.memory.get_memory = AsyncMock(return_value=[user_msg])
+        agent.state = SimpleNamespace(context=[user_msg])
 
         with patch(
             "qwenpaw.agents.hooks.bootstrap.is_first_user_interaction",
@@ -214,9 +220,7 @@ class TestBootstrapHookCallHappyPath:
         ), patch(
             "qwenpaw.agents.hooks.bootstrap.build_bootstrap_guidance",
             return_value="en guidance",
-        ) as mock_build, patch(
-            "qwenpaw.agents.hooks.bootstrap.prepend_to_message_content",
-        ):
+        ) as mock_build:
             await hook_en(agent, {})
 
         mock_build.assert_called_once_with("en")
