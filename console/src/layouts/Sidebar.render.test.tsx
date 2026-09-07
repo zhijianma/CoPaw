@@ -137,8 +137,16 @@ vi.mock("../components/AgentSelector", () => ({
 }));
 
 vi.mock("./AppBrand", () => ({
-  default: ({ action }: { action?: React.ReactNode }) => (
-    <div data-testid="app-brand">{action}</div>
+  default: ({
+    action,
+    hidden,
+  }: {
+    action?: React.ReactNode;
+    hidden?: boolean;
+  }) => (
+    <div data-testid="app-brand" hidden={hidden}>
+      {action}
+    </div>
   ),
 }));
 
@@ -373,19 +381,26 @@ describe("Sidebar", () => {
       // Collapsed nav has no menu labels, only tooltips/buttons
       expect(screen.queryByText("Workspace")).toBeNull();
     });
+    expect(screen.getByTestId("app-brand")).not.toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Expand sidebar" }));
     await waitFor(() => {
       expect(screen.getByText("Workspace")).toBeTruthy();
     });
+    expect(screen.getByTestId("app-brand")).toBeVisible();
   });
 
   it("opens session history in a popover while collapsed", async () => {
     renderSidebar();
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: "chat.chatHistoryTooltip" }),
-    );
+    const historyButton = await screen.findByRole("button", {
+      name: "chat.chatHistoryTooltip",
+    });
+    expect(historyButton).toHaveAttribute("aria-haspopup", "dialog");
+    expect(historyButton).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(historyButton);
+    expect(historyButton).toHaveAttribute("aria-expanded", "true");
     fireEvent.click(await screen.findByTestId("sl-click"));
 
     await waitFor(() => {
@@ -398,9 +413,14 @@ describe("Sidebar", () => {
   it("switches agents from the collapsed popover", async () => {
     renderSidebar();
     fireEvent.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "agent.selectAgent" }),
-    );
+    const agentButton = await screen.findByRole("button", {
+      name: "agent.selectAgent",
+    });
+    expect(agentButton).toHaveAttribute("aria-haspopup", "dialog");
+    expect(agentButton).toHaveAttribute("aria-expanded", "false");
+
+    fireEvent.click(agentButton);
+    expect(agentButton).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.click(await screen.findByRole("button", { name: /Primary/ }));
 

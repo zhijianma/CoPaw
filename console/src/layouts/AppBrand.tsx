@@ -59,11 +59,13 @@ function UpdateCodeBlock({ code }: { code: string }) {
 
 interface AppBrandProps {
   action?: ReactNode;
+  hidden?: boolean;
   version?: string;
 }
 
 export default function AppBrand({
   action,
+  hidden = false,
   version: versionProp,
 }: AppBrandProps) {
   const { t, i18n } = useTranslation();
@@ -280,7 +282,7 @@ export default function AppBrand({
 
   return (
     <>
-      <div className={styles.appBrand}>
+      <div className={styles.appBrand} hidden={hidden}>
         <span className={styles.appBrandLogo} onClick={handleLogoClick}>
           <Slot name="header.logo" kind="replace">
             <img

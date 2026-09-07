@@ -601,20 +601,19 @@ export default function Sidebar({
         !collapsed ? ` ${styles.siderExpanded}` : ""
       }`}
     >
-      {!collapsed && (
-        <AppBrand
-          version={version}
-          action={
-            <Button
-              type="text"
-              icon={<SparkOperateLeftLine size={18} />}
-              onClick={() => setCollapsed(true)}
-              className={styles.brandCollapseToggle}
-              aria-label={t("sidebar.collapse", "Collapse sidebar")}
-            />
-          }
-        />
-      )}
+      <AppBrand
+        hidden={collapsed}
+        version={version}
+        action={
+          <Button
+            type="text"
+            icon={<SparkOperateLeftLine size={18} />}
+            onClick={() => setCollapsed(true)}
+            className={styles.brandCollapseToggle}
+            aria-label={t("sidebar.collapse", "Collapse sidebar")}
+          />
+        }
+      />
 
       {collapsed ? (
         <nav className={styles.collapsedNav}>
@@ -694,6 +693,8 @@ export default function Sidebar({
                   type="button"
                   className={styles.collapsedNavItem}
                   aria-label={t("agent.selectAgent")}
+                  aria-haspopup="dialog"
+                  aria-expanded={agentPopoverOpen}
                 >
                   <SparkAgentLine size={18} />
                 </button>
@@ -744,6 +745,8 @@ export default function Sidebar({
                   type="button"
                   className={styles.collapsedNavItem}
                   aria-label={t("chat.chatHistoryTooltip")}
+                  aria-haspopup="dialog"
+                  aria-expanded={historyPopoverOpen}
                 >
                   <History size={18} />
                 </button>

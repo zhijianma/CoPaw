@@ -86,6 +86,8 @@ interface FlyoutContextValue {
   setChildOpen: (id: string, open: boolean) => void;
 }
 
+// Popover content is portaled, so hovering a child can close its parent before
+// the pointer reaches the child. Track open descendants to keep ancestors open.
 const FlyoutContext = createContext<FlyoutContextValue | null>(null);
 
 function FlyoutItem({ icon, label, content }: FlyoutItemProps) {

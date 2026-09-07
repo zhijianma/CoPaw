@@ -99,4 +99,16 @@ describe("AppBrand", () => {
     expect(await screen.findByText("v1.2.3")).toBeVisible();
     expect(mocks.getVersion).not.toHaveBeenCalled();
   });
+
+  it("stays mounted while its sidebar presentation is hidden", async () => {
+    const { container, rerender } = render(<AppBrand version="1.2.3" />);
+
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    rerender(<AppBrand hidden version="1.2.3" />);
+
+    expect(
+      container.querySelector('img[alt="QwenPaw"]')?.closest("div"),
+    ).toHaveAttribute("hidden");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
 });
