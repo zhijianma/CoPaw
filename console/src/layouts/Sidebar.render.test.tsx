@@ -396,7 +396,7 @@ describe("Sidebar", () => {
     const historyButton = await screen.findByRole("button", {
       name: "chat.chatHistoryTooltip",
     });
-    expect(historyButton).toHaveAttribute("aria-haspopup", "dialog");
+    expect(historyButton).not.toHaveAttribute("aria-haspopup");
     expect(historyButton).toHaveAttribute("aria-expanded", "false");
 
     fireEvent.click(historyButton);
@@ -416,7 +416,7 @@ describe("Sidebar", () => {
     const agentButton = await screen.findByRole("button", {
       name: "agent.selectAgent",
     });
-    expect(agentButton).toHaveAttribute("aria-haspopup", "dialog");
+    expect(agentButton).not.toHaveAttribute("aria-haspopup");
     expect(agentButton).toHaveAttribute("aria-expanded", "false");
 
     fireEvent.click(agentButton);

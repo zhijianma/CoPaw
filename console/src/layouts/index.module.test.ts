@@ -35,6 +35,9 @@ describe("Sidebar overflow layout", () => {
   it("owns the application brand while preserving plugin header slots", () => {
     expect(sidebarSource).toContain("<AppBrand");
     expect(sidebarSource).toContain("className={styles.brandCollapseToggle}");
+    expect(stylesSource).toMatch(
+      /\.appBrand\s*\{[\s\S]*?&\[hidden\]\s*\{\s*display:\s*none;/,
+    );
     expect(appBrandSource).toContain(
       '<Slot name="header.logo" kind="replace">',
     );

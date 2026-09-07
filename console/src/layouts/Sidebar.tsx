@@ -693,7 +693,6 @@ export default function Sidebar({
                   type="button"
                   className={styles.collapsedNavItem}
                   aria-label={t("agent.selectAgent")}
-                  aria-haspopup="dialog"
                   aria-expanded={agentPopoverOpen}
                 >
                   <SparkAgentLine size={18} />
@@ -745,7 +744,6 @@ export default function Sidebar({
                   type="button"
                   className={styles.collapsedNavItem}
                   aria-label={t("chat.chatHistoryTooltip")}
-                  aria-haspopup="dialog"
                   aria-expanded={historyPopoverOpen}
                 >
                   <History size={18} />
