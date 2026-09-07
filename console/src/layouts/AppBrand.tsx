@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import api from "../api";
 import { ExternalMarkdownLink } from "../components/Markdown/externalLinkComponents";
 import { useDesktopUpdate } from "../contexts/DesktopUpdateContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -28,19 +29,66 @@ import {
   PYPI_URL,
   UPDATE_MD,
 } from "./constants";
-import { getAppVersion } from "./appVersion";
 import styles from "./index.module.less";
 
-let latestVersionRequest: Promise<string> | null = null;
-let latestVersionRequestedAt = 0;
+function UpdateCodeBlock({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
 
-function getLatestPublishedVersion(): Promise<string> {
-  if (
-    !latestVersionRequest ||
-    Date.now() - latestVersionRequestedAt >= ONE_HOUR_MS
-  ) {
-    latestVersionRequestedAt = Date.now();
-    latestVersionRequest = fetch(PYPI_URL)
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className={styles.codeBlock}>
+      <code className={styles.codeBlockInner}>{code}</code>
+      <button
+        className={`${styles.copyBtn} ${
+          copied ? styles.copyBtnCopied : styles.copyBtnDefault
+        }`}
+        onClick={handleCopy}
+        title="Copy"
+      >
+        {copied ? <CheckOutlined /> : <CopyOutlined />}
+      </button>
+    </div>
+  );
+}
+
+interface AppBrandProps {
+  action?: ReactNode;
+  version?: string;
+}
+
+export default function AppBrand({
+  action,
+  version: versionProp,
+}: AppBrandProps) {
+  const { t, i18n } = useTranslation();
+  const { isDark } = useTheme();
+  const desktop = useDesktopUpdate();
+  const onDesktop = isDesktopApp();
+  const [loadedVersion, setLoadedVersion] = useState("");
+  const version = versionProp ?? loadedVersion;
+  const [latestVersion, setLatestVersion] = useState("");
+  const [updateModalOpen, setUpdateModalOpen] = useState(false);
+  const [updateMarkdown, setUpdateMarkdown] = useState("");
+  const logoClicksRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    if (versionProp !== undefined) return;
+    void api
+      .getVersion()
+      .then((response) => setLoadedVersion(response?.version ?? ""))
+      .catch(() => {});
+  }, [versionProp]);
+
+  useEffect(() => {
+    if (onDesktop) return;
+
+    fetch(PYPI_URL)
       .then((response) => response.json())
       .then((data) => {
         const releases = data?.releases ?? {};
@@ -75,72 +123,11 @@ function getLatestPublishedVersion(): Promise<string> {
         const releaseTime = versionsWithTime.find(
           (item) => item.version === latest,
         )?.uploadTime;
-        return releaseTime &&
-          new Date(releaseTime) <= new Date(Date.now() - ONE_HOUR_MS)
-          ? latest
-          : "";
+        const isOldEnough =
+          !!releaseTime &&
+          new Date(releaseTime) <= new Date(Date.now() - ONE_HOUR_MS);
+        setLatestVersion(isOldEnough ? latest : "");
       })
-      .catch((error: unknown) => {
-        latestVersionRequest = null;
-        latestVersionRequestedAt = 0;
-        throw error;
-      });
-  }
-  return latestVersionRequest;
-}
-
-function UpdateCodeBlock({ code }: { code: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  };
-
-  return (
-    <div className={styles.codeBlock}>
-      <code className={styles.codeBlockInner}>{code}</code>
-      <button
-        className={`${styles.copyBtn} ${
-          copied ? styles.copyBtnCopied : styles.copyBtnDefault
-        }`}
-        onClick={handleCopy}
-        title="Copy"
-      >
-        {copied ? <CheckOutlined /> : <CopyOutlined />}
-      </button>
-    </div>
-  );
-}
-
-interface AppBrandProps {
-  action?: ReactNode;
-}
-
-export default function AppBrand({ action }: AppBrandProps) {
-  const { t, i18n } = useTranslation();
-  const { isDark } = useTheme();
-  const desktop = useDesktopUpdate();
-  const onDesktop = isDesktopApp();
-  const [version, setVersion] = useState("");
-  const [latestVersion, setLatestVersion] = useState("");
-  const [updateModalOpen, setUpdateModalOpen] = useState(false);
-  const [updateMarkdown, setUpdateMarkdown] = useState("");
-  const logoClicksRef = useRef<number[]>([]);
-
-  useEffect(() => {
-    void getAppVersion()
-      .then(setVersion)
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (onDesktop) return;
-
-    void getLatestPublishedVersion()
-      .then(setLatestVersion)
       .catch(() => {});
   }, [onDesktop]);
 

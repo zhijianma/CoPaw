@@ -51,7 +51,6 @@ import {
 import type { ReactNode } from "react";
 import { hubApi } from "../api/modules/hub";
 import AppBrand from "./AppBrand";
-import { getAppVersion } from "./appVersion";
 import { AgentStatusIndicator } from "../components/AgentStatusIndicator";
 import { getAgentDisplayName } from "../utils/agentDisplayName";
 import { isAgentAvailableInChat } from "../utils/agentVisibility";
@@ -204,8 +203,9 @@ export default function Sidebar({
   }, [selectedKey, visibleSidebarNav]);
 
   useEffect(() => {
-    void getAppVersion()
-      .then(setVersion)
+    api
+      .getVersion()
+      .then((response) => setVersion(response?.version ?? ""))
       .catch(() => {});
   }, []);
 
@@ -603,6 +603,7 @@ export default function Sidebar({
     >
       {!collapsed && (
         <AppBrand
+          version={version}
           action={
             <Button
               type="text"

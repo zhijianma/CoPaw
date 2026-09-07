@@ -134,7 +134,6 @@ function FlyoutItem({ icon, label, content }: FlyoutItemProps) {
     >
       <button
         type="button"
-        role="menuitem"
         className={styles.menuItem}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -163,18 +162,17 @@ function ChoicePanel<T extends string>({
   onChange: (value: T) => void;
 }) {
   return (
-    <div className={styles.choicePanel} role="menu">
+    <div className={styles.choicePanel}>
       {choices.map((choice) => {
         const selected = choice.value === value;
         return (
           <button
             type="button"
-            role="menuitemradio"
             key={choice.value}
             className={`${styles.choiceItem} ${
               selected ? styles.choiceItemSelected : ""
             }`}
-            aria-checked={selected}
+            aria-current={selected ? "true" : undefined}
             onClick={() => onChange(choice.value)}
           >
             {choice.icon}
@@ -355,7 +353,7 @@ export default function SidebarSettingsPanel({
   );
 
   const appearanceContent = (
-    <div className={styles.flyoutPanel} role="menu">
+    <div className={styles.flyoutPanel}>
       <FlyoutItem
         icon={<Languages size={16} />}
         label={t("sidebar.settings.language", "Language")}
@@ -368,7 +366,6 @@ export default function SidebarSettingsPanel({
       />
       <button
         type="button"
-        role="menuitem"
         className={styles.menuItem}
         onClick={() => finishAction(onOpenDesktopMode)}
       >
@@ -379,7 +376,7 @@ export default function SidebarSettingsPanel({
   );
 
   const messageDisplayContent = (
-    <div className={styles.flyoutPanel} role="menu">
+    <div className={styles.flyoutPanel}>
       <FlyoutItem
         icon={<UnfoldHorizontal size={16} />}
         label={t("settingsCenter.contentWidth", "Message width")}
@@ -395,9 +392,8 @@ export default function SidebarSettingsPanel({
       />
       <button
         type="button"
-        role="menuitemcheckbox"
         className={styles.menuItem}
-        aria-checked={showThinking}
+        aria-pressed={showThinking}
         onClick={toggleThinkingDisplay}
       >
         <BrainCircuit size={16} />
@@ -413,11 +409,7 @@ export default function SidebarSettingsPanel({
   );
 
   return (
-    <div
-      className={styles.panel}
-      role="menu"
-      aria-label={t("sidebar.quickMenu.settings", "Settings")}
-    >
+    <div className={styles.panel}>
       <FlyoutItem
         icon={<Palette size={16} />}
         label={t("sidebar.quickMenu.appearance", "Appearance")}
@@ -430,7 +422,6 @@ export default function SidebarSettingsPanel({
       />
       <button
         type="button"
-        role="menuitem"
         className={styles.menuItem}
         onClick={() => finishAction(onOpenSettings)}
       >
@@ -438,11 +429,10 @@ export default function SidebarSettingsPanel({
         <span>{t("sidebar.quickMenu.settings", "Settings")}</span>
       </button>
 
-      <div className={styles.divider} role="separator" />
+      <div className={styles.divider} />
 
       <button
         type="button"
-        role="menuitem"
         className={styles.menuItem}
         onClick={() => openLink(getDocsUrl(i18n.language))}
       >
@@ -451,7 +441,6 @@ export default function SidebarSettingsPanel({
       </button>
       <button
         type="button"
-        role="menuitem"
         className={styles.menuItem}
         onClick={() => openLink(getReleaseNotesUrl(i18n.language))}
       >
@@ -460,18 +449,16 @@ export default function SidebarSettingsPanel({
       </button>
       <button
         type="button"
-        role="menuitem"
         className={styles.menuItem}
         onClick={() => openLink(getFaqUrl(i18n.language))}
       >
         <CircleHelp size={16} />
         <span>{t("header.faq", "FAQ")}</span>
       </button>
-      <div className={styles.divider} role="separator" />
+      <div className={styles.divider} />
 
       <button
         type="button"
-        role="menuitem"
         className={styles.menuItem}
         onClick={() => openLink(QWENPAW_WEBSITE_URL)}
       >
@@ -482,10 +469,9 @@ export default function SidebarSettingsPanel({
 
       {authEnabled && (
         <>
-          <div className={styles.divider} role="separator" />
+          <div className={styles.divider} />
           <button
             type="button"
-            role="menuitem"
             className={styles.menuItem}
             onClick={() => onOpenAccount && finishAction(onOpenAccount)}
           >
@@ -494,7 +480,6 @@ export default function SidebarSettingsPanel({
           </button>
           <button
             type="button"
-            role="menuitem"
             className={`${styles.menuItem} ${styles.dangerItem}`}
             onClick={() => onLogout && finishAction(onLogout)}
           >

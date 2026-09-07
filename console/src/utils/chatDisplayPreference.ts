@@ -5,11 +5,6 @@ const ASSISTANT_DISPLAY_MODE_STORAGE_KEY =
 const SHOW_THINKING_STORAGE_KEY = "qwenpaw_show_thinking";
 const CHAT_DISPLAY_PREFERENCE_CHANGE_EVENT =
   "qwenpaw:chat-display-preference-change";
-const CHAT_DISPLAY_STORAGE_KEYS = new Set([
-  TOOL_DISPLAY_MODE_STORAGE_KEY,
-  ASSISTANT_DISPLAY_MODE_STORAGE_KEY,
-  SHOW_THINKING_STORAGE_KEY,
-]);
 
 export type AssistantMessageDisplayPreference =
   | "expanded"
@@ -22,19 +17,12 @@ export function subscribeChatDisplayPreference(
   onStoreChange: () => void,
 ): () => void {
   if (typeof window === "undefined") return () => {};
-  const handleStorage = (event: StorageEvent) => {
-    if (event.key === null || CHAT_DISPLAY_STORAGE_KEYS.has(event.key)) {
-      onStoreChange();
-    }
-  };
   window.addEventListener(CHAT_DISPLAY_PREFERENCE_CHANGE_EVENT, onStoreChange);
-  window.addEventListener("storage", handleStorage);
   return () => {
     window.removeEventListener(
       CHAT_DISPLAY_PREFERENCE_CHANGE_EVENT,
       onStoreChange,
     );
-    window.removeEventListener("storage", handleStorage);
   };
 }
 
@@ -100,10 +88,6 @@ export function getAssistantMessageDisplayPreference(): AssistantMessageDisplayP
     // storage unavailable
   }
   return "result-collapsed";
-}
-
-export function getMessageDisplayPreferenceSnapshot(): string {
-  return `${getShowThinkingPreference()}:${getAssistantMessageDisplayPreference()}`;
 }
 
 export function setAssistantMessageDisplayPreference(

@@ -48,12 +48,12 @@ describe("SidebarSettingsPanel", () => {
     );
 
     expect(screen.getByText("v2.2.0b3")).toBeVisible();
-    await userEvent.click(screen.getByRole("menuitem", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
     expect(onClose).toHaveBeenCalledOnce();
     expect(onOpenSettings).toHaveBeenCalledOnce();
 
     await userEvent.click(
-      screen.getByRole("menuitem", { name: /About QwenPaw/ }),
+      screen.getByRole("button", { name: /About QwenPaw/ }),
     );
     expect(mocks.openExternalLink).toHaveBeenCalledWith(
       "https://qwenpaw.agentscope.io/",
@@ -71,7 +71,7 @@ describe("SidebarSettingsPanel", () => {
       </ThemeProvider>,
     );
 
-    const appearanceButton = screen.getByRole("menuitem", {
+    const appearanceButton = screen.getByRole("button", {
       name: "Appearance",
     });
     expect(appearanceButton).toHaveAttribute("aria-haspopup", "menu");
@@ -88,9 +88,7 @@ describe("SidebarSettingsPanel", () => {
     expect(document.querySelector(".ant-select")).not.toBeInTheDocument();
     expect(document.querySelector(".ant-segmented")).not.toBeInTheDocument();
 
-    await userEvent.click(
-      appearance.getByRole("menuitem", { name: "Language" }),
-    );
+    await userEvent.click(appearance.getByRole("button", { name: "Language" }));
     expect(appearanceButton).toHaveClass("ant-popover-open");
     const english = last(await screen.findAllByText("English"));
     const languages = within(english.closest(".ant-popover")!);
@@ -108,9 +106,9 @@ describe("SidebarSettingsPanel", () => {
       </ThemeProvider>,
     );
 
-    await userEvent.hover(screen.getByRole("menuitem", { name: "Appearance" }));
+    await userEvent.hover(screen.getByRole("button", { name: "Appearance" }));
     const language = last(
-      await screen.findAllByRole("menuitem", { name: "Language" }),
+      await screen.findAllByRole("button", { name: "Language" }),
     );
     await userEvent.hover(language);
 
@@ -133,9 +131,9 @@ describe("SidebarSettingsPanel", () => {
       </ThemeProvider>,
     );
 
-    await userEvent.click(screen.getByRole("menuitem", { name: "Appearance" }));
+    await userEvent.click(screen.getByRole("button", { name: "Appearance" }));
     await userEvent.click(
-      last(await screen.findAllByRole("menuitem", { name: "Desktop mode" })),
+      last(await screen.findAllByRole("button", { name: "Desktop mode" })),
     );
 
     expect(onOpenDesktopMode).toHaveBeenCalledOnce();
@@ -153,12 +151,10 @@ describe("SidebarSettingsPanel", () => {
     );
 
     await userEvent.click(
-      screen.getByRole("menuitem", { name: "Message display" }),
+      screen.getByRole("button", { name: "Message display" }),
     );
     const thinking = last(
-      await screen.findAllByRole("menuitemcheckbox", {
-        name: "Show thinking",
-      }),
+      await screen.findAllByRole("button", { name: "Show thinking" }),
     );
     const messageDisplay = within(thinking.closest(".ant-popover")!);
 
@@ -182,10 +178,10 @@ describe("SidebarSettingsPanel", () => {
     );
 
     await userEvent.hover(
-      screen.getByRole("menuitem", { name: "Message display" }),
+      screen.getByRole("button", { name: "Message display" }),
     );
     const messageWidth = last(
-      await screen.findAllByRole("menuitem", { name: "Message width" }),
+      await screen.findAllByRole("button", { name: "Message width" }),
     );
     await userEvent.hover(messageWidth);
     await userEvent.click(last(await screen.findAllByText("Wide")));
@@ -205,14 +201,14 @@ describe("SidebarSettingsPanel", () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByRole("menuitem", { name: "Tutorial" })).toBeVisible();
-    expect(screen.getByRole("menuitem", { name: "Changelog" })).toBeVisible();
-    expect(screen.getByRole("menuitem", { name: "FAQ" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Tutorial" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Changelog" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "FAQ" })).toBeVisible();
     expect(
-      screen.queryByRole("menuitem", { name: "Feature demos" }),
+      screen.queryByRole("button", { name: "Feature demos" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("menuitem", { name: "GitHub" }),
+      screen.queryByRole("button", { name: "GitHub" }),
     ).not.toBeInTheDocument();
   });
 
@@ -231,10 +227,10 @@ describe("SidebarSettingsPanel", () => {
     );
 
     expect(
-      screen.queryByRole("menuitem", { name: "Account" }),
+      screen.queryByRole("button", { name: "Account" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("menuitem", { name: "Logout" }),
+      screen.queryByRole("button", { name: "Logout" }),
     ).not.toBeInTheDocument();
 
     rerender(
@@ -250,11 +246,11 @@ describe("SidebarSettingsPanel", () => {
       </ThemeProvider>,
     );
 
-    await userEvent.click(screen.getByRole("menuitem", { name: "Account" }));
+    await userEvent.click(screen.getByRole("button", { name: "Account" }));
     expect(onOpenAccount).toHaveBeenCalledOnce();
     expect(onClose).toHaveBeenCalledOnce();
 
-    await userEvent.click(screen.getByRole("menuitem", { name: "Logout" }));
+    await userEvent.click(screen.getByRole("button", { name: "Logout" }));
     expect(onLogout).toHaveBeenCalledOnce();
   });
 });

@@ -2,7 +2,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PYPI_URL } from "./constants";
 
 const mocks = vi.hoisted(() => ({
   getVersion: vi.fn(),
@@ -53,7 +52,7 @@ import AppBrand from "./AppBrand";
 
 describe("AppBrand", () => {
   beforeEach(() => {
-    mocks.getVersion.mockResolvedValue({ version: "1.0.0" });
+    mocks.getVersion.mockReset().mockResolvedValue({ version: "1.0.0" });
     const oldRelease = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     vi.stubGlobal(
       "fetch",
@@ -77,9 +76,7 @@ describe("AppBrand", () => {
   });
 
   it("keeps the shared logo, version, action, and update reminder together", async () => {
-    const view = render(
-      <AppBrand action={<button type="button">Collapse</button>} />,
-    );
+    render(<AppBrand action={<button type="button">Collapse</button>} />);
 
     expect(screen.getByRole("img", { name: "QwenPaw" })).toHaveAttribute(
       "src",
@@ -94,11 +91,12 @@ describe("AppBrand", () => {
     fireEvent.click(version);
 
     expect(await screen.findByText("Version 2.0.0")).toBeVisible();
+  });
 
-    view.unmount();
-    render(<AppBrand />);
-    expect(await screen.findByText("v1.0.0")).toBeVisible();
-    expect(mocks.getVersion).toHaveBeenCalledOnce();
-    expect(fetch).toHaveBeenCalledWith(PYPI_URL);
+  it("uses a provided sidebar version without requesting it again", async () => {
+    render(<AppBrand version="1.2.3" />);
+
+    expect(await screen.findByText("v1.2.3")).toBeVisible();
+    expect(mocks.getVersion).not.toHaveBeenCalled();
   });
 });

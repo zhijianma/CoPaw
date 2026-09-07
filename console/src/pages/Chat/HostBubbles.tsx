@@ -65,7 +65,8 @@ import {
 import styles from "./HostBubbles.module.less";
 import LazyAccordion from "./LazyAccordion";
 import {
-  getMessageDisplayPreferenceSnapshot,
+  getAssistantMessageDisplayPreference,
+  getShowThinkingPreference,
   subscribeChatDisplayPreference,
   type AssistantMessageDisplayPreference,
 } from "../../utils/chatDisplayPreference";
@@ -223,20 +224,21 @@ function DefaultHostResponseCard({
     () => AgentScopeRuntimeResponseBuilder.mergeToolMessages(data.output),
     [data.output],
   );
-  const messageDisplayPreferenceSnapshot = useSyncExternalStore(
+  const showThinking = useSyncExternalStore(
     subscribeChatDisplayPreference,
-    getMessageDisplayPreferenceSnapshot,
-    () => "true:result-collapsed",
+    getShowThinkingPreference,
+    () => true,
   );
-  const [showThinkingValue, assistantDisplayPreferenceValue] =
-    messageDisplayPreferenceSnapshot.split(":");
-  const showThinking = showThinkingValue === "true";
-  const assistantDisplayPreference =
-    assistantDisplayPreferenceValue as AssistantMessageDisplayPreference;
   const messages = useMemo(
     () => filterThinkingMessages(mergedMessages, showThinking),
     [mergedMessages, showThinking],
   );
+  const assistantDisplayPreference =
+    useSyncExternalStore<AssistantMessageDisplayPreference>(
+      subscribeChatDisplayPreference,
+      getAssistantMessageDisplayPreference,
+      () => "result-collapsed",
+    );
   const messageDisplayMode = getResponseMessageDisplayMode(
     data.status,
     assistantDisplayPreference,
